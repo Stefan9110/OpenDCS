@@ -6,7 +6,6 @@ plugins {
 }
 
 dependencies {
-    api(libs.jackson.annotations)
     api(projects.opendc.opendcCommon)
     implementation(libs.kotlinx.serialization.json)
 
