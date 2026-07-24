@@ -1,0 +1,66 @@
+import { UserMenu } from "@/components/user/UserMenu"
+import { theme } from "@/theme/theme"
+import { MantineProvider } from "@mantine/core"
+import { cleanup, render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import { afterEach, describe, expect, it } from "vitest"
+
+const noop = () => {}
+
+function mockSystemPrefersDark(prefersDark: boolean) {
+    window.matchMedia = ((query: string) => ({
+        matches: prefersDark && query.includes("dark"),
+        media: query,
+        onchange: null,
+        addEventListener: noop,
+        removeEventListener: noop,
+        addListener: noop,
+        removeListener: noop,
+        dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia
+}
+
+// jsdom has no layout engine, so Mantine's drawer transition leaves the panel at
+// display:none and its contents stay out of the accessibility tree.
+function findToggle(target: "light" | "dark") {
+    return screen.findByRole("button", { name: `Switch to ${target} mode`, hidden: true })
+}
+
+async function openUserDrawer() {
+    render(
+        <MantineProvider theme={theme} defaultColorScheme="auto">
+            <UserMenu />
+        </MantineProvider>,
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByRole("button", { name: "Open account menu" }))
+    return user
+}
+
+afterEach(() => {
+    cleanup()
+    window.localStorage?.clear()
+    delete document.documentElement.dataset.mantineColorScheme
+})
+
+describe("user drawer color scheme toggle", () => {
+    it("starts from the system preference when it is dark", async () => {
+        mockSystemPrefersDark(true)
+        await openUserDrawer()
+        expect(await findToggle("light")).toBeInTheDocument()
+    })
+
+    it("starts from the system preference when it is light", async () => {
+        mockSystemPrefersDark(false)
+        await openUserDrawer()
+        expect(await findToggle("dark")).toBeInTheDocument()
+    })
+
+    it("flips the color scheme when the toggle is clicked", async () => {
+        mockSystemPrefersDark(false)
+        const user = await openUserDrawer()
+        await user.click(await findToggle("dark"))
+        expect(document.documentElement.dataset.mantineColorScheme).toBe("dark")
+        expect(await findToggle("light")).toBeInTheDocument()
+    })
+})
