@@ -1,15 +1,15 @@
 "use client"
 
-import {notifyComingSoon} from "@/lib/notify"
-import {Alert, Button, Group, Modal, Stack, Text, TextInput} from "@mantine/core"
-import {IconAlertTriangle} from "@tabler/icons-react"
-import {useState} from "react"
+import { notifyComingSoon } from "@/components/util/feedback"
+import { Alert, Button, Group, Modal, Stack, Text, TextInput } from "@mantine/core"
+import { IconAlertTriangle } from "@tabler/icons-react"
+import { useState } from "react"
 
 export function DeactivateAccountModal({
-                                           userName,
-                                           opened,
-                                           onClose,
-                                       }: Readonly<{ userName: string; opened: boolean; onClose: () => void }>) {
+    userName,
+    opened,
+    onClose,
+}: Readonly<{ userName: string; opened: boolean; onClose: () => void }>) {
     const [confirmation, setConfirmation] = useState("")
 
     function close() {
@@ -23,20 +23,18 @@ export function DeactivateAccountModal({
     }
 
     return (
-        <Modal
-            opened={opened}
-            onClose={close}
-            title="Deactivate account"
-            size="md"
-            centered
-        >
+        <Modal opened={opened} onClose={close} title="Deactivate account" size="md" centered>
             <Stack gap="md">
-                <Alert color="red" variant="light" icon={<IconAlertTriangle size="md"/>}>
+                <Alert color="red" variant="light" icon={<IconAlertTriangle size="md" />}>
                     Your projects, topologies and experiment results are deleted <b>permanently</b>. This cannot be
                     undone.
                 </Alert>
                 <TextInput
-                    label={<Text size={"xs"}>Type <i>{userName}</i> to confirm</Text>}
+                    label={
+                        <Text size={"xs"}>
+                            Type <i>{userName}</i> to confirm
+                        </Text>
+                    }
                     value={confirmation}
                     onChange={(event) => setConfirmation(event.currentTarget.value)}
                 />

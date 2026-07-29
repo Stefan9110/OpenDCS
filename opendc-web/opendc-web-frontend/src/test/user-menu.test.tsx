@@ -1,6 +1,7 @@
 import { UserMenu } from "@/components/user/UserMenu"
 import { theme } from "@/theme/theme"
 import { MantineProvider } from "@mantine/core"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { afterEach, describe, expect, it } from "vitest"
@@ -28,9 +29,11 @@ function findToggle(target: "light" | "dark") {
 
 async function openUserDrawer() {
     render(
-        <MantineProvider theme={theme} defaultColorScheme="auto">
-            <UserMenu />
-        </MantineProvider>,
+        <QueryClientProvider client={new QueryClient()}>
+            <MantineProvider theme={theme} defaultColorScheme="auto">
+                <UserMenu />
+            </MantineProvider>
+        </QueryClientProvider>,
     )
     const user = userEvent.setup()
     await user.click(screen.getByRole("button", { name: "Open account menu" }))

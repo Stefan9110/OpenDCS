@@ -1,6 +1,6 @@
 "use client"
 
-import { useProjectSearch } from "@/lib/projects"
+import { useProjectSearch } from "@/components/projects/projectList"
 import { CloseButton, TextInput } from "@mantine/core"
 import { IconSearch } from "@tabler/icons-react"
 

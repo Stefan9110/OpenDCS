@@ -1,6 +1,6 @@
 "use client"
 
-import type { ProjectFilterValue } from "@/lib/projects"
+import type { ProjectFilterValue } from "@/components/projects/projectList"
 import { SegmentedControl, useComputedColorScheme } from "@mantine/core"
 
 const options = [

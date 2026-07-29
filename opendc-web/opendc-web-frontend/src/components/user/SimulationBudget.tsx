@@ -1,28 +1,30 @@
 "use client"
 
-import {budgetColor, budgetPercent, formatBudgetUsage, formatResetsAt} from "@/lib/account"
-import type {BudgetWindow} from "@/lib/api/types"
-import {Group, Progress, Stack, Text} from "@mantine/core"
+import { budgetColor, budgetPercent, formatBudgetUsage, formatResetsAt } from "@/components/user/accountFormat"
+import type { BudgetWindow } from "@/lib/api/types"
+import { Group, Progress, Stack, Text } from "@mantine/core"
 
-export function SimulationBudget({budgets}: Readonly<{ budgets: BudgetWindow[] }>) {
+export function SimulationBudget({ budgets }: Readonly<{ budgets: BudgetWindow[] }>) {
     return (
         <Stack gap="md">
             <Text size="xs" fw={700} tt="uppercase" c="dimmed">
                 Simulation budget
             </Text>
             {budgets.map((budget) => (
-                <BudgetBar key={budget.period} budget={budget}/>
+                <BudgetBar key={budget.period} budget={budget} />
             ))}
         </Stack>
     )
 }
 
-function BudgetBar({budget}: Readonly<{ budget: BudgetWindow }>) {
+function BudgetBar({ budget }: Readonly<{ budget: BudgetWindow }>) {
     const percent = budgetPercent(budget)
     return (
         <Stack gap={6}>
             <Group justify="space-between" gap="xs" wrap="nowrap">
-                <Text size="sm" fw={500} tt="capitalize">{budget.period}</Text>
+                <Text size="sm" fw={500} tt="capitalize">
+                    {budget.period}
+                </Text>
                 <Text size="xs" c="dimmed">
                     {formatBudgetUsage(budget)}
                 </Text>

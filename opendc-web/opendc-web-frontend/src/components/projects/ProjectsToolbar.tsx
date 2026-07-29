@@ -1,9 +1,10 @@
 "use client"
 
 import { ProjectSearch } from "@/components/projects/ProjectSearch"
-import { notifyComingSoon } from "@/lib/notify"
-import type { ProjectFilterValue } from "@/lib/projects"
-import { Button, Divider, Group } from "@mantine/core"
+import type { ProjectFilterValue } from "@/components/projects/projectList"
+import { useCreateProjectPrompt } from "@/components/projects/useCreateProjectPrompt"
+import { useCreateProject } from "@/lib/api/projects"
+import { Button, Group } from "@mantine/core"
 import { IconPlus } from "@tabler/icons-react"
 import { ProjectFilter } from "./ProjectFilter"
 
@@ -16,13 +17,16 @@ export function ProjectsToolbar({
     onFilterChange: (value: ProjectFilterValue) => void
     searchActive: boolean
 }) {
+    const create = useCreateProject()
+    const promptCreate = useCreateProjectPrompt(create)
+
     return (
         <Group justify="space-between">
             <Group gap="md">
                 <ProjectFilter value={filter} onChange={onFilterChange} disabled={searchActive} />
                 <ProjectSearch />
             </Group>
-            <Button leftSection={<IconPlus size={18} />} onClick={() => notifyComingSoon("Creating a project")}>
+            <Button leftSection={<IconPlus size={18} />} onClick={promptCreate} loading={create.isPending}>
                 Create project
             </Button>
         </Group>

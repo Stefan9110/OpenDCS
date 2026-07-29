@@ -3,8 +3,8 @@
 import { AccountActions } from "@/components/user/AccountActions"
 import { SimulationBudget } from "@/components/user/SimulationBudget"
 import { UserIdentity } from "@/components/user/UserIdentity"
+import { notifyComingSoon } from "@/components/util/feedback"
 import type { AuthSession } from "@/lib/auth/auth"
-import { notifyComingSoon } from "@/lib/notify"
 import {
     Button,
     Divider,
@@ -15,7 +15,7 @@ import {
     useComputedColorScheme,
     useMantineColorScheme,
 } from "@mantine/core"
-import {IconLogin, IconMoon, IconSun} from "@tabler/icons-react"
+import { IconLogin, IconMoon, IconSun } from "@tabler/icons-react"
 
 export function UserDrawer({
     opened,

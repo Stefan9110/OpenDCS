@@ -1,17 +1,18 @@
 "use client"
 
+import { useCreateProjectPrompt } from "@/components/projects/useCreateProjectPrompt"
+import { useCreateProject } from "@/lib/api/projects"
 import type { Project } from "@/lib/api/types"
-import { notifyComingSoon } from "@/lib/notify"
 import { Card, Center, SimpleGrid, Stack, Text, UnstyledButton } from "@mantine/core"
 import { IconPlus } from "@tabler/icons-react"
 import { ProjectCard } from "./ProjectCard"
 
-export function ProjectGrid({ projects }: { projects: Project[] }) {
+export function ProjectGrid({ projects, emptyMessage }: { projects: Project[]; emptyMessage: string }) {
     return (
         <Stack gap="md">
             {projects.length === 0 && (
                 <Text c="dimmed" size="sm">
-                    No projects match the current filters or you don't have any projects.
+                    {emptyMessage}
                 </Text>
             )}
             <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }} spacing="md">
@@ -25,8 +26,10 @@ export function ProjectGrid({ projects }: { projects: Project[] }) {
 }
 
 function CreateProjectCard() {
+    const create = useCreateProject()
+    const promptCreate = useCreateProjectPrompt(create)
     return (
-        <UnstyledButton onClick={() => notifyComingSoon("Creating a project")}>
+        <UnstyledButton onClick={promptCreate}>
             <Card withBorder radius="md" padding="md" h="100%" style={{ borderStyle: "dashed" }}>
                 <Center mih={96}>
                     <Stack align="center" gap={4}>

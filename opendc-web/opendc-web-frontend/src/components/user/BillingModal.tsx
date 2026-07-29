@@ -1,24 +1,24 @@
 "use client"
 
-import {formatAmount, formatBillingDate} from "@/lib/account"
-import type {Billing, Invoice, PlanTier} from "@/lib/api/types"
-import {notifyComingSoon} from "@/lib/notify"
-import {Badge, Button, Group, Modal, Paper, Stack, Table, Text} from "@mantine/core"
+import { formatAmount, formatBillingDate } from "@/components/user/accountFormat"
+import { notifyComingSoon } from "@/components/util/feedback"
+import type { Billing, Invoice, PlanTier } from "@/lib/api/types"
+import { Badge, Button, Group, Modal, Paper, Stack, Table, Text } from "@mantine/core"
 
-export function BillingModal(
-    {
-        plan,
-        billing,
-        opened,
-        onClose,
-    }: Readonly<{ plan: PlanTier; billing: Billing; opened: boolean; onClose: () => void }>
-) {
+export function BillingModal({
+    plan,
+    billing,
+    opened,
+    onClose,
+}: Readonly<{ plan: PlanTier; billing: Billing; opened: boolean; onClose: () => void }>) {
     return (
         <Modal opened={opened} onClose={onClose} title="Billing details" size="md" centered>
             <Stack gap="lg">
                 <Paper withBorder radius="md" p="md">
                     <Stack gap={2}>
-                        <Text fw={600} tt="capitalize">{plan} plan</Text>
+                        <Text fw={600} tt="capitalize">
+                            {plan} plan
+                        </Text>
                         <Text size="sm" c="dimmed">
                             Your subscription auto-renews on {formatBillingDate(billing.renewsAt)}
                         </Text>
@@ -30,7 +30,7 @@ export function BillingModal(
                     </Text>
                     <Text size="sm">{billing.paymentMethod}</Text>
                 </Group>
-                <InvoiceTable invoices={billing.invoices}/>
+                <InvoiceTable invoices={billing.invoices} />
                 <Group justify="flex-end" gap="sm">
                     <Button variant="default" onClick={() => notifyComingSoon("Managing your payment method")}>
                         Payment method
@@ -42,7 +42,7 @@ export function BillingModal(
     )
 }
 
-function InvoiceTable({invoices}: Readonly<{ invoices: Invoice[] }>) {
+function InvoiceTable({ invoices }: Readonly<{ invoices: Invoice[] }>) {
     return (
         <Stack gap="xs">
             <Text size="xs" fw={700} tt="uppercase" c="dimmed">

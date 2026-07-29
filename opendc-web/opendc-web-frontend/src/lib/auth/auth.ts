@@ -1,6 +1,6 @@
-import { sampleAccount } from "@/lib/account"
 import type { Account } from "@/lib/api/types"
 import { config } from "@/lib/config"
+import { sampleAccount } from "@/lib/sample/account"
 
 export interface AnonymousSession {
     status: "anonymous"
@@ -24,14 +24,13 @@ const anonymousSession: AnonymousSession = {
     avatarUrl: "/img/avatar.svg",
 }
 
-const sampleSession: AuthenticatedSession = {
-    status: "authenticated",
-    userName: "Ada Lovelace",
-    avatarUrl: "/img/avatar.svg",
-    email: "ada.lovelace@opendc.org",
-    account: sampleAccount,
-}
-
 export function useAuth(): AuthSession {
-    return config.authMode === "anonymous" ? anonymousSession : sampleSession
+    if (config.authMode === "anonymous") return anonymousSession
+    return {
+        status: "authenticated",
+        userName: "Ada Lovelace",
+        avatarUrl: "/img/avatar.svg",
+        email: "ada.lovelace@opendc.org",
+        account: sampleAccount(),
+    }
 }
