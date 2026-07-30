@@ -9,6 +9,7 @@ import {
     isSearching,
     useProjectSearch,
 } from "@/components/projects/projectList"
+import { CardGridGhost } from "@/components/util/Ghost"
 import { QueryState } from "@/components/util/QueryState"
 import { useProjects } from "@/lib/api/projects"
 import { useAuth } from "@/lib/auth/auth"
@@ -16,8 +17,8 @@ import { Container, Stack, Text, Title } from "@mantine/core"
 import { useState } from "react"
 
 function useWelcomeMessage() {
-    const { status, userName } = useAuth()
-    return status === "authenticated" ? `Welcome, ${userName}!` : "Welcome!"
+    const auth = useAuth()
+    return auth.status === "signedIn" ? `Welcome, ${auth.session.userName}!` : "Welcome!"
 }
 
 export default function HomePage() {
@@ -35,7 +36,7 @@ export default function HomePage() {
                         <Text c="dimmed">Find all your personal and shared projects.</Text>
                     </Stack>
                     <ProjectsToolbar filter={filter} onFilterChange={setFilter} searchActive={isSearching(query)} />
-                    <QueryState query={projects} loadingLabel="Loading projects">
+                    <QueryState query={projects} ghost={<CardGridGhost />}>
                         {(loaded) => (
                             <ProjectGrid
                                 projects={filterProjects(loaded, filter, query)}

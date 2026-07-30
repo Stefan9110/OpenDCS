@@ -4,14 +4,17 @@ import { ExperimentActions } from "@/components/experiment/ExperimentActions"
 import { ExperimentOverview } from "@/components/experiment/ExperimentOverview"
 import { ExperimentStateBadge } from "@/components/experiment/ExperimentStateBadge"
 import { ResultsPanel } from "@/components/experiment/results/ResultsPanel"
+import { BackTo, MessagePage } from "@/components/layout/MessagePage"
 import { EntityBreadcrumbs } from "@/components/util/EntityBreadcrumbs"
+import { PanelGhost } from "@/components/util/Ghost"
 import { QueryState } from "@/components/util/QueryState"
-import { numericParam } from "@/components/util/params"
+import { idParam } from "@/components/util/params"
+import { problemOf } from "@/lib/api/client"
 import { useExperiment } from "@/lib/api/experiments"
 import { useProject } from "@/lib/api/projects"
-import type { Experiment } from "@/lib/api/types"
-import { Alert, Container, Group, Stack, Tabs } from "@mantine/core"
-import { IconAlertTriangle, IconChartLine, IconClipboardList } from "@tabler/icons-react"
+import type { Experiment, Id } from "@/lib/api/types"
+import { Container, Group, Stack, Tabs } from "@mantine/core"
+import { IconChartLine, IconClipboardList } from "@tabler/icons-react"
 import { useRouter, useSearchParams } from "next/navigation"
 
 const TABS = ["overview", "results"] as const
@@ -20,57 +23,51 @@ type TabName = (typeof TABS)[number]
 
 export function ExperimentView() {
     const params = useSearchParams()
-    const projectId = numericParam(params, "project")
-    const experimentId = numericParam(params, "experiment")
+    const experimentId = idParam(params, "id")
 
-    if (projectId.status !== "ok" || experimentId.status !== "ok") {
+    // The experiment's own id is enough to find it, and the project it belongs to comes back with
+    // it. Carrying the project in the link too would let the two disagree, and a breadcrumb would
+    // then name a project the experiment is not in.
+    if (experimentId.status !== "ok") {
         return (
-            <Container size="xl" py="xl">
-                <Alert color="red" icon={<IconAlertTriangle size={18} />} title="No experiment selected">
-                    This link needs both a project and an experiment id.
-                </Alert>
-            </Container>
+            <MessagePage title="No experiment here" message="This link is missing an experiment id.">
+                <BackTo href="/" label="Back to projects" />
+            </MessagePage>
         )
     }
 
-    return (
-        <LoadedExperiment
-            projectId={projectId.value}
-            experimentId={experimentId.value}
-            tab={tabOf(params.get("tab"))}
-        />
-    )
+    return <LoadedExperiment experimentId={experimentId.value} tab={tabOf(params.get("tab"))} />
 }
 
 function tabOf(raw: string | null): TabName {
     return TABS.find((name) => name === raw) ?? "overview"
 }
 
-function LoadedExperiment({
-    projectId,
-    experimentId,
-    tab,
-}: {
-    projectId: number
-    experimentId: number
-    tab: TabName
-}) {
-    const experiment = useExperiment(projectId, experimentId)
+function LoadedExperiment({ experimentId, tab }: { experimentId: Id; tab: TabName }) {
+    const experiment = useExperiment(experimentId)
     const router = useRouter()
 
     const openTab = (name: string | null) =>
-        router.replace(`/experiment?project=${projectId}&experiment=${experimentId}&tab=${tabOf(name)}`, {
-            scroll: false,
-        })
+        router.replace(`/experiment?id=${experimentId}&tab=${tabOf(name)}`, { scroll: false })
+
+    // An experiment that never loaded, because it was deleted or never existed, leaves no page to
+    // annotate. Only a first load counts: a failed refetch keeps showing what is already on screen.
+    if (experiment.isError && experiment.data === undefined) {
+        return (
+            <MessagePage title="Experiment not found" message={problemOf(experiment.error).title}>
+                <BackTo href="/" label="Back to projects" />
+            </MessagePage>
+        )
+    }
 
     return (
         <Container size="xl" py="md">
-            <QueryState query={experiment} loadingLabel="Loading experiment">
+            <QueryState query={experiment} ghost={<PanelGhost height={320} />}>
                 {(loaded) => (
                     <Stack gap="md">
                         <Group justify="space-between" wrap="wrap" gap="xs">
-                            <ExperimentBreadcrumbs projectId={projectId} experiment={loaded} />
-                            <ExperimentActions projectId={projectId} experiment={loaded} />
+                            <ExperimentBreadcrumbs experiment={loaded} />
+                            <ExperimentActions experiment={loaded} />
                         </Group>
 
                         <Tabs value={tab} onChange={openTab} keepMounted={false}>
@@ -84,10 +81,10 @@ function LoadedExperiment({
                             </Tabs.List>
 
                             <Tabs.Panel value="overview">
-                                <ExperimentOverview projectId={projectId} experiment={loaded} />
+                                <ExperimentOverview experiment={loaded} />
                             </Tabs.Panel>
                             <Tabs.Panel value="results">
-                                <ResultsPanel projectId={projectId} experiment={loaded} />
+                                <ResultsPanel experiment={loaded} />
                             </Tabs.Panel>
                         </Tabs>
                     </Stack>
@@ -97,14 +94,18 @@ function LoadedExperiment({
     )
 }
 
-function ExperimentBreadcrumbs({ projectId, experiment }: { projectId: number; experiment: Experiment }) {
-    const project = useProject(projectId)
+function ExperimentBreadcrumbs({ experiment }: { experiment: Experiment }) {
+    const project = useProject(experiment.projectId)
 
     return (
         <EntityBreadcrumbs
             crumbs={[
                 { kind: "projects", label: "Projects", href: "/" },
-                { kind: "project", label: project.data?.name ?? "Project", href: `/project?id=${projectId}` },
+                {
+                    kind: "project",
+                    label: project.data?.name ?? "Project",
+                    href: `/project?id=${experiment.projectId}`,
+                },
                 { kind: "experiment", label: experiment.name },
             ]}
             trailing={<ExperimentStateBadge state={experiment.state} />}

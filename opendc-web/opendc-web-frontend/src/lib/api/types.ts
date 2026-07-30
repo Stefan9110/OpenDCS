@@ -1,24 +1,28 @@
 import type { ExperimentSpec } from "@/lib/experiment/spec"
 import type { ExperimentState, ProgressReport, ScenarioExecutionState } from "@/lib/experiment/status"
 import type { FloorLayout } from "@/lib/topology/layout"
-import type { TopologySpec } from "@/lib/topology/spec"
+import type { HostSpec, TopologySpec } from "@/lib/topology/spec"
 
-export interface ValidationIssue {
+export interface DocumentIssue {
     path: string
     message: string
 }
 
-export interface ValidationProblem {
+export interface ApiProblem {
     status: number
     title: string
     detail?: string
-    issues: ValidationIssue[]
+    issues: DocumentIssue[]
 }
 
 export type ProjectRole = "owner" | "editor" | "viewer"
 
+// Identifiers are opaque strings issued by the server (uuids). Nothing on the client parses,
+// orders or does arithmetic on them; they are only ever passed back.
+export type Id = string
+
 export interface Project {
-    id: number
+    id: Id
     name: string
     role: ProjectRole
     createdAt: string
@@ -47,10 +51,15 @@ export interface CostEstimate {
     estimatedBudgetSeconds: number
 }
 
+export interface ExperimentPreview {
+    scenarioCount: number
+    estimate: CostEstimate
+    issues: DocumentIssue[]
+}
+
 export interface Experiment {
-    id: number
-    projectId: number
-    number: number
+    id: Id
+    projectId: Id
     name: string
     state: ExperimentState
     spec: ExperimentSpec
@@ -62,8 +71,7 @@ export interface Experiment {
 }
 
 export interface ExperimentSummary {
-    id: number
-    number: number
+    id: Id
     name: string
     state: ExperimentState
     scenarioCount: number
@@ -82,8 +90,7 @@ export interface ScenarioStatus {
 }
 
 export interface ExperimentStatus {
-    id: number
-    number: number
+    id: Id
     name: string
     state: ExperimentState
     completedTasks: number
@@ -93,21 +100,14 @@ export interface ExperimentStatus {
 }
 
 export interface TopologyTemplate {
-    id: number
-    projectId: number
-    number: number
+    id: Id
+    projectId: Id
     name: string
     topology: TopologySpec
     topologyHash: string
+    layout?: FloorLayout
     createdAt: string
     updatedAt: string
-}
-
-export interface Layout {
-    topologyHash: string
-    layout: FloorLayout
-    generated: boolean
-    version: number
 }
 
 export type CatalogName = "schedulers" | "failure-prefabs" | "power-models" | "battery-policies" | "export-columns"
@@ -119,20 +119,26 @@ export interface CatalogEntry {
     description?: string
 }
 
-export interface UserAccounting {
-    periodEnd: string
-    simulationTime: number
-    simulationTimeBudget: number
+export interface HostTemplate {
+    id: string
+    label: string
+    group: string
+    host: HostSpec
 }
 
 export type PlanTier = "free" | "education" | "enterprise"
 
 export type BudgetPeriod = "session" | "week"
 
+// Unlimited is a deliberate grant, held by developer mode and by accounts raised by hand, rather
+// than the absence of a limit.
+export type SimulationCap = { type: "limited"; seconds: number } | { type: "unlimited" }
+
 export interface BudgetWindow {
     period: BudgetPeriod
     usedSeconds: number
-    budgetSeconds: number | "infinity"
+    reservedSeconds: number
+    cap: SimulationCap
     resetsAt: string
 }
 
@@ -143,9 +149,11 @@ export interface Invoice {
     paid: boolean
 }
 
+// Renewal and payment method only exist once a billing provider is wired up; until then the server
+// sends neither rather than sending placeholders.
 export interface Billing {
-    renewsAt: string
-    paymentMethod: string
+    renewsAt?: string
+    paymentMethod?: string
     invoices: Invoice[]
 }
 
@@ -153,6 +161,5 @@ export interface Account {
     plan: PlanTier
     projectCount: number
     budgets: BudgetWindow[]
-    billing: Billing
     isAdmin: boolean
 }

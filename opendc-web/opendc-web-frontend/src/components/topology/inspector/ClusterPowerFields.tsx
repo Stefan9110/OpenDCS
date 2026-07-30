@@ -4,9 +4,12 @@ import { CatalogSelect } from "@/components/topology/inspector/CatalogSelect"
 import { FieldLabel, UnitAdornment } from "@/components/topology/inspector/FieldLabel"
 import { QuantityInput } from "@/components/topology/inspector/QuantityInput"
 import type { BatteryPolicy, BatterySpec, ClusterSpec, PowerSourceSpec } from "@/lib/topology/spec"
+import { SCALAR_UNIT } from "@/lib/units"
 import { Group, NumberInput, Stack, Switch } from "@mantine/core"
 
-const DEFAULT_POWER_SOURCE: PowerSourceSpec = { name: "grid", maxPower: "10 kWatts" }
+// The source's name is a free-form label the simulator only echoes into the powerSource export, so
+// the editor does not ask for one and the model's own default stands.
+const DEFAULT_POWER_SOURCE: PowerSourceSpec = { maxPower: "10 kWatts" }
 
 const DEFAULT_BATTERY: BatterySpec = {
     name: "Battery",
@@ -28,22 +31,14 @@ export function ClusterPowerFields({
 
     return (
         <Stack gap="xs">
-            <Group grow gap="xs" align="flex-start">
-                <CatalogSelect
-                    label="Power source"
-                    catalog="power-sources"
-                    value={source.name ?? "grid"}
-                    extraOptions={[source.name ?? "grid"]}
-                    onChange={(value) => value && onChange({ powerSource: { ...source, name: value } })}
-                />
-                <QuantityInput
-                    label="Supply limit"
-                    kind="power"
-                    help="Most power this source can deliver to the cluster. The bar on the floor tile fills against this, and turns red if peak draw exceeds it."
-                    value={source.maxPower ?? "10 kWatts"}
-                    onChange={(maxPower) => onChange({ powerSource: { ...source, maxPower } })}
-                />
-            </Group>
+            <QuantityInput
+                label="Supply limit"
+                kind="power"
+                unit="kW"
+                help="Most power this source can deliver to the cluster. The bar on the floor tile fills against this, and turns red if peak draw exceeds it."
+                value={source.maxPower ?? "10 kWatts"}
+                onChange={(maxPower) => onChange({ powerSource: { ...source, maxPower } })}
+            />
 
             <CatalogSelect
                 label="Carbon intensity trace"
@@ -87,7 +82,7 @@ function BatteryFields({
                     size="xs"
                     min={0}
                     hideControls
-                    rightSection={<UnitAdornment unit="kWh" />}
+                    rightSection={<UnitAdornment unit={SCALAR_UNIT.energy} />}
                     rightSectionWidth={46}
                     rightSectionPointerEvents="none"
                     value={battery.capacity}
@@ -98,7 +93,7 @@ function BatteryFields({
                     size="xs"
                     min={0}
                     hideControls
-                    rightSection={<UnitAdornment unit="W" />}
+                    rightSection={<UnitAdornment unit={SCALAR_UNIT.power} />}
                     rightSectionWidth={38}
                     rightSectionPointerEvents="none"
                     value={battery.chargingSpeed}
@@ -125,49 +120,39 @@ function PolicyFields({
 }) {
     if (policy.type === "single") {
         return (
-            <NumberInput
-                label={
-                    <FieldLabel
-                        label="Carbon threshold"
-                        help="Carbon intensity at or above which the battery discharges instead of drawing from the source. Below it, the battery charges."
-                    />
-                }
-                size="xs"
+            <ThresholdInput
+                label="Carbon threshold"
+                help="Carbon intensity at or above which the battery discharges instead of drawing from the source. Below it, the battery charges."
                 value={policy.carbonThreshold}
-                onChange={(value) => onChange({ ...policy, carbonThreshold: numberOf(value) })}
+                onChange={(carbonThreshold) => onChange({ ...policy, carbonThreshold })}
             />
         )
     }
     if (policy.type === "double") {
         return (
             <Group grow gap="xs">
-                <NumberInput
-                    label={<FieldLabel label="Lower" help="Below this carbon intensity the battery charges." />}
-                    size="xs"
+                <ThresholdInput
+                    label="Lower"
+                    help="Below this carbon intensity the battery charges."
                     value={policy.lowerThreshold}
-                    onChange={(value) => onChange({ ...policy, lowerThreshold: numberOf(value) })}
+                    onChange={(lowerThreshold) => onChange({ ...policy, lowerThreshold })}
                 />
-                <NumberInput
-                    label={<FieldLabel label="Upper" help="Above this carbon intensity the battery discharges." />}
-                    size="xs"
+                <ThresholdInput
+                    label="Upper"
+                    help="Above this carbon intensity the battery discharges."
                     value={policy.upperThreshold}
-                    onChange={(value) => onChange({ ...policy, upperThreshold: numberOf(value) })}
+                    onChange={(upperThreshold) => onChange({ ...policy, upperThreshold })}
                 />
             </Group>
         )
     }
     return (
         <Group grow gap="xs">
-            <NumberInput
-                label={
-                    <FieldLabel
-                        label="Starting threshold"
-                        help="Carbon intensity used before enough samples have been seen to compute the running statistic."
-                    />
-                }
-                size="xs"
+            <ThresholdInput
+                label="Starting threshold"
+                help="Carbon intensity used before enough samples have been seen to compute the running statistic."
                 value={policy.startingThreshold}
-                onChange={(value) => onChange({ ...policy, startingThreshold: numberOf(value) })}
+                onChange={(startingThreshold) => onChange({ ...policy, startingThreshold })}
             />
             <NumberInput
                 label={
@@ -182,6 +167,31 @@ function PolicyFields({
                 onChange={(value) => onChange({ ...policy, windowSize: numberOf(value) })}
             />
         </Group>
+    )
+}
+
+/** Every battery policy is steered by carbon intensities, which all read in the same unit. */
+function ThresholdInput({
+    label,
+    help,
+    value,
+    onChange,
+}: {
+    label: string
+    help: string
+    value: number
+    onChange: (next: number) => void
+}) {
+    return (
+        <NumberInput
+            label={<FieldLabel label={label} help={help} />}
+            size="xs"
+            value={value}
+            onChange={(next) => onChange(numberOf(next))}
+            rightSection={<UnitAdornment unit={SCALAR_UNIT.carbonIntensity} />}
+            rightSectionWidth={70}
+            rightSectionPointerEvents="none"
+        />
     )
 }
 

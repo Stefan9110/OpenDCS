@@ -13,10 +13,10 @@ import {
 import { type Selection, WHOLE_TOPOLOGY, clampToClusterCount } from "@/components/topology/selection"
 import { notifyProblem } from "@/components/util/feedback"
 import { useSaveTopology } from "@/lib/api/topologies"
-import type { TopologyTemplate, ValidationIssue } from "@/lib/api/types"
+import type { DocumentIssue, TopologyTemplate } from "@/lib/api/types"
 import type { TopologyPlan } from "@/lib/topology/edits"
 import type { FloorLayout } from "@/lib/topology/layout"
-import { reconcile } from "@/lib/topology/layout"
+import { autoLayout, reconcile } from "@/lib/topology/layout"
 import { validateTopology } from "@/lib/topology/validation"
 import { useCallback, useEffect, useMemo, useState } from "react"
 
@@ -28,7 +28,7 @@ export interface TopologyEditor {
     name: string
     plan: TopologyPlan
     selection: Selection
-    issues: ValidationIssue[]
+    issues: DocumentIssue[]
     saveState: SaveState
     canUndo: boolean
     canRedo: boolean
@@ -41,10 +41,19 @@ export interface TopologyEditor {
     saveNow: () => void
 }
 
-export function useTopologyEditor(projectId: number, template: TopologyTemplate, layout: FloorLayout): TopologyEditor {
-    const save = useSaveTopology(projectId)
+// The server stores a floor plan only once a human has arranged one, so a topology that has never
+// been opened, or that arrived from the CLI, gets its arrangement derived here instead. Absence is
+// checked loosely on purpose: whether it reaches us as an omitted field or an explicit null, there
+// is no arrangement to reconcile against and reconcile would dereference it.
+function floorPlanOf(template: TopologyTemplate): FloorLayout {
+    if (!template.layout) return autoLayout(template.topology)
+    return reconcile(template.layout, template.topology)
+}
+
+export function useTopologyEditor(template: TopologyTemplate): TopologyEditor {
+    const save = useSaveTopology(template.projectId)
     const [history, setHistory] = useState<History<TopologyPlan>>(() =>
-        initialHistory({ topology: template.topology, layout: reconcile(layout, template.topology) }),
+        initialHistory({ topology: template.topology, layout: floorPlanOf(template) }),
     )
     const [name, setName] = useState(template.name)
     const [saved, setSaved] = useState<TopologyPlan>(() => history.present)

@@ -1,21 +1,13 @@
-import type { Layout, TopologyTemplate } from "@/lib/api/types"
-import {
-    createTopology,
-    deleteTopology,
-    getLayout,
-    getTopology,
-    listTopologies,
-    putLayout,
-    replaceTopology,
-} from "@/lib/sample/resources"
+import { apiRequest } from "@/lib/api/client"
+import type { Id, TopologyTemplate } from "@/lib/api/types"
 import type { FloorLayout } from "@/lib/topology/layout"
 import type { TopologySpec } from "@/lib/topology/spec"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
+// A topology is addressed by its own id alone; the project only scopes the list it appears in.
 export const topologyKeys = {
-    list: (projectId: number) => ["projects", projectId, "topologies"] as const,
-    detail: (projectId: number, templateId: number) => ["projects", projectId, "topologies", templateId] as const,
-    layout: (projectId: number, topologyHash: string) => ["projects", projectId, "layouts", topologyHash] as const,
+    list: (projectId: Id) => ["projects", projectId, "topologies"] as const,
+    detail: (templateId: Id) => ["topologies", templateId] as const,
 }
 
 export interface TopologyChange {
@@ -23,67 +15,62 @@ export interface TopologyChange {
     topology: TopologySpec
 }
 
-export function useTopologies(projectId: number) {
+export function useTopologies(projectId: Id) {
     return useQuery({
         queryKey: topologyKeys.list(projectId),
-        queryFn: async (): Promise<TopologyTemplate[]> => listTopologies(projectId),
+        queryFn: () => apiRequest<TopologyTemplate[]>(`api/v1/topologies?project=${projectId}`),
         retry: false,
     })
 }
 
-export function useTopology(projectId: number, templateId: number) {
+export function useTopology(templateId: Id) {
     return useQuery({
-        queryKey: topologyKeys.detail(projectId, templateId),
-        queryFn: async (): Promise<TopologyTemplate> => getTopology(projectId, templateId),
+        queryKey: topologyKeys.detail(templateId),
+        queryFn: () => apiRequest<TopologyTemplate>(`api/v1/topologies/${templateId}`),
         retry: false,
     })
 }
 
-export function useLayout(projectId: number, topologyHash: string) {
-    return useQuery({
-        queryKey: topologyKeys.layout(projectId, topologyHash),
-        queryFn: async (): Promise<Layout> => getLayout(projectId, topologyHash),
-        enabled: topologyHash !== "",
-        retry: false,
-    })
-}
-
-export function useCreateTopology(projectId: number) {
+export function useCreateTopology(projectId: Id) {
     const queryClient = useQueryClient()
     return useMutation({
-        mutationFn: async (change: TopologyChange) => createTopology(projectId, change.name, change.topology),
-        onSuccess: () => queryClient.invalidateQueries(),
+        mutationFn: (change: TopologyChange) =>
+            apiRequest<TopologyTemplate>("api/v1/topologies", {
+                method: "POST",
+                body: { projectId, name: change.name, topology: change.topology },
+            }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: topologyKeys.list(projectId) }),
     })
 }
 
-export function useDeleteTopology(projectId: number) {
+export function useDeleteTopology(projectId: Id) {
     const queryClient = useQueryClient()
     return useMutation({
-        mutationFn: async (templateId: number) => deleteTopology(projectId, templateId),
-        onSuccess: () => queryClient.invalidateQueries(),
+        mutationFn: (templateId: Id) => apiRequest<void>(`api/v1/topologies/${templateId}`, { method: "DELETE" }),
+        onSuccess: (_result, templateId) => {
+            queryClient.removeQueries({ queryKey: topologyKeys.detail(templateId) })
+            queryClient.invalidateQueries({ queryKey: topologyKeys.list(projectId) })
+        },
     })
 }
 
 export interface TopologySave extends TopologyChange {
-    templateId: number
+    templateId: Id
     layout: FloorLayout
 }
 
-export function useSaveTopology(projectId: number) {
+export function useSaveTopology(projectId: Id) {
     const queryClient = useQueryClient()
     return useMutation({
-        mutationFn: async (save: TopologySave) => {
-            const template = replaceTopology(projectId, save.templateId, {
-                name: save.name,
-                topology: save.topology,
-            })
-            return { template, layout: putLayout(projectId, template.topologyHash, save.layout) }
-        },
-        // Saving changes the content hash, so the layout query key changes with it. Seed both caches
-        // instead of invalidating, or the editor would unmount while the new key loads.
-        onSuccess: ({ template, layout }) => {
-            queryClient.setQueryData(topologyKeys.detail(projectId, template.id), template)
-            queryClient.setQueryData(topologyKeys.layout(projectId, template.topologyHash), layout)
+        mutationFn: (save: TopologySave) =>
+            apiRequest<TopologyTemplate>(`api/v1/topologies/${save.templateId}`, {
+                method: "PUT",
+                body: { name: save.name, topology: save.topology, layout: save.layout },
+            }),
+        // Seed the detail cache with the saved document instead of invalidating it, or the open
+        // editor would unmount while the refetch loads.
+        onSuccess: (template) => {
+            queryClient.setQueryData(topologyKeys.detail(template.id), template)
             queryClient.invalidateQueries({ queryKey: topologyKeys.list(projectId) })
         },
     })

@@ -4,7 +4,7 @@ import { ExperimentTable } from "@/components/project/ExperimentTable"
 import { openNamePrompt } from "@/components/util/NamePrompt"
 import { notifyProblem } from "@/components/util/feedback"
 import { useCreateExperiment } from "@/lib/api/experiments"
-import type { ExperimentSummary, TopologyTemplate } from "@/lib/api/types"
+import type { ExperimentSummary, Id, TopologyTemplate } from "@/lib/api/types"
 import type { ExperimentSpec } from "@/lib/experiment/spec"
 import { Button, Group, Paper, Stack, Title, Tooltip } from "@mantine/core"
 import { IconPlus } from "@tabler/icons-react"
@@ -15,7 +15,7 @@ export function ExperimentSection({
     experiments,
     templates,
 }: {
-    projectId: number
+    projectId: Id
     experiments: ExperimentSummary[]
     templates: TopologyTemplate[]
 }) {
@@ -37,8 +37,7 @@ export function ExperimentSection({
                 create.mutate(
                     { name, spec },
                     {
-                        onSuccess: (experiment) =>
-                            router.push(`/experiment?project=${projectId}&experiment=${experiment.id}`),
+                        onSuccess: (experiment) => router.push(`/experiment?id=${experiment.id}`),
                         onError: notifyProblem,
                     },
                 ),

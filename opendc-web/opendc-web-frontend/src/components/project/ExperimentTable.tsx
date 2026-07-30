@@ -4,7 +4,7 @@ import { ExperimentStateBadge } from "@/components/experiment/ExperimentStateBad
 import { formatCount, formatPercent, formatUpdatedAt } from "@/components/format"
 import { notifyProblem } from "@/components/util/feedback"
 import { useCloneExperiment, useDeleteExperiment } from "@/lib/api/experiments"
-import type { ExperimentSummary } from "@/lib/api/types"
+import type { ExperimentSummary, Id } from "@/lib/api/types"
 import { progressFraction } from "@/lib/experiment/status"
 import { ActionIcon, Anchor, Group, Menu, Progress, Table, Text } from "@mantine/core"
 import { modals } from "@mantine/modals"
@@ -15,7 +15,7 @@ export function ExperimentTable({
     projectId,
     experiments,
 }: {
-    projectId: number
+    projectId: Id
     experiments: ExperimentSummary[]
 }) {
     if (experiments.length === 0) {
@@ -31,7 +31,6 @@ export function ExperimentTable({
             <Table highlightOnHover verticalSpacing="sm">
                 <Table.Thead>
                     <Table.Tr>
-                        <Table.Th w={60}>#</Table.Th>
                         <Table.Th>Name</Table.Th>
                         <Table.Th>State</Table.Th>
                         <Table.Th>Scenarios</Table.Th>
@@ -50,17 +49,12 @@ export function ExperimentTable({
     )
 }
 
-function ExperimentRow({ projectId, experiment }: { projectId: number; experiment: ExperimentSummary }) {
+function ExperimentRow({ projectId, experiment }: { projectId: Id; experiment: ExperimentSummary }) {
     const fraction = progressFraction(experiment.progress)
     return (
         <Table.Tr>
             <Table.Td>
-                <Text size="sm" c="dimmed">
-                    {experiment.number}
-                </Text>
-            </Table.Td>
-            <Table.Td>
-                <Anchor component={Link} href={`/experiment?project=${projectId}&experiment=${experiment.id}`} fw={500}>
+                <Anchor component={Link} href={`/experiment?id=${experiment.id}`} fw={500}>
                     {experiment.name}
                 </Anchor>
             </Table.Td>
@@ -99,8 +93,8 @@ function ExperimentRow({ projectId, experiment }: { projectId: number; experimen
     )
 }
 
-function ExperimentRowActions({ projectId, experiment }: { projectId: number; experiment: ExperimentSummary }) {
-    const clone = useCloneExperiment(projectId)
+function ExperimentRowActions({ projectId, experiment }: { projectId: Id; experiment: ExperimentSummary }) {
+    const clone = useCloneExperiment(experiment.id)
     const remove = useDeleteExperiment(projectId)
 
     const confirmDelete = () =>
@@ -123,7 +117,7 @@ function ExperimentRowActions({ projectId, experiment }: { projectId: number; ex
                 <Menu.Dropdown>
                     <Menu.Item
                         leftSection={<IconCopy size={16} />}
-                        onClick={() => clone.mutate(experiment.id, { onError: notifyProblem })}
+                        onClick={() => clone.mutate(undefined, { onError: notifyProblem })}
                     >
                         Clone to draft
                     </Menu.Item>

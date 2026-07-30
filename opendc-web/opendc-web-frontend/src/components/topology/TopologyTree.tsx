@@ -1,7 +1,7 @@
 "use client"
 
 import { type Selection, isClusterSelected } from "@/components/topology/selection"
-import type { ValidationIssue } from "@/lib/api/types"
+import type { DocumentIssue } from "@/lib/api/types"
 import type { TopologyPlan } from "@/lib/topology/edits"
 import { clusterCount, clusterName, hostCount, hostName } from "@/lib/topology/spec"
 import { issuesUnder } from "@/lib/topology/validation"
@@ -18,7 +18,7 @@ export function TopologyTree({
 }: {
     plan: TopologyPlan
     selection: Selection
-    issues: ValidationIssue[]
+    issues: DocumentIssue[]
     onSelectCluster: (index: number) => void
     onSelectHost: (cluster: number, host: number) => void
 }) {

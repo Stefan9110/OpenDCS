@@ -1,21 +1,18 @@
 "use client"
 
-import { notifyComingSoon, notifyProblem } from "@/components/util/feedback"
-import { useResetSampleData } from "@/lib/api/projects"
-import type { AuthenticatedSession } from "@/lib/auth/auth"
+import { BillingModal } from "@/components/user/BillingModal"
+import { DeactivateAccountModal } from "@/components/user/DeactivateAccountModal"
+import { notifyComingSoon } from "@/components/util/feedback"
+import { type AuthSession, useBilling } from "@/lib/auth/auth"
 import { Divider, NavLink } from "@mantine/core"
 import { useDisclosure } from "@mantine/hooks"
-import { IconCreditCard, IconLogout, IconRefresh, IconSettings, IconUserOff } from "@tabler/icons-react"
-import { BillingModal } from "./BillingModal"
-import { DeactivateAccountModal } from "./DeactivateAccountModal"
+import { IconCreditCard, IconLogout, IconSettings, IconUserOff } from "@tabler/icons-react"
 
-export function AccountActions({
-    session,
-    closeDrawer,
-}: Readonly<{ session: AuthenticatedSession; closeDrawer: () => void }>) {
-    const reset = useResetSampleData()
+export function AccountActions({ session, closeDrawer }: Readonly<{ session: AuthSession; closeDrawer: () => void }>) {
     const [billingOpened, billing] = useDisclosure(false)
     const [deactivateOpened, deactivation] = useDisclosure(false)
+    // Billing is only fetched once the modal that shows it is open.
+    const billingQuery = useBilling(billingOpened)
 
     function openBilling() {
         closeDrawer()
@@ -41,16 +38,6 @@ export function AccountActions({
                 leftSection={<IconLogout size={16} />}
                 onClick={() => notifyComingSoon("Signing out")}
             />
-            <NavLink
-                component="button"
-                label="Reset sample data"
-                description="Restores the seeded projects, topologies and experiments"
-                leftSection={<IconRefresh size={16} />}
-                onClick={() => {
-                    closeDrawer()
-                    reset.mutate(undefined, { onError: notifyProblem })
-                }}
-            />
             <Divider my="xs" />
             {session.account.isAdmin && (
                 <NavLink component="button" c="red" label="Admin panel" leftSection={<IconSettings size={16} />} />
@@ -64,7 +51,7 @@ export function AccountActions({
             />
             <BillingModal
                 plan={session.account.plan}
-                billing={session.account.billing}
+                billing={billingQuery.data}
                 opened={billingOpened}
                 onClose={billing.close}
             />

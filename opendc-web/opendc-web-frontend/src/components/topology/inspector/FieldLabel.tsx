@@ -1,5 +1,6 @@
 "use client"
 
+import type { UnitLabel } from "@/lib/units"
 import { Group, Text, Tooltip } from "@mantine/core"
 import { IconInfoCircle } from "@tabler/icons-react"
 import type { ReactNode } from "react"
@@ -18,7 +19,7 @@ export function FieldLabel({ label, help }: { label: string; help?: string }): R
     )
 }
 
-export function UnitAdornment({ unit }: { unit: string }) {
+export function UnitAdornment({ unit }: { unit: UnitLabel }) {
     return (
         <Text size="xs" c="dimmed" pr={8}>
             {unit}

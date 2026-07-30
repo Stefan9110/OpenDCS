@@ -1,32 +1,36 @@
 import { budgetColor, budgetPercent, formatBudgetUsage, formatResetsAt } from "@/components/user/accountFormat"
-import type { BudgetWindow } from "@/lib/api/types"
+import type { BudgetWindow, SimulationCap } from "@/lib/api/types"
 import { describe, expect, it } from "vitest"
+
+const limited = (seconds: number): SimulationCap => ({ type: "limited", seconds })
+const unlimited: SimulationCap = { type: "unlimited" }
 
 function window(overrides: Partial<BudgetWindow> = {}): BudgetWindow {
     return {
         period: "week",
         usedSeconds: 1800,
-        budgetSeconds: 3600,
+        reservedSeconds: 0,
+        cap: limited(3600),
         resetsAt: "2026-07-25T18:30:00Z",
         ...overrides,
     }
 }
 
 describe("budgetPercent", () => {
-    it("reports an unlimited budget as unconsumed rather than as full", () => {
-        expect(budgetPercent(window({ budgetSeconds: "infinity", usedSeconds: 999_999 }))).toBe(0)
+    it("reports an uncapped window as unconsumed rather than as full", () => {
+        expect(budgetPercent(window({ cap: unlimited, usedSeconds: 999_999 }))).toBe(0)
     })
 
-    it("treats a zero budget as fully consumed instead of dividing by zero", () => {
-        expect(budgetPercent(window({ budgetSeconds: 0, usedSeconds: 0 }))).toBe(100)
+    it("treats a zero cap as fully consumed instead of dividing by zero", () => {
+        expect(budgetPercent(window({ cap: limited(0), usedSeconds: 0 }))).toBe(100)
     })
 
-    it("clamps a budget that has been overspent", () => {
-        expect(budgetPercent(window({ budgetSeconds: 100, usedSeconds: 500 }))).toBe(100)
+    it("clamps a cap that has been overspent", () => {
+        expect(budgetPercent(window({ cap: limited(100), usedSeconds: 500 }))).toBe(100)
     })
 
     it("rounds to the nearest whole percent", () => {
-        expect(budgetPercent(window({ budgetSeconds: 3600, usedSeconds: 1800 }))).toBe(50)
+        expect(budgetPercent(window({ cap: limited(3600), usedSeconds: 1800 }))).toBe(50)
     })
 })
 
@@ -40,14 +44,12 @@ describe("budgetColor", () => {
 })
 
 describe("formatBudgetUsage", () => {
-    it("names an unlimited allowance in words rather than as a symbol", () => {
-        expect(formatBudgetUsage(window({ budgetSeconds: "infinity", usedSeconds: 3480 }))).toBe(
-            "58 / unlimited simulation min",
-        )
+    it("names an uncapped allowance in words rather than as a symbol", () => {
+        expect(formatBudgetUsage(window({ cap: unlimited, usedSeconds: 3480 }))).toBe("58 / unlimited simulation min")
     })
 
     it("rounds partial minutes up so consumed time is never understated", () => {
-        expect(formatBudgetUsage(window({ usedSeconds: 61, budgetSeconds: 119 }))).toBe("2 / 2 simulation min")
+        expect(formatBudgetUsage(window({ usedSeconds: 61, cap: limited(119) }))).toBe("2 / 2 simulation min")
     })
 })
 

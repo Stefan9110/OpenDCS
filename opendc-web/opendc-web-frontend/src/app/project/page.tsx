@@ -2,19 +2,13 @@
 
 import { AppShell } from "@/components/layout/AppShell"
 import { ProjectView } from "@/components/project/ProjectView"
-import { Center, Loader } from "@mantine/core"
+import { PageGhost } from "@/components/util/Ghost"
 import { Suspense } from "react"
 
 export default function ProjectPage() {
     return (
         <AppShell>
-            <Suspense
-                fallback={
-                    <Center py="xl">
-                        <Loader size="sm" />
-                    </Center>
-                }
-            >
+            <Suspense fallback={<PageGhost />}>
                 <ProjectView />
             </Suspense>
         </AppShell>

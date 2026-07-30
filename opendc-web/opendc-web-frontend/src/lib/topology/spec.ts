@@ -145,7 +145,6 @@ export type TopologySpec = z.infer<typeof topologySpecSchema>
 
 export const DEFAULT_CLUSTER_NAME = "Cluster"
 export const DEFAULT_HOST_NAME = "Host"
-export const DEFAULT_POWER_SOURCE_NAME = "PowerSource"
 export const DEFAULT_COUNT = 1
 export const DEFAULT_POWER_MODEL_TYPE = "linear"
 

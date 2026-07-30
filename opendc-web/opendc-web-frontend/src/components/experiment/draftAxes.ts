@@ -1,5 +1,4 @@
 import { topologyLabel } from "@/components/experiment/axisLabels"
-import { documentHash } from "@/lib/api/client"
 import type { CatalogEntry, TopologyTemplate } from "@/lib/api/types"
 import {
     type AllocationPolicySpec,
@@ -61,13 +60,23 @@ export function catalogChoices(entries: CatalogEntry[]): AxisChoice[] {
     }))
 }
 
+// An experiment stores a copy of the topology it ran, not a reference to the template it came from,
+// so the editor recognises the copy by its content. The server's topologyHash cannot be used here
+// because the client cannot reproduce it: hashing happens over canonical bytes the server produces.
+// Both documents do arrive from that same canonical form, and one serializer emits one field order,
+// so stringifying is a sound comparison. If that ever stopped holding, the axis would simply show
+// the entry as unsaved instead of preselecting its template.
+function documentKey(topology: TopologySpec): string {
+    return JSON.stringify(topology)
+}
+
 export function bindTopologies(entries: TopologySpec[], templates: TopologyTemplate[]): AxisBinding<TopologySpec> {
     const byId = new Map(templates.map((template) => [String(template.id), template]))
-    const byHash = new Map(templates.map((template) => [template.topologyHash, String(template.id)]))
+    const byContent = new Map(templates.map((template) => [documentKey(template.topology), String(template.id)]))
 
     return bindAxis(
         entries,
-        (topology) => byHash.get(documentHash(topology)),
+        (topology) => byContent.get(documentKey(topology)),
         (topology) => `${topologyLabel(topology)}, no longer a saved topology`,
         (value) => byId.get(value)?.topology,
         templates.map((template) => ({

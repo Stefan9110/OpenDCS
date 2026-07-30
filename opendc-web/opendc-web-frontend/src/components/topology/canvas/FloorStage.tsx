@@ -14,7 +14,7 @@ import {
 import { useCanvasPalette } from "@/components/topology/canvas/palette"
 import { useHardwareIcons } from "@/components/topology/canvas/useHardwareIcons"
 import { type Selection, isClusterSelected } from "@/components/topology/selection"
-import type { ValidationIssue } from "@/lib/api/types"
+import type { DocumentIssue } from "@/lib/api/types"
 import type { TopologyPlan } from "@/lib/topology/edits"
 import type { FloorCell } from "@/lib/topology/layout"
 import { issuesUnder } from "@/lib/topology/validation"
@@ -36,7 +36,7 @@ export interface ZoomCommand {
 export interface FloorStageProps {
     plan: TopologyPlan
     selection: Selection
-    issues: ValidationIssue[]
+    issues: DocumentIssue[]
     zoom: ZoomCommand
     onCreate: (cell: FloorCell) => void
     onSelect: (index: number, additive: boolean) => void

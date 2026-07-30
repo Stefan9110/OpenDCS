@@ -5,7 +5,7 @@ import { useCatalog } from "@/lib/api/catalogs"
 import type { CatalogName } from "@/lib/api/types"
 import { Select, Text, Tooltip } from "@mantine/core"
 
-export type CatalogKind = CatalogName | "traces" | "power-sources"
+export type CatalogKind = CatalogName | "traces"
 
 export function CatalogSelect({
     label,
@@ -14,7 +14,6 @@ export function CatalogSelect({
     onChange,
     clearable = false,
     placeholder,
-    extraOptions = [],
 }: {
     label: string
     catalog: CatalogKind
@@ -22,12 +21,11 @@ export function CatalogSelect({
     onChange: (value: string | null) => void
     clearable?: boolean
     placeholder?: string
-    extraOptions?: string[]
 }) {
     const entries = useCatalog(catalog)
     const known = entries.data ?? []
     const descriptions = new Map(known.map((entry) => [entry.id, entry.description]))
-    const options = [...new Set([...known.map((entry) => entry.id), ...extraOptions])]
+    const options = known.map((entry) => entry.id)
     const selected = value === null ? undefined : descriptions.get(value)
 
     return (

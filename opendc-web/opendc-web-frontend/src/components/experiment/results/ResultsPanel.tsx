@@ -12,6 +12,7 @@ import {
     metricOptions,
     resultsCsv,
 } from "@/components/experiment/results/resultsView"
+import { PanelGhost } from "@/components/util/Ghost"
 import { QueryState } from "@/components/util/QueryState"
 import { useExperimentResults } from "@/lib/api/experiments"
 import type { Experiment } from "@/lib/api/types"
@@ -27,8 +28,8 @@ import { ActionIcon, Alert, Button, Group, Paper, Select, Stack, Text, Title, To
 import { IconDownload, IconFlask, IconInfoCircle } from "@tabler/icons-react"
 import { type ReactNode, useState } from "react"
 
-export function ResultsPanel({ projectId, experiment }: { projectId: number; experiment: Experiment }) {
-    const results = useExperimentResults(projectId, experiment.id)
+export function ResultsPanel({ experiment }: { experiment: Experiment }) {
+    const results = useExperimentResults(experiment.id)
 
     if (experiment.state === "draft") {
         return (
@@ -39,7 +40,7 @@ export function ResultsPanel({ projectId, experiment }: { projectId: number; exp
     }
 
     return (
-        <QueryState query={results} loadingLabel="Loading results">
+        <QueryState query={results} ghost={<PanelGhost height={260} />}>
             {(loaded) => <LoadedResults experiment={experiment} results={loaded} />}
         </QueryState>
     )

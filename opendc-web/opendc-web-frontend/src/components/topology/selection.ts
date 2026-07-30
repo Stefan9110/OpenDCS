@@ -13,6 +13,16 @@ export function selectHost(cluster: number, host: number): Selection {
     return { kind: "host", cluster, host }
 }
 
+/**
+ * Opens a host group, or closes it if it is the one already open. Without the second half there is
+ * no way back out of a group short of Escape, which drops the cluster as well and throws the
+ * inspector back to the whole topology.
+ */
+export function toggleHost(selection: Selection, cluster: number, host: number): Selection {
+    const open = selection.kind === "host" && selection.cluster === cluster && selection.host === host
+    return open ? selectCluster(cluster) : selectHost(cluster, host)
+}
+
 export function selectedClusters(selection: Selection): number[] {
     if (selection.kind === "clusters") return selection.indices
     if (selection.kind === "host") return [selection.cluster]

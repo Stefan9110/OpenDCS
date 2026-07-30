@@ -8,6 +8,7 @@ import {
     selectCluster,
     selectHost,
     selectedClusters,
+    toggleHost,
 } from "@/components/topology/selection"
 import { describe, expect, it } from "vitest"
 
@@ -15,6 +16,18 @@ describe("selection", () => {
     it("treats a selected host as also selecting its cluster", () => {
         expect(selectedClusters(selectHost(2, 1))).toEqual([2])
         expect(isClusterSelected(selectHost(2, 1), 2)).toBe(true)
+    })
+
+    // Reopening the group that is already open has to close it, or the inspector traps the reader
+    // in a host with no way back to the cluster except Escape, which drops the cluster too.
+    it("closes the open host group when it is clicked again, keeping its cluster selected", () => {
+        expect(toggleHost(selectHost(2, 1), 2, 1)).toEqual(selectCluster(2))
+        expect(toggleHost(selectCluster(2), 2, 1)).toEqual(selectHost(2, 1))
+    })
+
+    it("moves between host groups rather than closing when a different one is clicked", () => {
+        expect(toggleHost(selectHost(2, 1), 2, 0)).toEqual(selectHost(2, 0))
+        expect(toggleHost(selectHost(2, 1), 3, 1)).toEqual(selectHost(3, 1))
     })
 
     it("adds and removes clusters when shift clicking, falling back to the whole topology", () => {

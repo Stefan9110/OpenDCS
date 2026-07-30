@@ -1,41 +1,25 @@
-import type { CatalogEntry, CatalogName } from "@/lib/api/types"
-import {
-    BATTERY_POLICY_CATALOG,
-    CATALOG_DESCRIPTIONS,
-    FAILURE_PREFAB_CATALOG,
-    HOST_TEMPLATES,
-    type HostTemplate,
-    POWER_MODEL_CATALOG,
-    POWER_SOURCE_CATALOG,
-    SCHEDULER_CATALOG,
-    TRACE_CATALOG,
-} from "@/lib/sample/dataset"
+import { apiRequest } from "@/lib/api/client"
+import type { CatalogEntry, CatalogName, HostTemplate } from "@/lib/api/types"
 import { useQuery } from "@tanstack/react-query"
 
 export const catalogKeys = {
-    detail: (catalog: CatalogName | "traces" | "power-sources" | "host-templates") => ["catalogs", catalog] as const,
+    detail: (catalog: CatalogName | "traces" | "host-templates") => ["catalogs", catalog] as const,
 }
 
-const CATALOGS: Record<CatalogName | "traces" | "power-sources", string[]> = {
-    schedulers: SCHEDULER_CATALOG,
-    "failure-prefabs": FAILURE_PREFAB_CATALOG,
-    "power-models": POWER_MODEL_CATALOG,
-    "battery-policies": BATTERY_POLICY_CATALOG,
-    "export-columns": [],
-    traces: TRACE_CATALOG,
-    "power-sources": POWER_SOURCE_CATALOG,
+interface TraceSummary {
+    slug: string
 }
 
-export function useCatalog(catalog: CatalogName | "traces" | "power-sources") {
+export function useCatalog(catalog: CatalogName | "traces") {
     return useQuery({
         queryKey: catalogKeys.detail(catalog),
-        queryFn: async (): Promise<CatalogEntry[]> =>
-            (CATALOGS[catalog] ?? []).map((id) => ({
-                id,
-                label: id,
-                group: catalog,
-                ...(CATALOG_DESCRIPTIONS[id] ? { description: CATALOG_DESCRIPTIONS[id] } : {}),
-            })),
+        queryFn: async (): Promise<CatalogEntry[]> => {
+            if (catalog === "traces") {
+                const traces = await apiRequest<TraceSummary[]>("api/v1/traces")
+                return traces.map((trace) => ({ id: trace.slug, label: trace.slug, group: "traces" }))
+            }
+            return apiRequest<CatalogEntry[]>(`api/v1/catalogs/${catalog}`)
+        },
         staleTime: Number.POSITIVE_INFINITY,
     })
 }
@@ -43,7 +27,7 @@ export function useCatalog(catalog: CatalogName | "traces" | "power-sources") {
 export function useHostTemplates() {
     return useQuery({
         queryKey: catalogKeys.detail("host-templates"),
-        queryFn: async (): Promise<HostTemplate[]> => HOST_TEMPLATES,
+        queryFn: () => apiRequest<HostTemplate[]>("api/v1/catalogs/host-templates"),
         staleTime: Number.POSITIVE_INFINITY,
     })
 }

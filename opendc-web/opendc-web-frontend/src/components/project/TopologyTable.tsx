@@ -3,14 +3,14 @@
 import { formatCount, formatMemory, formatPower, formatUpdatedAt } from "@/components/format"
 import { notifyProblem } from "@/components/util/feedback"
 import { useCreateTopology, useDeleteTopology } from "@/lib/api/topologies"
-import type { TopologyTemplate } from "@/lib/api/types"
+import type { Id, TopologyTemplate } from "@/lib/api/types"
 import { topologyCapacity } from "@/lib/topology/capacity"
 import { ActionIcon, Anchor, Group, Menu, Table, Text } from "@mantine/core"
 import { modals } from "@mantine/modals"
 import { IconCopy, IconDots, IconDownload, IconTrash } from "@tabler/icons-react"
 import Link from "next/link"
 
-export function TopologyTable({ projectId, templates }: { projectId: number; templates: TopologyTemplate[] }) {
+export function TopologyTable({ projectId, templates }: { projectId: Id; templates: TopologyTemplate[] }) {
     if (templates.length === 0) {
         return (
             <Text c="dimmed" size="sm">
@@ -44,12 +44,12 @@ export function TopologyTable({ projectId, templates }: { projectId: number; tem
     )
 }
 
-function TopologyRow({ projectId, template }: { projectId: number; template: TopologyTemplate }) {
+function TopologyRow({ projectId, template }: { projectId: Id; template: TopologyTemplate }) {
     const capacity = topologyCapacity(template.topology)
     return (
         <Table.Tr>
             <Table.Td>
-                <Anchor component={Link} href={`/topology?project=${projectId}&topology=${template.id}`} fw={500}>
+                <Anchor component={Link} href={`/topology?id=${template.id}`} fw={500}>
                     {template.name}
                 </Anchor>
             </Table.Td>
@@ -70,7 +70,7 @@ function TopologyRow({ projectId, template }: { projectId: number; template: Top
     )
 }
 
-function TopologyRowActions({ projectId, template }: { projectId: number; template: TopologyTemplate }) {
+function TopologyRowActions({ projectId, template }: { projectId: Id; template: TopologyTemplate }) {
     const duplicate = useCreateTopology(projectId)
     const remove = useDeleteTopology(projectId)
 

@@ -2,19 +2,13 @@
 
 import { ExperimentView } from "@/components/experiment/ExperimentView"
 import { AppShell } from "@/components/layout/AppShell"
-import { Center, Loader } from "@mantine/core"
+import { PageGhost } from "@/components/util/Ghost"
 import { Suspense } from "react"
 
 export default function ExperimentPage() {
     return (
         <AppShell>
-            <Suspense
-                fallback={
-                    <Center py="xl">
-                        <Loader size="sm" />
-                    </Center>
-                }
-            >
+            <Suspense fallback={<PageGhost />}>
                 <ExperimentView />
             </Suspense>
         </AppShell>

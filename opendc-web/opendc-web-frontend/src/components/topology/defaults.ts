@@ -12,7 +12,7 @@ export function newCluster(index: number, host: HostSpec = STARTER_HOST): Cluste
     return {
         name: `Cluster ${index}`,
         hosts: [host],
-        powerSource: { name: "grid", maxPower: "10 kWatts" },
+        powerSource: { maxPower: "10 kWatts" },
     }
 }
 

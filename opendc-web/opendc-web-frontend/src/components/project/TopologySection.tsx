@@ -6,12 +6,12 @@ import { openNamePrompt } from "@/components/util/NamePrompt"
 import { notifyProblem } from "@/components/util/feedback"
 import { ApiError, problemFromZod } from "@/lib/api/client"
 import { useCreateTopology } from "@/lib/api/topologies"
-import type { TopologyTemplate } from "@/lib/api/types"
+import type { Id, TopologyTemplate } from "@/lib/api/types"
 import { topologySpecSchema } from "@/lib/topology/spec"
 import { Button, FileButton, Group, Paper, Stack, Title } from "@mantine/core"
 import { IconPlus, IconUpload } from "@tabler/icons-react"
 
-export function TopologySection({ projectId, templates }: { projectId: number; templates: TopologyTemplate[] }) {
+export function TopologySection({ projectId, templates }: { projectId: Id; templates: TopologyTemplate[] }) {
     const create = useCreateTopology(projectId)
 
     const promptCreate = () =>

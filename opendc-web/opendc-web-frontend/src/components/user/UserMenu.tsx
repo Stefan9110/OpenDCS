@@ -2,16 +2,26 @@
 
 import { UserDrawer } from "@/components/user/UserDrawer"
 import { useAuth } from "@/lib/auth/auth"
-import { Avatar, Button, Text } from "@mantine/core"
+import { Avatar, Button, Skeleton, Text } from "@mantine/core"
 import { useDisclosure } from "@mantine/hooks"
 
 export function UserMenu() {
-    const authSession = useAuth()
-    const { userName, avatarUrl } = authSession
+    const auth = useAuth()
     const [opened, { open, close }] = useDisclosure(false)
+
+    if (auth.status === "loading") {
+        return <Skeleton height={32} width={130} radius="lg" />
+    }
+    // Signed out, or the API is unreachable: either way the gate is explaining it in the main area
+    // and there is no account here to open.
+    if (auth.status !== "signedIn") {
+        return undefined
+    }
+
+    const { userName, avatarUrl } = auth.session
     return (
         <>
-            <UserDrawer opened={opened} close={close} authSession={authSession} />
+            <UserDrawer opened={opened} close={close} session={auth.session} />
             <Button
                 variant="subtle"
                 color="gray"

@@ -4,7 +4,7 @@ import { ClusterPowerFields } from "@/components/topology/inspector/ClusterPower
 import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
 import { HostGroupList } from "@/components/topology/inspector/HostGroupList"
 import { HostInspector } from "@/components/topology/inspector/HostInspector"
-import type { ValidationIssue } from "@/lib/api/types"
+import type { DocumentIssue } from "@/lib/api/types"
 import { clusterCapacity } from "@/lib/topology/capacity"
 import type { TopologyPlan } from "@/lib/topology/edits"
 import { addHost, duplicateHost, removeHost, updateCluster, updateHost } from "@/lib/topology/edits"
@@ -24,7 +24,7 @@ export function ClusterInspector({
     cluster: ClusterSpec
     index: number
     selectedHost: number
-    issues: ValidationIssue[]
+    issues: DocumentIssue[]
     onSelectHost: (cluster: number, host: number) => void
     apply: (change: (plan: TopologyPlan) => TopologyPlan) => void
 }) {

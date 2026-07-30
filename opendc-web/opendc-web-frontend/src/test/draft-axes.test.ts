@@ -1,5 +1,4 @@
 import { bindFailureModels, bindSchedulers, bindTopologies, bindWorkloads } from "@/components/experiment/draftAxes"
-import { documentHash } from "@/lib/api/client"
 import type { CatalogEntry, TopologyTemplate } from "@/lib/api/types"
 import type { AllocationPolicySpec, FailureModelSpec, WorkloadSpec } from "@/lib/experiment/spec"
 import type { TopologySpec } from "@/lib/topology/spec"
@@ -13,33 +12,37 @@ function topology(name: string): TopologySpec {
     return { clusters: [{ name, hosts: [{ cpu: { coreCount: 8, coreSpeed: "3 GHz" }, memory: { size: "64 GiB" } }] }] }
 }
 
-function template(id: number, name: string): TopologyTemplate {
+function template(id: string, name: string): TopologyTemplate {
     const spec = topology(name)
     return {
         id,
-        projectId: 1,
-        number: id,
+        projectId: "project-1",
         name,
         topology: spec,
-        topologyHash: documentHash(spec),
+        // Deliberately not derived from the document: matching is by content, so a hash the client
+        // could never reproduce must not be what makes these tests pass.
+        topologyHash: `server-hash-${id}`,
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
     }
 }
 
-const TEMPLATES = [template(7, "Production baseline"), template(8, "Edge sandbox")]
+const TEMPLATES = [template("baseline-id", "Production baseline"), template("sandbox-id", "Edge sandbox")]
 
 const named = (name: string): WorkloadSpec => ({ type: "trace", source: { type: "named", name } })
 
 describe("topology axis", () => {
     it("selects the template a spec topology came from, by content and not by position", () => {
         const bound = bindTopologies([topology("Edge sandbox")], TEMPLATES)
-        expect(bound.selected).toEqual(["8"])
+        expect(bound.selected).toEqual(["sandbox-id"])
     })
 
     it("rebuilds the spec from the chosen templates, in the order they were chosen", () => {
         const bound = bindTopologies([topology("Production baseline")], TEMPLATES)
-        expect(bound.rebuild(["8", "7"])).toEqual([topology("Edge sandbox"), topology("Production baseline")])
+        expect(bound.rebuild(["sandbox-id", "baseline-id"])).toEqual([
+            topology("Edge sandbox"),
+            topology("Production baseline"),
+        ])
     })
 
     it("keeps a topology that no longer matches any template instead of dropping it", () => {

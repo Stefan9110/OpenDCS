@@ -4,9 +4,40 @@ import { MantineProvider } from "@mantine/core"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { cleanup, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const noop = () => {}
+
+// The menu only renders once the server has answered who the request acts as, so both session
+// endpoints have to resolve before the drawer exists to open.
+function mockSession() {
+    const profile = {
+        displayName: "Developer",
+        plan: "free",
+        isAdmin: true,
+        projectCount: 0,
+        budgets: [
+            {
+                period: "session",
+                usedSeconds: 0,
+                reservedSeconds: 0,
+                cap: { type: "unlimited" },
+                resetsAt: "2026-07-30T00:00:00Z",
+            },
+        ],
+    }
+    vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+            const url = String(input)
+            const body = url.endsWith("/config") ? { authMode: "developer" } : profile
+            return new Response(JSON.stringify(body), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+            })
+        }),
+    )
+}
 
 function mockSystemPrefersDark(prefersDark: boolean) {
     window.matchMedia = ((query: string) => ({
@@ -36,12 +67,15 @@ async function openUserDrawer() {
         </QueryClientProvider>,
     )
     const user = userEvent.setup()
-    await user.click(screen.getByRole("button", { name: "Open account menu" }))
+    await user.click(await screen.findByRole("button", { name: "Open account menu" }))
     return user
 }
 
+beforeEach(mockSession)
+
 afterEach(() => {
     cleanup()
+    vi.unstubAllGlobals()
     window.localStorage?.clear()
     delete document.documentElement.dataset.mantineColorScheme
 })

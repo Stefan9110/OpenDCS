@@ -1,4 +1,10 @@
-import { type ExperimentSpec, scenarioCount } from "@/lib/experiment/spec"
+import {
+    AXIS_ORDER,
+    type ExperimentSpec,
+    experimentAxes,
+    scenarioCoordinates,
+    scenarioCount,
+} from "@/lib/experiment/spec"
 import {
     type ExperimentState,
     type ScenarioExecutionState,
@@ -7,7 +13,6 @@ import {
     isTerminalExperiment,
     progressFraction,
 } from "@/lib/experiment/status"
-import { NOT_CANCELLED, deriveScenarioStatuses, expandScenarios } from "@/lib/sample/execution"
 import type { TopologySpec } from "@/lib/topology/spec"
 import { describe, expect, it } from "vitest"
 
@@ -43,7 +48,6 @@ describe("scenarioCount", () => {
 
     it("collapses to nothing when an axis is explicitly empty", () => {
         expect(scenarioCount(spec({ workloads: [] }))).toBe(0)
-        expect(expandScenarios(spec({ workloads: [] }))).toEqual([])
     })
 
     it("does not multiply by runs, which repeat inside a scenario", () => {
@@ -51,9 +55,12 @@ describe("scenarioCount", () => {
     })
 })
 
-describe("expandScenarios", () => {
+// The server flattens scenarios with the same mixed-radix rule (Cartesian.expand in the SDK) and
+// files results under the flattened index. If the two orderings ever disagree, every chart is
+// attributed to the wrong scenario, so the ordering is pinned here.
+describe("scenarioCoordinates", () => {
     it("varies axes from least to most significant exactly as the backend does", () => {
-        const expanded = expandScenarios(
+        const axes = experimentAxes(
             spec({
                 topologies: [topology("t0"), topology("t1")],
                 workloads: [trace("w0"), trace("w1")],
@@ -61,41 +68,32 @@ describe("expandScenarios", () => {
             }),
         )
 
-        const shape = expanded.map((scenario) => [
-            scenario.topology.clusters[0]?.name,
-            scenario.workload.type === "trace" && scenario.workload.source.type === "named"
-                ? scenario.workload.source.name
-                : "",
-            scenario.maxNumFailures,
-        ])
+        const shape = Array.from({ length: 8 }, (_, index) => {
+            const at = scenarioCoordinates(axes, index)
+            return [at.topologies, at.workloads, at.maxNumFailures]
+        })
 
         expect(shape).toEqual([
-            ["t0", "w0", 1],
-            ["t0", "w0", 2],
-            ["t0", "w1", 1],
-            ["t0", "w1", 2],
-            ["t1", "w0", 1],
-            ["t1", "w0", 2],
-            ["t1", "w1", 1],
-            ["t1", "w1", 2],
+            [0, 0, 0],
+            [0, 0, 1],
+            [0, 1, 0],
+            [0, 1, 1],
+            [1, 0, 0],
+            [1, 0, 1],
+            [1, 1, 0],
+            [1, 1, 1],
         ])
     })
 
-    it("stamps each scenario with its flattened index, which is the work shard identity", () => {
-        const expanded = expandScenarios(spec({ maxNumFailures: [1, 2, 3] }))
-        expect(expanded.map((scenario) => scenario.id)).toEqual([0, 1, 2])
-        expect(expanded.map((scenario) => scenario.name)).toEqual(["0", "1", "2"])
-    })
+    it("leaves a single-entry axis pinned at its only value", () => {
+        const axes = experimentAxes(spec({ maxNumFailures: [1, 2, 3] }))
+        const singleton = AXIS_ORDER.filter((key) => axes[key].length === 1)
 
-    it("carries runs and seed onto every scenario instead of expanding them", () => {
-        const expanded = expandScenarios(spec({ runs: 4, initialSeed: 7, maxNumFailures: [1, 2] }))
-        expect(expanded.every((scenario) => scenario.runs === 4 && scenario.initialSeed === 7)).toBe(true)
-    })
-
-    it("keeps a null checkpoint axis entry as a real absent checkpoint", () => {
-        const expanded = expandScenarios(spec({ checkpointModels: [null, { interval: "2 hours" }] }))
-        expect(expanded[0]?.checkpointModel).toBeNull()
-        expect(expanded[1]?.checkpointModel).toEqual({ interval: "2 hours" })
+        for (const index of [0, 1, 2]) {
+            const at = scenarioCoordinates(axes, index)
+            expect(singleton.every((key) => at[key] === 0)).toBe(true)
+            expect(at.maxNumFailures).toBe(index)
+        }
     })
 })
 
@@ -152,77 +150,12 @@ describe("progress", () => {
         ).toEqual({ completedTasks: 7, totalTasks: 20 })
     })
 
-    it("reports no progress rather than dividing by zero for an empty experiment", () => {
+    it("reports no progress rather than dividing by zero when no task total is known yet", () => {
         expect(progressFraction({ completedTasks: 0, totalTasks: 0 })).toBe(0)
         expect(progressFraction(aggregateProgress([]))).toBe(0)
     })
 
     it("clamps a runner that over reports completed tasks", () => {
         expect(progressFraction({ completedTasks: 25, totalTasks: 10 })).toBe(1)
-    })
-})
-
-describe("deriveScenarioStatuses", () => {
-    const schedule = { seed: "abc", scenarioCount: 12, submittedAtMs: 1_000_000, cancelledAtMs: NOT_CANCELLED }
-    const states = (nowMs: number) => deriveScenarioStatuses(schedule, nowMs).map((entry) => entry.state)
-
-    it("is a pure function of the clock, so the same instant always reads the same", () => {
-        expect(deriveScenarioStatuses(schedule, 1_100_000)).toEqual(deriveScenarioStatuses(schedule, 1_100_000))
-    })
-
-    it("leaves everything queued at the moment of submission", () => {
-        expect(states(schedule.submittedAtMs)).toEqual(new Array(12).fill("queued"))
-    })
-
-    it("runs only as many scenarios at once as there are slots", () => {
-        const running = states(schedule.submittedAtMs + 1_000).filter((state) => state === "running")
-        expect(running).toHaveLength(4)
-    })
-
-    it("settles every scenario once enough time has passed", () => {
-        expect(states(schedule.submittedAtMs + 10_000_000).every((s) => s === "succeeded" || s === "failed")).toBe(true)
-    })
-
-    it("produces a mix of outcomes so the viewer has a partial experiment to show", () => {
-        const settled = states(schedule.submittedAtMs + 10_000_000)
-        expect(foldExperimentState(settled)).toBe("partial")
-    })
-
-    it("reports a failed scenario with the exit information that explains it", () => {
-        const failed = deriveScenarioStatuses(schedule, schedule.submittedAtMs + 10_000_000).find(
-            (entry) => entry.state === "failed",
-        )
-        expect(failed?.exitInfo?.reason).toBe("oom")
-        expect(failed?.completedTasks).toBeLessThan(failed?.totalTasks ?? 0)
-    })
-
-    it("counts every task of a succeeded scenario as done, with no rounding shortfall", () => {
-        const done = deriveScenarioStatuses(schedule, schedule.submittedAtMs + 10_000_000).filter(
-            (entry) => entry.state === "succeeded",
-        )
-        expect(done.every((entry) => entry.completedTasks === entry.totalTasks)).toBe(true)
-    })
-
-    it("treats a clock that runs backwards as nothing having started", () => {
-        expect(states(schedule.submittedAtMs - 60_000)).toEqual(new Array(12).fill("queued"))
-    })
-
-    it("freezes progress at the moment of cancellation instead of advancing past it", () => {
-        const cancelledAtMs = schedule.submittedAtMs + 20_000
-        const cancelled = { ...schedule, cancelledAtMs }
-        const atCancel = deriveScenarioStatuses(cancelled, cancelledAtMs)
-        const longAfter = deriveScenarioStatuses(cancelled, cancelledAtMs + 10_000_000)
-        expect(longAfter).toEqual(atCancel)
-    })
-
-    it("keeps scenarios that already finished before a cancellation", () => {
-        const cancelledAtMs = schedule.submittedAtMs + 10_000_000
-        const settled = deriveScenarioStatuses({ ...schedule, cancelledAtMs }, cancelledAtMs)
-        expect(settled.some((entry) => entry.state === "succeeded")).toBe(true)
-        expect(settled.every((entry) => entry.state !== "cancelled")).toBe(true)
-    })
-
-    it("has nothing to report for an experiment with no scenarios", () => {
-        expect(deriveScenarioStatuses({ ...schedule, scenarioCount: 0 }, Date.now())).toEqual([])
     })
 })

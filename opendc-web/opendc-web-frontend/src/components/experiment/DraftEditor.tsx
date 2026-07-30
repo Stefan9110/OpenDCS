@@ -23,10 +23,10 @@ import { useState } from "react"
 
 const SAVE_DELAY_MS = 600
 
-export function DraftEditor({ projectId, experiment }: { projectId: number; experiment: Experiment }) {
+export function DraftEditor({ experiment }: { experiment: Experiment }) {
     const [spec, setSpec] = useState(experiment.spec)
-    const save = useSaveExperimentDraft(projectId, experiment.id)
-    const templates = useTopologies(projectId)
+    const save = useSaveExperimentDraft(experiment.id)
+    const templates = useTopologies(experiment.projectId)
     const traces = useCatalog("traces")
     const schedulers = useCatalog("schedulers")
     const prefabs = useCatalog("failure-prefabs")

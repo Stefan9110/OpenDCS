@@ -27,6 +27,7 @@ mordant = "3.0.2"
 gradle-node = "7.1.0"
 node = "22.13.0"
 pnpm = "11.3.0"
+aws-sdk = "2.31.78"
 parquet = "1.13.1"
 progressbar = "0.10.0"
 quarkus = "3.33.1"
@@ -95,6 +96,9 @@ quarkus-hibernate-validator = { module = "io.quarkus:quarkus-hibernate-validator
 quarkus-jdbc-h2 = { module = "io.quarkus:quarkus-jdbc-h2" }
 quarkus-jdbc-postgresql = { module = "io.quarkus:quarkus-jdbc-postgresql" }
 quarkus-flyway = { module = "io.quarkus:quarkus-flyway" }
+quarkus-rest = { module = "io.quarkus:quarkus-rest" }
+quarkus-rest-kotlin-serialization = { module = "io.quarkus:quarkus-rest-kotlin-serialization" }
+quarkus-hibernate-orm-panache-kotlin = { module = "io.quarkus:quarkus-hibernate-orm-panache-kotlin" }
 hypersistence-utils-hibernate = { module = "io.hypersistence:hypersistence-utils-hibernate-71", version.ref = "hypersistence-utils" }
 quarkus-quinoa-runtime = { module = "io.quarkiverse.quinoa:quarkus-quinoa", version.ref = "quarkus-quinoa" }
 quarkus-quinoa-deployment = { module = "io.quarkiverse.quinoa:quarkus-quinoa-deployment", version.ref = "quarkus-quinoa" }
@@ -105,6 +109,13 @@ quarkus-jacoco = { module = "io.quarkus:quarkus-jacoco" }
 quarkus-panache-mock = { module = "io.quarkus:quarkus-panache-mock" }
 quarkus-test-security = { module = "io.quarkus:quarkus-test-security" }
 restassured-core = { module = "io.rest-assured:rest-assured" }
+
+# Object storage. The plain SDK rather than the Quarkus extension: object storage is a production
+# concern, and the extension validates its configuration at startup, which a dev run keeping traces
+# on disk has none of. The SDK speaks to any S3-compatible endpoint, not only AWS.
+aws-bom = { module = "software.amazon.awssdk:bom", version.ref = "aws-sdk" }
+aws-s3 = { module = "software.amazon.awssdk:s3" }
+aws-url-connection-client = { module = "software.amazon.awssdk:url-connection-client" }
 
 # Calcite (SQL)
 calcite-core = { module = "org.apache.calcite:calcite-core", version.ref = "calcite" }

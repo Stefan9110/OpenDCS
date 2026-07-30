@@ -3,10 +3,11 @@ import dayjs from "dayjs"
 
 const euro = new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR" })
 
-export function budgetPercent({ usedSeconds, budgetSeconds }: BudgetWindow): number {
-    if (budgetSeconds === "infinity") return 0
-    if (budgetSeconds <= 0) return 100
-    return Math.min(100, Math.round((usedSeconds / budgetSeconds) * 100))
+export function budgetPercent({ usedSeconds, cap }: BudgetWindow): number {
+    // An uncapped window has no proportion to show, so the bar stays empty rather than full.
+    if (cap.type === "unlimited") return 0
+    if (cap.seconds <= 0) return 100
+    return Math.min(100, Math.round((usedSeconds / cap.seconds) * 100))
 }
 
 export function budgetColor(percent: number): string {
@@ -15,8 +16,8 @@ export function budgetColor(percent: number): string {
     return "opendc"
 }
 
-export function formatBudgetUsage({ usedSeconds, budgetSeconds }: BudgetWindow): string {
-    const allowance = budgetSeconds === "infinity" ? "unlimited" : String(simulationMinutes(budgetSeconds))
+export function formatBudgetUsage({ usedSeconds, cap }: BudgetWindow): string {
+    const allowance = cap.type === "unlimited" ? "unlimited" : String(simulationMinutes(cap.seconds))
     return `${simulationMinutes(usedSeconds)} / ${allowance} simulation min`
 }
 

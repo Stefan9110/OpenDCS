@@ -10,9 +10,13 @@ export function SimulationBudget({ budgets }: Readonly<{ budgets: BudgetWindow[]
             <Text size="xs" fw={700} tt="uppercase" c="dimmed">
                 Simulation budget
             </Text>
-            {budgets.map((budget) => (
-                <BudgetBar key={budget.period} budget={budget} />
-            ))}
+            {budgets.length === 0 ? (
+                <Text size="sm" c="dimmed">
+                    This deployment does not meter simulation time.
+                </Text>
+            ) : (
+                budgets.map((budget) => <BudgetBar key={budget.period} budget={budget} />)
+            )}
         </Stack>
     )
 }

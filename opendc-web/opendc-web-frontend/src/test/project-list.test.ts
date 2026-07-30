@@ -2,14 +2,14 @@ import { filterProjects, isSearching, useProjectSearch } from "@/components/proj
 import type { Project, ProjectRole } from "@/lib/api/types"
 import { beforeEach, describe, expect, it } from "vitest"
 
-function project(id: number, name: string, role: ProjectRole): Project {
+function project(id: string, name: string, role: ProjectRole): Project {
     return { id, name, role, createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }
 }
 
 const projects = [
-    project(1, "Capacity Study", "owner"),
-    project(2, "Carbon Scheduling", "editor"),
-    project(3, "GPU Sizing", "viewer"),
+    project("capacity-id", "Capacity Study", "owner"),
+    project("carbon-id", "Carbon Scheduling", "editor"),
+    project("gpu-id", "GPU Sizing", "viewer"),
 ]
 
 const names = (found: Project[]) => found.map((entry) => entry.name)

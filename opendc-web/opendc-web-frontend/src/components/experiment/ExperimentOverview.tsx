@@ -4,19 +4,20 @@ import { AxisSummary } from "@/components/experiment/AxisSummary"
 import { DraftEditor } from "@/components/experiment/DraftEditor"
 import { RunProgress } from "@/components/experiment/RunProgress"
 import { ScenarioTable } from "@/components/experiment/ScenarioTable"
+import { TableGhost } from "@/components/util/Ghost"
 import { QueryState } from "@/components/util/QueryState"
 import { useExperimentStatus } from "@/lib/api/experiments"
 import type { Experiment } from "@/lib/api/types"
 import { Grid, Stack } from "@mantine/core"
 
-export function ExperimentOverview({ projectId, experiment }: { projectId: number; experiment: Experiment }) {
-    const status = useExperimentStatus(projectId, experiment.id)
+export function ExperimentOverview({ experiment }: { experiment: Experiment }) {
+    const status = useExperimentStatus(experiment.id)
     const isDraft = experiment.state === "draft"
 
     return (
         <Grid gutter="md">
             <Grid.Col span={{ base: 12, lg: 8 }}>
-                <QueryState query={status} loadingLabel="Loading run status">
+                <QueryState query={status} ghost={<TableGhost columns={5} rows={4} />}>
                     {(loaded) => (
                         <Stack gap="md">
                             {!isDraft && <RunProgress experiment={experiment} status={loaded} />}
@@ -27,7 +28,7 @@ export function ExperimentOverview({ projectId, experiment }: { projectId: numbe
             </Grid.Col>
             <Grid.Col span={{ base: 12, lg: 4 }}>
                 {isDraft ? (
-                    <DraftEditor projectId={projectId} experiment={experiment} />
+                    <DraftEditor experiment={experiment} />
                 ) : (
                     <AxisSummary spec={experiment.spec} estimate={experiment.estimate} />
                 )}

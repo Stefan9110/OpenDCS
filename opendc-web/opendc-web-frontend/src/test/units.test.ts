@@ -1,5 +1,7 @@
-import { type QuantityKind, formatQuantity, parseQuantity } from "@/lib/units"
+import { DEFAULT_UNIT, type QuantityKind, amountIn, formatQuantity, parseQuantity } from "@/lib/units"
 import { describe, expect, it } from "vitest"
+
+const KINDS: QuantityKind[] = ["frequency", "dataSize", "dataRate", "power"]
 
 function base(kind: QuantityKind, wire: string | number): number {
     const parsed = parseQuantity(kind, wire)
@@ -96,6 +98,32 @@ describe("formatQuantity", () => {
             ["dataRate", 1024],
         ] as Array<[QuantityKind, number]>) {
             expect(base(kind, formatQuantity(kind, value))).toBe(value)
+        }
+    })
+})
+
+describe("amountIn", () => {
+    it("counts a value in the unit its field is written in", () => {
+        expect(amountIn("frequency", 2600, "GHz")).toBe(2.6)
+        expect(amountIn("frequency", 2600, "MHz")).toBe(2600)
+        expect(amountIn("dataSize", 131_072, "GiB")).toBe(128)
+        expect(amountIn("power", 10_000, "kW")).toBe(10)
+    })
+
+    // 2600 / 1000 is 2.5999999999999996 in floating point, and the SDK's own "%f" formatter writes
+    // "10.000000 KWatts". Neither may reach the box the reader types into.
+    it("shows a clean number for values the backend wrote", () => {
+        expect(amountIn("power", base("power", "10.000000 KWatts"), "kW")).toBe(10)
+        expect(amountIn("frequency", base("frequency", "2.6 GHz"), "GHz")).toBe(2.6)
+        expect(amountIn("dataSize", base("dataSize", "1.5 GiB"), "GiB")).toBe(1.5)
+    })
+
+    // Anything written and read back in the same unit must survive the trip, or editing one field
+    // would quietly rewrite a neighbouring value every time the inspector opened.
+    it("round-trips whatever the editor writes", () => {
+        for (const kind of KINDS) {
+            const unit = DEFAULT_UNIT[kind]
+            expect(amountIn(kind, base(kind, `12.5 ${unit}`), unit), `${unit} for ${kind}`).toBe(12.5)
         }
     })
 })

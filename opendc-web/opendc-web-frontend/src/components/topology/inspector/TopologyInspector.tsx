@@ -4,7 +4,7 @@ import { formatCount, formatMemory, formatPower } from "@/components/format"
 import { ShortcutGuide } from "@/components/topology/ShortcutGuide"
 import { ClusterInspector } from "@/components/topology/inspector/ClusterInspector"
 import type { Selection } from "@/components/topology/selection"
-import type { ValidationIssue } from "@/lib/api/types"
+import type { DocumentIssue } from "@/lib/api/types"
 import { topologyCapacity, topologyPowerBudget } from "@/lib/topology/capacity"
 import type { TopologyPlan } from "@/lib/topology/edits"
 import { updateClusters } from "@/lib/topology/edits"
@@ -15,7 +15,7 @@ import { IconAlertTriangle } from "@tabler/icons-react"
 export interface InspectorProps {
     plan: TopologyPlan
     selection: Selection
-    issues: ValidationIssue[]
+    issues: DocumentIssue[]
     onSelectHost: (cluster: number, host: number) => void
     apply: (change: (plan: TopologyPlan) => TopologyPlan) => void
 }
@@ -45,7 +45,7 @@ export function TopologyInspector(props: InspectorProps) {
     )
 }
 
-function TopologyOverview({ plan, issues }: { plan: TopologyPlan; issues: ValidationIssue[] }) {
+function TopologyOverview({ plan, issues }: { plan: TopologyPlan; issues: DocumentIssue[] }) {
     const capacity = topologyCapacity(plan.topology)
     const budget = topologyPowerBudget(plan.topology)
     const overBudget = budget.status === "limited" && capacity.peakPowerW > budget.watts

@@ -14,39 +14,30 @@ import {
     selectCluster,
     selectHost,
     selectedClusters,
+    toggleHost,
 } from "@/components/topology/selection"
 import { useTopologyEditor } from "@/components/topology/useTopologyEditor"
 import { EntityBreadcrumbs } from "@/components/util/EntityBreadcrumbs"
 import { openNamePrompt } from "@/components/util/NamePrompt"
 import { useProject } from "@/lib/api/projects"
-import type { TopologyTemplate } from "@/lib/api/types"
+import type { Id, TopologyTemplate } from "@/lib/api/types"
 import { addCluster, duplicateCluster, moveCluster, removeClusters } from "@/lib/topology/edits"
 import type { FloorCell, FloorLayout } from "@/lib/topology/layout"
-import { ActionIcon, Box, Center, Loader, Stack } from "@mantine/core"
+import { ActionIcon, Box, Skeleton, Stack } from "@mantine/core"
 import { useDisclosure, useHotkeys, useMediaQuery } from "@mantine/hooks"
 import { IconPencil } from "@tabler/icons-react"
 import dynamic from "next/dynamic"
 import { useState } from "react"
 
+// The canvas is loaded on demand because konva is large. Its chunk arriving is still content
+// arriving, so the floor keeps its area rather than spinning in the middle of it.
 const FloorStage = dynamic(() => import("@/components/topology/canvas/FloorStage").then((m) => m.FloorStage), {
     ssr: false,
-    loading: () => (
-        <Center h="100%">
-            <Loader size="sm" />
-        </Center>
-    ),
+    loading: () => <Skeleton h="100%" radius="md" />,
 })
 
-export function TopologyBuilder({
-    projectId,
-    template,
-    layout,
-}: {
-    projectId: number
-    template: TopologyTemplate
-    layout: FloorLayout
-}) {
-    const editor = useTopologyEditor(projectId, template, layout)
+export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
+    const editor = useTopologyEditor(template)
     const [zoom, setZoom] = useState<ZoomCommand>({ action: "fit", nonce: 0 })
     const inspector = useResizableWidth(360, 300, 720)
     const compact = useMediaQuery("(max-width: 75em)", false, { getInitialValueInEffect: true })
@@ -88,7 +79,7 @@ export function TopologyBuilder({
     return (
         <Stack gap="xs">
             <TopologyBreadcrumbs
-                projectId={projectId}
+                projectId={template.projectId}
                 name={editor.name}
                 onRename={() =>
                     openNamePrompt({
@@ -115,7 +106,7 @@ export function TopologyBuilder({
                         selection={selection}
                         issues={editor.issues}
                         onSelectCluster={(index) => editor.select(selectCluster(index))}
-                        onSelectHost={(cluster, host) => editor.select(selectHost(cluster, host))}
+                        onSelectHost={(cluster, host) => editor.select(toggleHost(selection, cluster, host))}
                     />
                 }
                 canvas={
@@ -155,7 +146,7 @@ export function TopologyBuilder({
                         plan={plan}
                         selection={selection}
                         issues={editor.issues}
-                        onSelectHost={(cluster, host) => editor.select(selectHost(cluster, host))}
+                        onSelectHost={(cluster, host) => editor.select(toggleHost(selection, cluster, host))}
                         apply={editor.apply}
                     />
                 }
@@ -169,7 +160,7 @@ function TopologyBreadcrumbs({
     name,
     onRename,
 }: {
-    projectId: number
+    projectId: Id
     name: string
     onRename: () => void
 }) {

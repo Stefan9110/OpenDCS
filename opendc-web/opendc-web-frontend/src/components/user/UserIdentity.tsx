@@ -3,10 +3,9 @@
 import type { Account } from "@/lib/api/types"
 import type { AuthSession } from "@/lib/auth/auth"
 import { Avatar, Badge, Group, Stack, Text } from "@mantine/core"
-import { IconFolder, IconUser, IconUserHeart, IconUserKey } from "@tabler/icons-react"
+import { IconFolder, IconUser, IconUserKey } from "@tabler/icons-react"
 
 export function UserIdentity({ session }: Readonly<{ session: AuthSession }>) {
-    const authenticated = session.status === "authenticated"
     return (
         <Stack gap="sm">
             <Group gap="sm" wrap="nowrap">
@@ -16,18 +15,18 @@ export function UserIdentity({ session }: Readonly<{ session: AuthSession }>) {
                         {session.userName}
                     </Text>
                     <Text size="xs" c="dimmed">
-                        {authenticated ? session.email : "Not signed in"}
+                        {session.email ?? "No email on this account"}
                     </Text>
                 </Stack>
             </Group>
-            <Group gap="xs">{authenticated ? <AccountBadges account={session.account} /> : <PreviewBadge />}</Group>
+            <AccountBadges account={session.account} />
         </Stack>
     )
 }
 
 function AccountBadges({ account }: Readonly<{ account: Account }>) {
     return (
-        <>
+        <Group gap="xs">
             <Badge variant="light" color="opendc" size="sm" leftSection={<IconUser size={12} />}>
                 {account.plan}
             </Badge>
@@ -39,14 +38,6 @@ function AccountBadges({ account }: Readonly<{ account: Account }>) {
                     Admin
                 </Badge>
             )}
-        </>
-    )
-}
-
-function PreviewBadge() {
-    return (
-        <Badge variant="light" color="gray" size="sm">
-            Preview session
-        </Badge>
+        </Group>
     )
 }

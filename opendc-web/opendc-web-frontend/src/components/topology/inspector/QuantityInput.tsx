@@ -1,8 +1,8 @@
 "use client"
 
-import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
-import { BASE_UNIT, type Quantity, type QuantityKind, parseQuantity } from "@/lib/units"
-import { Text, TextInput } from "@mantine/core"
+import { FieldLabel, UnitAdornment } from "@/components/topology/inspector/FieldLabel"
+import { DEFAULT_UNIT, type Quantity, type QuantityKind, type Unit, amountIn, parseQuantity } from "@/lib/units"
+import { NumberInput } from "@mantine/core"
 
 const KIND_NAMES: Record<QuantityKind, string> = {
     frequency: "frequency",
@@ -11,58 +11,47 @@ const KIND_NAMES: Record<QuantityKind, string> = {
     power: "power",
 }
 
-const EXAMPLES: Record<QuantityKind, string> = {
-    frequency: "3.2 GHz",
-    dataSize: "128 GiB",
-    dataRate: "1600 GBps",
-    power: "400 Watts",
-}
+// Wide enough for the longest unit any field here prints, so the boxes line up in a column.
+const UNIT_WIDTH = 48
 
-const BARE_NUMBER = /^\s*[\d.e-]+\s*$/
-
-export function QuantityInput({
+/**
+ * A measurement field: a plain number counted in one fixed unit, printed beside the box. Values
+ * that arrive written in another unit are converted for display, so a stored "2600 MHz" reads as
+ * 2.6 GHz rather than making someone work out which spellings the model accepts.
+ */
+export function QuantityInput<K extends QuantityKind>({
     label,
     kind,
+    unit = DEFAULT_UNIT[kind],
     value,
     onChange,
     allowUnset = false,
     help,
 }: {
     label: string
-    kind: QuantityKind
+    kind: K
+    unit?: Unit<K>
     value: Quantity
     onChange: (next: string) => void
     allowUnset?: boolean
     help?: string
 }) {
     const parsed = parseQuantity(kind, value)
-    const unset = parsed.status === "unspecified"
-    const invalid = parsed.status === "invalid" || (unset && !allowUnset)
-    const text = unset && allowUnset ? "" : String(value)
-    const unitless = parsed.status === "ok" && BARE_NUMBER.test(text)
+    const invalid = parsed.status === "invalid" || (parsed.status === "unspecified" && !allowUnset)
 
     return (
-        <TextInput
+        <NumberInput
             label={<FieldLabel label={label} help={help} />}
             size="xs"
-            value={text}
-            placeholder={EXAMPLES[kind]}
-            onChange={(event) => {
-                const next = event.currentTarget.value
-                onChange(allowUnset && next.trim() === "" ? "-1" : next)
-            }}
-            onBlur={() => {
-                if (unitless) onChange(`${text.trim()} ${BASE_UNIT[kind]}`)
-            }}
-            error={invalid ? `Enter a ${KIND_NAMES[kind]} like ${EXAMPLES[kind]}` : undefined}
-            rightSection={
-                unitless ? (
-                    <Text size="xs" c="dimmed" pr={6}>
-                        {BASE_UNIT[kind]}
-                    </Text>
-                ) : undefined
-            }
-            rightSectionWidth={unitless ? 44 : undefined}
+            value={parsed.status === "ok" ? amountIn(kind, parsed.base, unit) : ""}
+            placeholder={allowUnset ? "Unspecified" : undefined}
+            min={0}
+            allowNegative={false}
+            hideControls
+            error={invalid ? `Enter a ${KIND_NAMES[kind]}` : undefined}
+            onChange={(next) => onChange(`${next === "" ? -1 : next} ${unit}`)}
+            rightSection={<UnitAdornment unit={unit} />}
+            rightSectionWidth={UNIT_WIDTH}
             rightSectionPointerEvents="none"
         />
     )

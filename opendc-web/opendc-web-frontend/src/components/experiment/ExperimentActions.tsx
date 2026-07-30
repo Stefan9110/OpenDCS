@@ -3,6 +3,7 @@
 import { formatCount, formatSimulationBudget } from "@/components/format"
 import { openNamePrompt } from "@/components/util/NamePrompt"
 import { notifyProblem } from "@/components/util/feedback"
+import { problemOf } from "@/lib/api/client"
 import {
     useCancelExperiment,
     useCloneExperiment,
@@ -12,7 +13,7 @@ import {
 } from "@/lib/api/experiments"
 import type { Experiment } from "@/lib/api/types"
 import { isTerminalExperiment } from "@/lib/experiment/status"
-import { ActionIcon, Button, Group, Menu, Text } from "@mantine/core"
+import { ActionIcon, Button, Group, Menu, Stack, Text } from "@mantine/core"
 import { modals } from "@mantine/modals"
 import {
     IconCopy,
@@ -25,12 +26,12 @@ import {
 } from "@tabler/icons-react"
 import { useRouter } from "next/navigation"
 
-export function ExperimentActions({ projectId, experiment }: { projectId: number; experiment: Experiment }) {
-    const submit = useSubmitExperiment(projectId)
-    const cancel = useCancelExperiment(projectId)
-    const clone = useCloneExperiment(projectId)
-    const rename = useSaveExperimentDraft(projectId, experiment.id)
-    const remove = useDeleteExperiment(projectId)
+export function ExperimentActions({ experiment }: { experiment: Experiment }) {
+    const submit = useSubmitExperiment(experiment.id)
+    const cancel = useCancelExperiment(experiment.id)
+    const clone = useCloneExperiment(experiment.id)
+    const rename = useSaveExperimentDraft(experiment.id)
+    const remove = useDeleteExperiment(experiment.projectId)
     const router = useRouter()
 
     const isDraft = experiment.state === "draft"
@@ -47,7 +48,9 @@ export function ExperimentActions({ projectId, experiment }: { projectId: number
                 </Text>
             ),
             labels: { confirm: "Run experiment", cancel: "Keep editing" },
-            onConfirm: () => submit.mutate(experiment.id, { onError: notifyProblem }),
+            // No toast: a failed run reports itself under the button that started it, where the
+            // reader is already looking, and stays there instead of vanishing on a timer.
+            onConfirm: () => submit.mutate(),
         })
 
     const confirmCancel = () =>
@@ -56,18 +59,24 @@ export function ExperimentActions({ projectId, experiment }: { projectId: number
             children: <Text size="sm">Scenarios that already finished keep their results. The rest are dropped.</Text>,
             labels: { confirm: "Stop run", cancel: "Let it finish" },
             confirmProps: { color: "red" },
-            onConfirm: () => cancel.mutate(experiment.id, { onError: notifyProblem }),
+            onConfirm: () => cancel.mutate(undefined, { onError: notifyProblem }),
         })
 
     const confirmDelete = () =>
         modals.openConfirmModal({
             title: `Delete ${experiment.name}?`,
-            children: <Text size="sm">Its results and scenario history are removed with it.</Text>,
+            children: (
+                <Text size="sm">
+                    {isRunning
+                        ? "Scenarios still running are stopped, and its results and scenario history are removed with it."
+                        : "Its results and scenario history are removed with it."}
+                </Text>
+            ),
             labels: { confirm: "Delete experiment", cancel: "Keep it" },
             confirmProps: { color: "red" },
             onConfirm: () =>
                 remove.mutate(experiment.id, {
-                    onSuccess: () => router.push(`/project?id=${projectId}`),
+                    onSuccess: () => router.push(`/project?id=${experiment.projectId}`),
                     onError: notifyProblem,
                 }),
         })
@@ -84,14 +93,21 @@ export function ExperimentActions({ projectId, experiment }: { projectId: number
     return (
         <Group gap="xs" wrap="nowrap">
             {isDraft && (
-                <Button
-                    leftSection={<IconPlayerPlay size={16} />}
-                    onClick={confirmSubmit}
-                    loading={submit.isPending}
-                    disabled={experiment.estimate.scenarioCount === 0}
-                >
-                    Run experiment
-                </Button>
+                <Stack gap={4} align="flex-end">
+                    <Button
+                        leftSection={<IconPlayerPlay size={16} />}
+                        onClick={confirmSubmit}
+                        loading={submit.isPending}
+                        disabled={experiment.estimate.scenarioCount === 0}
+                    >
+                        Run experiment
+                    </Button>
+                    {submit.isError && (
+                        <Text size="xs" c="red.6" maw={260} ta="right">
+                            {problemOf(submit.error).title}
+                        </Text>
+                    )}
+                </Stack>
             )}
             {isRunning && (
                 <Button
@@ -120,9 +136,8 @@ export function ExperimentActions({ projectId, experiment }: { projectId: number
                     <Menu.Item
                         leftSection={<IconCopy size={16} />}
                         onClick={() =>
-                            clone.mutate(experiment.id, {
-                                onSuccess: (draft) =>
-                                    router.push(`/experiment?project=${projectId}&experiment=${draft.id}`),
+                            clone.mutate(undefined, {
+                                onSuccess: (draft) => router.push(`/experiment?id=${draft.id}`),
                                 onError: notifyProblem,
                             })
                         }
