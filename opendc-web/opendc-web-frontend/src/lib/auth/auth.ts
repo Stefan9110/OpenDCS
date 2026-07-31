@@ -2,20 +2,14 @@ import { ApiError, apiRequest, problemOf } from "@/lib/api/client"
 import type { Account, ApiProblem, Billing } from "@/lib/api/types"
 import { type UseQueryResult, useQuery } from "@tanstack/react-query"
 
-export type AuthMode = "developer" | "auth0"
-
 export interface AuthSession {
-    authMode: AuthMode
     userName: string
     avatarUrl: string
     email?: string
+    handle: string
     account: Account
 }
 
-/**
- * Developer mode has no sign-in, so a session is always present. Under auth0 the server answers
- * /me with 401 until the visitor signs in, which is what puts the app behind its gate.
- */
 export type AuthState =
     | { status: "loading" }
     | { status: "unavailable"; problem: ApiProblem; retry: () => void }
@@ -32,13 +26,9 @@ function refetch(...queries: UseQueryResult[]): void {
     }
 }
 
-interface ServerConfig {
-    authMode: AuthMode
-}
-
 interface UserProfile {
     displayName: string
-    email?: string
+    handle: string
     plan: Account["plan"]
     isAdmin: boolean
     projectCount: number
@@ -48,34 +38,28 @@ interface UserProfile {
 const AVATAR_URL = "/img/avatar.svg"
 
 export function useAuth(): AuthState {
-    const config = useQuery({
-        queryKey: ["config"],
-        queryFn: () => apiRequest<ServerConfig>("api/v1/config"),
-        staleTime: Number.POSITIVE_INFINITY,
-    })
     const profile = useQuery({
         queryKey: ["me"],
         queryFn: () => apiRequest<UserProfile>("api/v1/me"),
-        enabled: config.data !== undefined,
+        enabled: true,
         retry: false,
     })
 
     // A failure has to be its own state. Reading "no data yet" as loading would leave the whole
     // application on a spinner for good after one unreachable request.
-    const failure = config.error ?? profile.error
-    if (failure !== null && !isUnauthorized(profile.error)) {
-        return { status: "unavailable", problem: problemOf(failure), retry: () => refetch(config, profile) }
-    }
+    const failure = profile.error
+    if (failure !== null && !isUnauthorized(profile.error))
+        return { status: "unavailable", problem: problemOf(failure), retry: () => refetch(profile) }
+
     if (isUnauthorized(profile.error)) return { status: "signedOut" }
-    if (config.data === undefined || profile.data === undefined) return { status: "loading" }
+    if (profile.data === undefined) return { status: "loading" }
 
     return {
         status: "signedIn",
         session: {
-            authMode: config.data.authMode,
             userName: profile.data.displayName,
             avatarUrl: AVATAR_URL,
-            ...(profile.data.email === undefined ? {} : { email: profile.data.email }),
+            handle: profile.data.handle,
             account: {
                 plan: profile.data.plan,
                 isAdmin: profile.data.isAdmin,

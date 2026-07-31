@@ -3,8 +3,16 @@
 import { AXIS_LABELS, axisEntryLabels } from "@/components/experiment/axisLabels"
 import { formatCount, formatSimulationBudget } from "@/components/format"
 import type { CostEstimate } from "@/lib/api/types"
-import { AXIS_ORDER, type ExperimentSpec, experimentAxes, experimentRuns, scenarioCount } from "@/lib/experiment/spec"
-import { Divider, Group, Paper, Stack, Text } from "@mantine/core"
+import {
+    AXIS_ORDER,
+    type ExperimentSpec,
+    experimentAxes,
+    experimentRuns,
+    positions,
+    scenarioCount,
+} from "@/lib/experiment/spec"
+import { Anchor, Divider, Group, Paper, Stack, Text } from "@mantine/core"
+import { useState } from "react"
 
 export function AxisSummary({ spec, estimate }: { spec: ExperimentSpec; estimate: CostEstimate }) {
     const axes = experimentAxes(spec)
@@ -29,18 +37,39 @@ export function AxisSummary({ spec, estimate }: { spec: ExperimentSpec; estimate
     )
 }
 
+/**
+ * A swept axis can hold as many entries as someone cared to write, and seven of them stacked would
+ * push the numbers underneath off the panel. The row keeps its first few and counts the rest behind
+ * a control that shows them, so nothing is hidden without a way back to it.
+ */
+const ENTRY_CAP = 4
+
 function AxisRow({ label, entries }: { label: string; entries: string[] }) {
+    const [expanded, setExpanded] = useState(false)
+    const listed = expanded ? entries : entries.slice(0, ENTRY_CAP)
+
     return (
         <Group align="flex-start" justify="space-between" wrap="nowrap" gap="lg">
             <Text size="sm" c="dimmed" style={{ flexShrink: 0 }}>
                 {label}
             </Text>
             <Stack gap={2} align="flex-end">
-                {entries.map((entry) => (
-                    <Text key={entry} size="sm" ta="right">
-                        {entry}
+                {positions(listed.length).map((position) => (
+                    <Text key={position} size="sm" ta="right">
+                        {listed[position]}
                     </Text>
                 ))}
+                {entries.length > ENTRY_CAP && (
+                    <Anchor
+                        component="button"
+                        type="button"
+                        size="xs"
+                        c="dimmed"
+                        onClick={() => setExpanded(!expanded)}
+                    >
+                        {expanded ? "Show fewer" : `and ${formatCount(entries.length - ENTRY_CAP)} more`}
+                    </Anchor>
+                )}
             </Stack>
         </Group>
     )

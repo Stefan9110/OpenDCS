@@ -15,7 +15,7 @@ export function UserIdentity({ session }: Readonly<{ session: AuthSession }>) {
                         {session.userName}
                     </Text>
                     <Text size="xs" c="dimmed">
-                        {session.email ?? "No email on this account"}
+                        @{session.handle}
                     </Text>
                 </Stack>
             </Group>

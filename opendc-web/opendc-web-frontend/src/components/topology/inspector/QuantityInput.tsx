@@ -9,6 +9,7 @@ const KIND_NAMES: Record<QuantityKind, string> = {
     dataSize: "size",
     dataRate: "data rate",
     power: "power",
+    time: "duration",
 }
 
 // Wide enough for the longest unit any field here prints, so the boxes line up in a column.

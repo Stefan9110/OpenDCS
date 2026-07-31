@@ -1,4 +1,4 @@
-export type QuantityKind = "frequency" | "dataSize" | "dataRate" | "power"
+export type QuantityKind = "frequency" | "dataSize" | "dataRate" | "power" | "time"
 
 /** A measurement as the model stores it: a number in the base unit, or text naming its own unit. */
 export type Quantity = number | string
@@ -30,6 +30,12 @@ const LADDER = {
         ["kW", 1e3],
         ["W", 1],
     ],
+    time: [
+        ["h", 3.6e6],
+        ["min", 60_000],
+        ["s", 1e3],
+        ["ms", 1],
+    ],
 } as const satisfies Record<QuantityKind, ReadonlyArray<readonly [string, number]>>
 
 /** A unit a quantity of kind [K] may be written in. */
@@ -58,6 +64,7 @@ export const DEFAULT_UNIT: { [K in QuantityKind]: Unit<K> } = {
     dataSize: "GiB",
     dataRate: "Gibps",
     power: "W",
+    time: "min",
 }
 
 /** The unit a bare number is counted in, which is what the model assumes when text names none. */
@@ -66,6 +73,7 @@ const BASE_UNIT: { [K in QuantityKind]: Unit<K> } = {
     dataSize: "MiB",
     dataRate: "Kibps",
     power: "W",
+    time: "ms",
 }
 
 // Reading what the model wrote /////////////////////////////////////////////////////////////////
@@ -80,6 +88,10 @@ export type QuantityValue = { status: "ok"; base: number } | { status: "unspecif
 export function parseQuantity(kind: QuantityKind, wire: Quantity): QuantityValue {
     if (typeof wire === "number") {
         return Number.isFinite(wire) ? classify(wire) : { status: "invalid" }
+    }
+    if (kind === "time") {
+        const iso = isoDuration(wire)
+        if (iso !== undefined) return classify(iso)
     }
     const parts = NUMBER_AND_SUFFIX.exec(wire)
     if (!parts) return { status: "invalid" }
@@ -100,6 +112,56 @@ function classify(base: number): QuantityValue {
 }
 
 const NUMBER_AND_SUFFIX = /^\s*([\d.e-]+)\s*(.*?)\s*$/
+
+// A duration comes back written the way the backend prints it, which is ISO-8601: a "5 min" saved
+// from here returns as "PT5M", because TimeDelta serializes through Duration.toString().
+const ISO_DURATION = /^P(?:([\d.]+)D)?(?:T(?:([\d.]+)H)?(?:([\d.]+)M)?(?:([\d.]+)S)?)?$/
+
+const DAY_MS = 86_400_000
+const HOUR_MS = 3.6e6
+const MINUTE_MS = 60_000
+const SECOND_MS = 1e3
+
+function isoDuration(wire: string): number | undefined {
+    const parts = ISO_DURATION.exec(wire.trim())
+    if (parts === null) return undefined
+    const [, days, hours, minutes, seconds] = parts
+    // "P" and "PT" carry no amount at all, which is a malformed duration rather than a zero one.
+    if (days === undefined && hours === undefined && minutes === undefined && seconds === undefined) return undefined
+    return (
+        Number(days ?? 0) * DAY_MS +
+        Number(hours ?? 0) * HOUR_MS +
+        Number(minutes ?? 0) * MINUTE_MS +
+        Number(seconds ?? 0) * SECOND_MS
+    )
+}
+
+/**
+ * Every spelling of a duration the backend's own parser matches, in milliseconds. Written out
+ * rather than assembled from prefixes because "m" is minutes here while "ms" is milliseconds, and a
+ * prefix scheme would have to special-case that anyway. Sub-millisecond spellings are left out: the
+ * base unit is the millisecond, so they would only ever arrive as a fraction of one.
+ */
+const TIME_UNITS = new Map<string, number>([
+    ["ms", 1],
+    ["milli", 1],
+    ["millis", 1],
+    ["millisecond", 1],
+    ["milliseconds", 1],
+    ["s", SECOND_MS],
+    ["sec", SECOND_MS],
+    ["secs", SECOND_MS],
+    ["second", SECOND_MS],
+    ["seconds", SECOND_MS],
+    ["m", MINUTE_MS],
+    ["min", MINUTE_MS],
+    ["mins", MINUTE_MS],
+    ["minute", MINUTE_MS],
+    ["minutes", MINUTE_MS],
+    ["h", HOUR_MS],
+    ["hour", HOUR_MS],
+    ["hours", HOUR_MS],
+])
 
 const PER_SECOND = /^(.*?)\s*(?:p|per|\/)\s*(?:s|sec|Sec|second|Second)\s*$/
 
@@ -162,6 +224,8 @@ function factorOf(kind: QuantityKind, suffix: string): number | undefined {
             const rate = PER_SECOND.exec(suffix)
             return rate === null ? undefined : dataFactor(rate[1] ?? "", 8 / 1024)
         }
+        case "time":
+            return TIME_UNITS.get(suffix.toLowerCase())
     }
 }
 
@@ -197,6 +261,15 @@ export function formatQuantity(kind: QuantityKind, base: number): string {
     if (!Number.isFinite(base)) return `0 ${BASE_UNIT[kind]}`
     const unit = naturalUnit(kind, base)
     return `${round(base / unitScale(kind, unit))} ${unit}`
+}
+
+/**
+ * Renders a measurement as the model stores it, which is text in whichever unit its author wrote.
+ * Anything unreadable is shown as it was stored rather than as an invented number.
+ */
+export function formatWire(kind: QuantityKind, wire: Quantity): string {
+    const parsed = parseQuantity(kind, wire)
+    return parsed.status === "ok" ? formatQuantity(kind, parsed.base) : String(wire)
 }
 
 /** Counts [base] in [unit], for a field the reader is about to edit. */

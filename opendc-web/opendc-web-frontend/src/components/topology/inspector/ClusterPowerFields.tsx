@@ -3,6 +3,8 @@
 import { CatalogSelect } from "@/components/topology/inspector/CatalogSelect"
 import { FieldLabel, UnitAdornment } from "@/components/topology/inspector/FieldLabel"
 import { QuantityInput } from "@/components/topology/inspector/QuantityInput"
+import { useCatalog } from "@/lib/api/catalogs"
+import { useTraceOptions } from "@/lib/api/traces"
 import type { BatteryPolicy, BatterySpec, ClusterSpec, PowerSourceSpec } from "@/lib/topology/spec"
 import { SCALAR_UNIT } from "@/lib/units"
 import { Group, NumberInput, Stack, Switch } from "@mantine/core"
@@ -28,6 +30,9 @@ export function ClusterPowerFields({
 }) {
     const source = cluster.powerSource ?? DEFAULT_POWER_SOURCE
     const carbon = source.carbon?.type === "named" ? source.carbon.name : null
+    // Only carbon traces: this field used to offer the whole library, so every option it listed
+    // was a workload trace the simulator would refuse here.
+    const carbonTraces = useTraceOptions("carbon")
 
     return (
         <Stack gap="xs">
@@ -42,7 +47,7 @@ export function ClusterPowerFields({
 
             <CatalogSelect
                 label="Carbon intensity trace"
-                catalog="traces"
+                entries={carbonTraces}
                 clearable
                 placeholder="None"
                 value={carbon}
@@ -74,6 +79,8 @@ function BatteryFields({
     battery: BatterySpec
     onChange: (next: BatterySpec) => void
 }) {
+    const policies = useCatalog("battery-policies")
+
     return (
         <Stack gap="xs">
             <Group grow gap="xs">
@@ -102,7 +109,7 @@ function BatteryFields({
             </Group>
             <CatalogSelect
                 label="Policy"
-                catalog="battery-policies"
+                entries={policies}
                 value={battery.policy.type}
                 onChange={(value) => value && onChange({ ...battery, policy: policyOf(value) })}
             />

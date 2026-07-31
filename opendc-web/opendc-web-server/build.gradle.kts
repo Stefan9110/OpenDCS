@@ -56,8 +56,10 @@ dependencies {
 
     implementation(projects.opendcSdk.opendcSdkModel)
     implementation(projects.opendcWeb.opendcWebDispatcher)
-    // For the canonical trace table names, and for the readers that validate an upload.
+    // For the canonical trace table names and the column each table must carry.
     implementation(projects.opendcTrace.opendcTraceApi)
+    // For reading a parquet footer, which is how an uploaded table is checked without fetching it.
+    implementation(projects.opendcTrace.opendcTraceParquet)
 
     implementation(libs.quarkus.kotlin)
     implementation(libs.kotlinx.serialization.json)
@@ -68,6 +70,7 @@ dependencies {
     implementation(libs.quarkus.hibernate.orm.panache.kotlin)
     implementation(libs.quarkus.hibernate.validator)
     implementation(libs.quarkus.flyway)
+    implementation(libs.quarkus.scheduler)
     implementation(libs.quarkus.jdbc.postgresql)
     implementation(libs.quarkus.jdbc.h2)
     implementation(libs.quarkus.quinoa.runtime)

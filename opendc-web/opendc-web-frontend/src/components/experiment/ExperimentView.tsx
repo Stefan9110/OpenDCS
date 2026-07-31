@@ -1,6 +1,7 @@
 "use client"
 
 import { ExperimentActions } from "@/components/experiment/ExperimentActions"
+import { ExperimentHelp } from "@/components/experiment/ExperimentHelp"
 import { ExperimentOverview } from "@/components/experiment/ExperimentOverview"
 import { ExperimentStateBadge } from "@/components/experiment/ExperimentStateBadge"
 import { ResultsPanel } from "@/components/experiment/results/ResultsPanel"
@@ -14,10 +15,10 @@ import { useExperiment } from "@/lib/api/experiments"
 import { useProject } from "@/lib/api/projects"
 import type { Experiment, Id } from "@/lib/api/types"
 import { Container, Group, Stack, Tabs } from "@mantine/core"
-import { IconChartLine, IconClipboardList } from "@tabler/icons-react"
+import { IconChartLine, IconClipboardList, IconHelp } from "@tabler/icons-react"
 import { useRouter, useSearchParams } from "next/navigation"
 
-const TABS = ["overview", "results"] as const
+const TABS = ["overview", "results", "help"] as const
 
 type TabName = (typeof TABS)[number]
 
@@ -75,9 +76,16 @@ function LoadedExperiment({ experimentId, tab }: { experimentId: Id; tab: TabNam
                                 <Tabs.Tab value="overview" leftSection={<IconClipboardList size={16} />}>
                                     Overview
                                 </Tabs.Tab>
-                                <Tabs.Tab value="results" leftSection={<IconChartLine size={16} />}>
-                                    Results
-                                </Tabs.Tab>
+                                {loaded.state !== "draft" && (
+                                    <Tabs.Tab value="results" leftSection={<IconChartLine size={16} />}>
+                                        Results
+                                    </Tabs.Tab>
+                                )}
+                                {loaded.state === "draft" && (
+                                    <Tabs.Tab value="help" leftSection={<IconHelp size={16} />}>
+                                        Help
+                                    </Tabs.Tab>
+                                )}
                             </Tabs.List>
 
                             <Tabs.Panel value="overview">
@@ -85,6 +93,9 @@ function LoadedExperiment({ experimentId, tab }: { experimentId: Id; tab: TabNam
                             </Tabs.Panel>
                             <Tabs.Panel value="results">
                                 <ResultsPanel experiment={loaded} />
+                            </Tabs.Panel>
+                            <Tabs.Panel value="help">
+                                <ExperimentHelp spec={loaded.spec} projectId={loaded.projectId} />
                             </Tabs.Panel>
                         </Tabs>
                     </Stack>

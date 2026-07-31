@@ -27,6 +27,7 @@ import io.quarkus.runtime.StartupEvent
 import io.smallrye.config.ConfigMapping
 import io.smallrye.config.WithDefault
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.enterprise.context.RequestScoped
 import jakarta.enterprise.event.Observes
 import jakarta.transaction.Transactional
 import org.opendc.web.server.model.PlanTier
@@ -56,10 +57,18 @@ private const val DEVELOPER_SUBJECT = "developer"
  * Resolves the account a request acts as. In developer mode that is one implicit admin account
  * seeded at startup, which is what makes a fresh checkout usable with no identity provider. Auth0
  * and personal access tokens arrive behind this same seam.
+ *
+ * Scoped to the request and answered once within it. A single request asks who the caller is
+ * several times over, since every ownership check does, and the account is found by its subject
+ * rather than by its key, so this is a query that the persistence context cannot spare.
  */
-@ApplicationScoped
+@RequestScoped
 class Identity(private val config: OpenDcConfig) {
-    fun currentUser(): UserAccount =
+    private val caller by lazy(LazyThreadSafetyMode.NONE) { resolve() }
+
+    fun currentUser(): UserAccount = caller
+
+    private fun resolve(): UserAccount =
         when (config.authMode()) {
             AuthMode.DEVELOPER ->
                 checkNotNull(UserAccount.findBySubject(DEVELOPER_SUBJECT)) {
@@ -69,9 +78,16 @@ class Identity(private val config: OpenDcConfig) {
             // frontend's sign-in gate expects to see.
             AuthMode.AUTH0 -> throw notAuthenticated()
         }
+}
 
+/**
+ * Puts the implicit account in place before anything asks for it, since developer mode resolves
+ * every request to it and a fresh checkout has no identity provider to create one.
+ */
+@ApplicationScoped
+class DeveloperAccount(private val config: OpenDcConfig) {
     @Transactional
-    internal fun seedDeveloperAccount(
+    internal fun seed(
         @Suppress("UNUSED_PARAMETER") @Observes event: StartupEvent,
     ) {
         if (config.authMode() != AuthMode.DEVELOPER) {
@@ -85,7 +101,7 @@ class Identity(private val config: OpenDcConfig) {
         }
         val account = UserAccount()
         account.subject = DEVELOPER_SUBJECT
-        account.handle = DEVELOPER_SUBJECT
+        account.handle = "opendcdev"
         account.displayName = "Developer"
         account.planTier = PlanTier.FREE
         account.isAdmin = true

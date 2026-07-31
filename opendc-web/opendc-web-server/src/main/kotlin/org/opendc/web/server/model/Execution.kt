@@ -33,6 +33,7 @@ import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
 import jakarta.persistence.ManyToOne
 import jakarta.persistence.Table
+import org.intellij.lang.annotations.Language
 import java.time.Instant
 
 /** Lifecycle of one dispatched execution (a bag) and of each unit inside it. */
@@ -130,6 +131,17 @@ class RunUnit : PanacheEntityBase {
     var resultLocation: String? = null
 
     companion object : PanacheCompanion<RunUnit> {
-        fun findByExperiment(experimentId: Long): List<RunUnit> = list("experiment.id = ?1 order by scenarioIndex, seed", experimentId)
+        // The bag is fetched with its units because folding a scenario's status reads the attempt
+        // and the exit information, and only the bag carries either. Left lazy, that fold costs a
+        // query per bag on an endpoint a live experiment polls every couple of seconds.
+        @Language("JPAQL")
+        private const val BY_EXPERIMENT = """
+            SELECT u FROM RunUnit u
+            JOIN FETCH u.bag
+            WHERE u.experiment.id = ?1
+            ORDER BY u.scenarioIndex, u.seed
+        """
+
+        fun findByExperiment(experimentId: Long): List<RunUnit> = list(BY_EXPERIMENT, experimentId)
     }
 }

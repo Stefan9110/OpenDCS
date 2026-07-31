@@ -94,12 +94,6 @@ class Trace : PanacheEntityBase {
 
     var description: String? = null
 
-    var taskCount: Long? = null
-
-    var fragmentCount: Long? = null
-
-    var timeSpanSeconds: Double? = null
-
     lateinit var createdAt: Instant
 
     lateinit var updatedAt: Instant
@@ -116,9 +110,8 @@ class Trace : PanacheEntityBase {
 }
 
 /**
- * One table of a trace, named as opendc-trace names it. The content hash is the storage key, so
- * the same bytes uploaded twice are stored once, and bytes an experiment has already run against
- * outlive any share that is later revoked.
+ * One table of a trace, named as opendc-trace names it. The row exists once the object behind it
+ * does, so a trace is ready exactly when it has a part for every table its kind names.
  */
 @Entity
 @Table(name = "trace_parts")
@@ -132,12 +125,18 @@ class TracePart : PanacheEntityBase {
 
     lateinit var tableName: String
 
-    lateinit var contentHash: String
-
     var sizeBytes: Long = 0
+
+    /** Rows in the table, read from the parquet footer rather than by counting them. */
+    var rowCount: Long? = null
 
     companion object : PanacheCompanion<TracePart> {
         fun findByTrace(traceId: Long): List<TracePart> = list("trace.id = ?1", traceId)
+
+        fun find(
+            traceId: Long,
+            tableName: String,
+        ): TracePart? = find("trace.id = ?1 and tableName = ?2", traceId, tableName).firstResult()
     }
 }
 

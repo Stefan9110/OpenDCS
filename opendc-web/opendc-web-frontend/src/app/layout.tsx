@@ -4,13 +4,18 @@ import "@mantine/charts/styles.css"
 
 import { ColorSchemeScript, mantineHtmlProps } from "@mantine/core"
 import type { Metadata, Viewport } from "next"
-import { Inter } from "next/font/google"
+import { Geist_Mono, Instrument_Sans } from "next/font/google"
 import type { ReactNode } from "react"
 import { Providers } from "./providers"
 
-const interFont = Inter({
+const openDcFont = Instrument_Sans({
     subsets: ["latin"],
-    variable: "--font-inter",
+    variable: "--font-opendc",
+})
+
+const openDcFontMono = Geist_Mono({
+    subsets: ["latin"],
+    variable: "--font-opendc-mono",
 })
 
 export const metadata: Metadata = {
@@ -26,7 +31,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
     return (
-        <html lang="en" className={interFont.variable} {...mantineHtmlProps}>
+        <html lang="en" className={`${openDcFont.variable} ${openDcFontMono.variable}`} {...mantineHtmlProps}>
             <head>
                 <title>OpenDC</title>
                 <ColorSchemeScript defaultColorScheme="auto" />

@@ -110,6 +110,65 @@ export interface TopologyTemplate {
     updatedAt: string
 }
 
+export type TraceKind = "workload" | "carbon" | "failure"
+
+/**
+ * How you came by a trace, which is what decides whether you may change it: the deployment's own
+ * are nobody's to edit, and one shared with you belongs to somebody else.
+ */
+export type TraceAccess = "builtin" | "owned" | "shared"
+
+/** One table of a trace. Rows here means rows of the parquet file, of which there are many. */
+export interface TraceTable {
+    name: string
+    sizeBytes: number
+    rowCount?: number
+}
+
+export interface Trace {
+    id: Id
+    slug: string
+    kind: TraceKind
+    access: TraceAccess
+    description?: string
+    sizeBytes: number
+    tables: TraceTable[]
+    createdAt: string
+}
+
+/** Which tables a kind of trace is made of, so an upload form need not carry its own copy. */
+export interface TraceKindTables {
+    kind: TraceKind
+    tables: string[]
+}
+
+/** One stretch of a table's file, and the target that takes exactly that stretch. */
+export interface UploadPart {
+    url: string
+    offset: number
+    length: number
+}
+
+/**
+ * Where one table's bytes go. Direct means object storage takes them without touching the API, and
+ * more than one part means they may go at once.
+ */
+export interface UploadSlot {
+    table: string
+    parts: UploadPart[]
+    direct: boolean
+}
+
+export interface RegisteredTrace {
+    trace: Trace
+    uploads: UploadSlot[]
+}
+
+export interface TraceShare {
+    handle: string
+    displayName: string
+}
+
 export type CatalogName = "schedulers" | "failure-prefabs" | "power-models" | "battery-policies" | "export-columns"
 
 export interface CatalogEntry {

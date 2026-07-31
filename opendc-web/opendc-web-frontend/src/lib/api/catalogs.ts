@@ -3,23 +3,15 @@ import type { CatalogEntry, CatalogName, HostTemplate } from "@/lib/api/types"
 import { useQuery } from "@tanstack/react-query"
 
 export const catalogKeys = {
-    detail: (catalog: CatalogName | "traces" | "host-templates") => ["catalogs", catalog] as const,
+    detail: (catalog: CatalogName | "host-templates") => ["catalogs", catalog] as const,
 }
 
-interface TraceSummary {
-    slug: string
-}
-
-export function useCatalog(catalog: CatalogName | "traces") {
+// Catalogs are reflected from the simulator's own types, so they cannot change while the server
+// runs. Traces are not among them: they are a library people add to, and they live in traces.ts.
+export function useCatalog(catalog: CatalogName) {
     return useQuery({
         queryKey: catalogKeys.detail(catalog),
-        queryFn: async (): Promise<CatalogEntry[]> => {
-            if (catalog === "traces") {
-                const traces = await apiRequest<TraceSummary[]>("api/v1/traces")
-                return traces.map((trace) => ({ id: trace.slug, label: trace.slug, group: "traces" }))
-            }
-            return apiRequest<CatalogEntry[]>(`api/v1/catalogs/${catalog}`)
-        },
+        queryFn: () => apiRequest<CatalogEntry[]>(`api/v1/catalogs/${catalog}`),
         staleTime: Number.POSITIVE_INFINITY,
     })
 }

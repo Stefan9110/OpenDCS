@@ -28,6 +28,8 @@ import io.restassured.specification.RequestSpecification
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import org.opendc.sdk.model.serialization.SdkJson
+import java.nio.file.Files
+import java.nio.file.Path
 
 /** Shared helpers for the REST test suite: one Json boundary and fixture loading. */
 object ApiTest {
@@ -41,4 +43,10 @@ object ApiTest {
         }.readBytes().decodeToString()
 
     fun fixtureElement(name: String): JsonElement = json.parseToJsonElement(fixture(name))
+
+    /** A fixture as a file on disk, for the ones that are not text. */
+    fun fixturePath(name: String): Path =
+        Path.of(checkNotNull(ApiTest::class.java.getResource("/fixtures/$name")) { "missing test fixture $name" }.toURI())
+
+    fun fixtureBytes(name: String): ByteArray = Files.readAllBytes(fixturePath(name))
 }

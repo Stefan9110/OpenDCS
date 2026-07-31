@@ -37,15 +37,6 @@ import org.opendc.web.server.service.AuthMode
 import org.opendc.web.server.service.Identity
 import org.opendc.web.server.service.OpenDcConfig
 
-/** Unauthenticated deployment configuration, read by the static frontend export at boot. */
-@Path("config")
-@Produces(MediaType.APPLICATION_JSON)
-@Consumes(MediaType.APPLICATION_JSON)
-class ConfigResource(private val config: OpenDcConfig) {
-    @GET
-    fun config(): ClientConfig = ClientConfig(authMode = config.authMode().toWire())
-}
-
 /** The current user's identity, account shape and billing. */
 @Path("me")
 @Produces(MediaType.APPLICATION_JSON)
@@ -58,6 +49,7 @@ class MeResource(private val identity: Identity) {
             subject = user.subject,
             displayName = user.displayName,
             email = user.email,
+            handle = user.handle,
             plan = user.planTier.toWire(),
             isAdmin = user.isAdmin,
             projectCount = ProjectMember.count("user.id = ?1", user.id).toInt(),
@@ -73,25 +65,6 @@ class MeResource(private val identity: Identity) {
     fun billing(): Billing = Billing(invoices = emptyList())
 }
 
-@Serializable
-enum class WireAuthMode {
-    @SerialName("developer")
-    DEVELOPER,
-
-    @SerialName("auth0")
-    AUTH0,
-}
-
-fun AuthMode.toWire(): WireAuthMode =
-    when (this) {
-        AuthMode.DEVELOPER -> WireAuthMode.DEVELOPER
-        AuthMode.AUTH0 -> WireAuthMode.AUTH0
-    }
-
-@Serializable
-data class ClientConfig(
-    val authMode: WireAuthMode,
-)
 
 @Serializable
 enum class WirePlan {
@@ -105,12 +78,7 @@ enum class WirePlan {
     ENTERPRISE,
 }
 
-fun PlanTier.toWire(): WirePlan =
-    when (this) {
-        PlanTier.FREE -> WirePlan.FREE
-        PlanTier.EDUCATION -> WirePlan.EDUCATION
-        PlanTier.ENTERPRISE -> WirePlan.ENTERPRISE
-    }
+fun PlanTier.toWire(): WirePlan = WirePlan.valueOf(this.name)
 
 /**
  * The windows an account can be metered over. Both exist because `budget_windows` is keyed
@@ -152,7 +120,6 @@ data class BudgetWindow(
     val resetsAt: String,
 )
 
-@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class UserProfile(
     val subject: String,
@@ -160,6 +127,7 @@ data class UserProfile(
     // Omitted from the wire when the account has none, rather than sent as an explicit null.
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val email: String? = null,
+    val handle: String,
     val plan: WirePlan,
     val isAdmin: Boolean,
     val projectCount: Int,

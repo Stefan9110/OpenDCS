@@ -1,13 +1,53 @@
-import { DEFAULT_UNIT, type QuantityKind, amountIn, formatQuantity, parseQuantity } from "@/lib/units"
+import { DEFAULT_UNIT, type QuantityKind, amountIn, formatQuantity, formatWire, parseQuantity } from "@/lib/units"
 import { describe, expect, it } from "vitest"
 
-const KINDS: QuantityKind[] = ["frequency", "dataSize", "dataRate", "power"]
+const KINDS: QuantityKind[] = ["frequency", "dataSize", "dataRate", "power", "time"]
 
 function base(kind: QuantityKind, wire: string | number): number {
     const parsed = parseQuantity(kind, wire)
     if (parsed.status !== "ok") throw new Error(`expected ${wire} to parse, got ${parsed.status}`)
     return parsed.base
 }
+
+describe("durations", () => {
+    it("reads the ISO-8601 the backend writes them back as", () => {
+        expect(base("time", "PT5M")).toBe(300_000)
+        expect(base("time", "PT1H")).toBe(3.6e6)
+        expect(base("time", "PT1H30M")).toBe(5.4e6)
+        expect(base("time", "PT0.5S")).toBe(500)
+        expect(base("time", "P1DT2H")).toBe(93.6e6)
+    })
+
+    it("keeps minutes and milliseconds apart the way the backend's parser does", () => {
+        expect(base("time", "5 m")).toBe(300_000)
+        expect(base("time", "5 ms")).toBe(5)
+        expect(base("time", "PT5M")).toBe(base("time", "5 min"))
+    })
+
+    it("reads a bare number as milliseconds, which is what TimeDelta assumes", () => {
+        expect(base("time", 300_000)).toBe(300_000)
+    })
+
+    it("rejects text that names no duration rather than guessing at one", () => {
+        expect(parseQuantity("time", "P").status).toBe("invalid")
+        expect(parseQuantity("time", "PT").status).toBe("invalid")
+        expect(parseQuantity("time", "5 fortnights").status).toBe("invalid")
+        expect(parseQuantity("time", "soon").status).toBe("invalid")
+    })
+
+    it("counts a stored duration in the unit a field asks for, whatever it was written in", () => {
+        expect(amountIn("time", base("time", "PT5M"), "min")).toBe(5)
+        expect(amountIn("time", base("time", "90 s"), "min")).toBe(1.5)
+        expect(amountIn("time", base("time", "PT2H"), "min")).toBe(120)
+    })
+
+    it("shows a stored duration in a unit a reader expects, ISO-8601 included", () => {
+        expect(formatWire("time", "PT5M")).toBe("5 min")
+        expect(formatWire("time", 3.6e6)).toBe("1 h")
+        // Nothing readable in it, so it is shown as it was stored rather than as an invented number.
+        expect(formatWire("time", "whenever")).toBe("whenever")
+    })
+})
 
 describe("parseQuantity", () => {
     it("reads a bare number in the implicit base unit the SDK assumes", () => {

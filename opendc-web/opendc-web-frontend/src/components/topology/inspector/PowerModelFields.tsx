@@ -2,6 +2,7 @@
 
 import { CatalogSelect } from "@/components/topology/inspector/CatalogSelect"
 import { QuantityInput } from "@/components/topology/inspector/QuantityInput"
+import { useCatalog } from "@/lib/api/catalogs"
 import type { PowerSpec } from "@/lib/topology/spec"
 import { Group, Stack } from "@mantine/core"
 
@@ -14,11 +15,13 @@ export function PowerModelFields({
     model: PowerSpec
     onChange: (next: PowerSpec) => void
 }) {
+    const powerModels = useCatalog("power-models")
+
     return (
         <Stack gap="xs">
             <CatalogSelect
                 label="Power model"
-                catalog="power-models"
+                entries={powerModels}
                 value={model.type ?? "linear"}
                 onChange={(value) => value && onChange({ ...model, type: value as PowerSpec["type"] })}
             />

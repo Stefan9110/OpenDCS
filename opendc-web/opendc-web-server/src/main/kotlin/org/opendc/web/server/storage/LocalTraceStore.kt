@@ -1,0 +1,103 @@
+/*
+ * Copyright (c) 2026 AtLarge Research
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+package org.opendc.web.server.storage
+
+import java.io.InputStream
+import java.nio.channels.Channels
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+
+/** A directory of objects, one file per key. What a development machine and the test suite use. */
+class LocalTraceStore(private val root: Path) : TraceStore {
+    override fun put(
+        key: String,
+        content: InputStream,
+    ): Long {
+        val target = fileOf(key)
+        Files.createDirectories(target.parent)
+        // Written beside its destination and renamed, so a transfer that breaks partway leaves no
+        // half a file where a whole one is expected.
+        val spool = Files.createTempFile(target.parent, ".incoming-", ".part")
+        try {
+            val size = Files.newOutputStream(spool).use { content.copyTo(it) }
+            Files.move(spool, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            return size
+        } finally {
+            Files.deleteIfExists(spool)
+        }
+    }
+
+    override fun open(key: String): InputStream = Files.newInputStream(fileOf(key))
+
+    override fun open(
+        key: String,
+        offset: Long,
+        length: Long,
+    ): InputStream {
+        val channel = Files.newByteChannel(fileOf(key))
+        channel.position(offset)
+        return Channels.newInputStream(channel).let { stream ->
+            object : InputStream() {
+                private var left = length
+
+                override fun read(): Int = if (left-- <= 0) -1 else stream.read()
+
+                override fun read(
+                    buffer: ByteArray,
+                    off: Int,
+                    len: Int,
+                ): Int {
+                    if (left <= 0) return -1
+                    val read = stream.read(buffer, off, minOf(len.toLong(), left).toInt())
+                    if (read > 0) left -= read
+                    return read
+                }
+
+                override fun close() = stream.close()
+            }
+        }
+    }
+
+    override fun size(key: String): Long = Files.size(fileOf(key))
+
+    override fun exists(key: String): Boolean = Files.exists(fileOf(key))
+
+    override fun delete(key: String) {
+        Files.deleteIfExists(fileOf(key))
+    }
+
+    /** A directory is not reachable from a browser, so the server has to take the bytes itself. */
+    override fun uploadTarget(
+        key: String,
+        sizeBytes: Long,
+    ): UploadTarget = UploadTarget.ThroughServer
+
+    /** Bytes that came through the server were a whole file by the time the request that carried them ended. */
+    override fun completeUpload(key: String): Boolean = exists(key)
+
+    /** A directory holds nothing open between calls. */
+    override fun close() {}
+
+    private fun fileOf(key: String): Path = root.resolve(key)
+}

@@ -16,8 +16,9 @@ const opendc: MantineColorsTuple = [
 export const logoGradient = "linear-gradient(90deg, #48a1cd, #d1af2e, #df6f20)"
 
 export const theme = createTheme({
-    fontFamily: "var(--font-inter), sans-serif",
-    headings: { fontFamily: "var(--font-inter), sans-serif" },
+    fontFamily: "var(--font-opendc), sans-serif",
+    fontFamilyMonospace: "var(--font-opendc-mono), monospace",
+    headings: { fontFamily: "var(--font-opendc), sans-serif" },
     primaryColor: "opendc",
     primaryShade: { light: 6, dark: 7 },
     colors: { opendc },

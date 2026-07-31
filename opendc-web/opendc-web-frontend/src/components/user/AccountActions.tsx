@@ -6,7 +6,8 @@ import { notifyComingSoon } from "@/components/util/feedback"
 import { type AuthSession, useBilling } from "@/lib/auth/auth"
 import { Divider, NavLink } from "@mantine/core"
 import { useDisclosure } from "@mantine/hooks"
-import { IconCreditCard, IconLogout, IconSettings, IconUserOff } from "@tabler/icons-react"
+import { IconCreditCard, IconDatabase, IconLogout, IconSettings, IconUserOff } from "@tabler/icons-react"
+import Link from "next/link"
 
 export function AccountActions({ session, closeDrawer }: Readonly<{ session: AuthSession; closeDrawer: () => void }>) {
     const [billingOpened, billing] = useDisclosure(false)
@@ -26,6 +27,13 @@ export function AccountActions({ session, closeDrawer }: Readonly<{ session: Aut
 
     return (
         <>
+            <NavLink
+                component={Link}
+                href="/traces"
+                label="Traces"
+                leftSection={<IconDatabase size={16} />}
+                onClick={closeDrawer}
+            />
             <NavLink
                 component="button"
                 label="Billing details"

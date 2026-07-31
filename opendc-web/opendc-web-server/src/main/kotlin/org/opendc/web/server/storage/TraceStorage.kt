@@ -1,0 +1,173 @@
+/*
+ * Copyright (c) 2026 AtLarge Research
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+package org.opendc.web.server.storage
+
+import io.smallrye.config.ConfigMapping
+import io.smallrye.config.WithDefault
+import jakarta.enterprise.context.ApplicationScoped
+import jakarta.enterprise.inject.Disposes
+import jakarta.enterprise.inject.Produces
+import jakarta.inject.Singleton
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+import software.amazon.awssdk.core.checksums.RequestChecksumCalculation
+import software.amazon.awssdk.core.checksums.ResponseChecksumValidation
+import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient
+import software.amazon.awssdk.regions.Region
+import software.amazon.awssdk.services.s3.S3Client
+import software.amazon.awssdk.services.s3.S3Configuration
+import software.amazon.awssdk.services.s3.presigner.S3Presigner
+import java.net.URI
+import java.nio.file.Path
+import java.time.Duration
+import java.util.Optional
+
+enum class TraceStoreKind {
+    /** A directory on disk. What a development machine and the test suite use. */
+    LOCAL,
+
+    /** Any S3-compatible object storage, which is what a deployment uses. */
+    S3,
+}
+
+@ConfigMapping(prefix = "opendc.trace-store")
+interface TraceStoreConfig {
+    @WithDefault("local")
+    fun kind(): TraceStoreKind
+
+    /** Where [TraceStoreKind.LOCAL] keeps its objects. */
+    @WithDefault("data/traces")
+    fun directory(): String
+
+    fun s3(): S3Config
+
+    interface S3Config {
+        fun bucket(): Optional<String>
+
+        /**
+         * The endpoint to talk to, absent only for AWS itself. Any S3-compatible provider is named
+         * here instead, for example `https://fsn1.your-objectstorage.com`.
+         */
+        fun endpoint(): Optional<String>
+
+        /** Required by the SDK even where the provider ignores it. */
+        @WithDefault("us-east-1")
+        fun region(): String
+
+        fun accessKey(): Optional<String>
+
+        fun secretKey(): Optional<String>
+
+        /**
+         * Whether a bucket is addressed as `endpoint/bucket` rather than `bucket.endpoint`. The
+         * SDK prefers the latter, which most S3-compatible providers do not serve, so this
+         * defaults to the form that works everywhere.
+         */
+        @WithDefault("true")
+        fun pathStyle(): Boolean
+
+        /** How long a browser has to start using a signed upload target. */
+        @WithDefault("PT1H")
+        fun uploadWindow(): Duration
+    }
+}
+
+/** Builds the store the deployment asked for, and holds it open for as long as it runs. */
+@ApplicationScoped
+class TraceStorage(private val config: TraceStoreConfig) {
+    @Produces
+    @Singleton
+    fun traceStore(): TraceStore =
+        when (config.kind()) {
+            TraceStoreKind.LOCAL -> LocalTraceStore(Path.of(config.directory()))
+            TraceStoreKind.S3 -> s3Store(config.s3())
+        }
+
+    fun closeStore(
+        @Disposes store: TraceStore,
+    ) {
+        store.close()
+    }
+
+    private fun s3Store(s3: TraceStoreConfig.S3Config): TraceStore {
+        val credentials =
+            StaticCredentialsProvider.create(
+                AwsBasicCredentials.create(required(s3.accessKey(), "access-key"), required(s3.secretKey(), "secret-key")),
+            )
+        val region = Region.of(s3.region())
+        val endpoint = s3.endpoint().map(URI::create)
+        return S3TraceStore(
+            client = buildClient(s3, credentials, region, endpoint),
+            presigner = buildPresigner(s3, credentials, region, endpoint),
+            bucket = required(s3.bucket(), "bucket"),
+            uploadWindow = s3.uploadWindow(),
+        )
+    }
+
+    private fun buildClient(
+        s3: TraceStoreConfig.S3Config,
+        credentials: AwsCredentialsProvider,
+        region: Region,
+        endpoint: Optional<URI>,
+    ): S3Client {
+        val builder =
+            S3Client
+                .builder()
+                .region(region)
+                .credentialsProvider(credentials)
+                .forcePathStyle(s3.pathStyle())
+                .httpClientBuilder(UrlConnectionHttpClient.builder())
+                // The SDK attaches flexible-checksum headers to every upload by default, which a
+                // number of S3-compatible providers reject outright. AWS is happy either way, so
+                // the interoperable setting is simply the right one.
+                .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
+                .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)
+        endpoint.ifPresent { builder.endpointOverride(it) }
+        return builder.build()
+    }
+
+    private fun buildPresigner(
+        s3: TraceStoreConfig.S3Config,
+        credentials: AwsCredentialsProvider,
+        region: Region,
+        endpoint: Optional<URI>,
+    ): S3Presigner {
+        val builder =
+            S3Presigner
+                .builder()
+                .region(region)
+                .credentialsProvider(credentials)
+                .serviceConfiguration(S3Configuration.builder().pathStyleAccessEnabled(s3.pathStyle()).build())
+        endpoint.ifPresent { builder.endpointOverride(it) }
+        return builder.build()
+    }
+
+    private fun required(
+        value: Optional<String>,
+        name: String,
+    ): String =
+        value.orElseThrow {
+            IllegalStateException("opendc.trace-store.s3.$name must be set when opendc.trace-store.kind=s3")
+        }
+}

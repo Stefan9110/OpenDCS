@@ -60,6 +60,7 @@ const QUANTITY_LABEL: Record<QuantityKind, string> = {
     dataSize: "data size",
     dataRate: "data rate",
     power: "power",
+    time: "duration",
 }
 
 function measurement(kind: QuantityKind, value: Quantity, path: string): DocumentIssue[] {

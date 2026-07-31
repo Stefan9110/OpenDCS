@@ -27,6 +27,11 @@ export function formatMemory(memoryMiB: number): string {
     return formatQuantity("dataSize", memoryMiB)
 }
 
+/** File sizes arrive in bytes, while the size ladder counts from mebibytes. */
+export function formatBytes(bytes: number): string {
+    return formatQuantity("dataSize", bytes / 1024 ** 2)
+}
+
 export function formatPower(watts: number): string {
     return formatQuantity("power", watts)
 }

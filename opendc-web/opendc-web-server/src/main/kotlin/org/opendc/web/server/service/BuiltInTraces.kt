@@ -28,6 +28,8 @@ import jakarta.enterprise.event.Observes
 import jakarta.transaction.Transactional
 import org.opendc.web.server.model.Trace
 import org.opendc.web.server.model.TracePart
+import org.opendc.web.server.storage.TraceStore
+import org.opendc.web.server.storage.traceKey
 import org.slf4j.LoggerFactory
 
 /**
@@ -55,35 +57,38 @@ class BuiltInTraces(private val store: TraceStore) {
         }
     }
 
+    // What a deployment ships is taken as given rather than inspected: these files are packaged
+    // with the server, so a broken one is a packaging mistake to fix at the source, not somebody's
+    // upload to refuse. That is also why they carry no row count.
     private fun seedTable(
         trace: Trace,
         table: String,
     ) {
-        val existing = TracePart.find("trace.id = ?1 and tableName = ?2", trace.id, table).firstResult()
+        val key = traceKey(trace.publicId, table)
+        val existing = TracePart.find(trace.id, table)
         // Re-reads the resource when the row is there but the object is not, which is what a
         // deployment looks like after its bucket has been replaced.
-        if (existing != null && store.exists(existing.contentHash)) {
+        if (existing != null && store.exists(key)) {
             return
         }
 
-        val resource = "/traces/${trace.slug}/$table.parquet"
-        val bundled = javaClass.getResourceAsStream(resource)
+        val bundled = javaClass.getResourceAsStream("/traces/${trace.slug}/$table.parquet")
         if (bundled == null) {
             LOG.info("Built-in trace {} ships no {} table; leaving it unresolved", trace.slug, table)
             return
         }
 
-        val stored = bundled.use { store.put(it) }
-        val part = existing ?: TracePart().also {
-            it.trace = trace
-            it.tableName = table
-        }
-        part.contentHash = stored.contentHash
-        part.sizeBytes = stored.sizeBytes
+        val size = bundled.use { store.put(key, it) }
+        val part =
+            existing ?: TracePart().also {
+                it.trace = trace
+                it.tableName = table
+            }
+        part.sizeBytes = size
         if (existing == null) {
             part.persist()
         }
-        LOG.info("Stored built-in trace {} table {} ({} bytes)", trace.slug, table, stored.sizeBytes)
+        LOG.info("Stored built-in trace {} table {} ({} bytes)", trace.slug, table, size)
     }
 
     private companion object {

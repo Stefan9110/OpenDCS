@@ -1,28 +1,30 @@
 "use client"
 
 import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
-import { useCatalog } from "@/lib/api/catalogs"
-import type { CatalogName } from "@/lib/api/types"
+import type { CatalogEntry } from "@/lib/api/types"
 import { Select, Text, Tooltip } from "@mantine/core"
+import type { UseQueryResult } from "@tanstack/react-query"
 
-export type CatalogKind = CatalogName | "traces"
-
+/**
+ * A picker over whatever the caller fetched. The options are passed in rather than named here
+ * because they no longer all come from one place: option lists are reflected from the simulator,
+ * while traces are a library that belongs to somebody and is scoped to a kind.
+ */
 export function CatalogSelect({
     label,
-    catalog,
+    entries,
     value,
     onChange,
     clearable = false,
     placeholder,
 }: {
     label: string
-    catalog: CatalogKind
+    entries: UseQueryResult<CatalogEntry[]>
     value: string | null
     onChange: (value: string | null) => void
     clearable?: boolean
     placeholder?: string
 }) {
-    const entries = useCatalog(catalog)
     const known = entries.data ?? []
     const descriptions = new Map(known.map((entry) => [entry.id, entry.description]))
     const options = known.map((entry) => entry.id)

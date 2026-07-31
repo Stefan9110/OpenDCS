@@ -1,15 +1,18 @@
 "use client"
 
 import type { AxisChoice } from "@/components/experiment/draftAxes"
+import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
 import { MultiSelect, Text, Tooltip } from "@mantine/core"
 
 export function AxisSelect({
     label,
+    help,
     choices,
     value,
     onChange,
 }: {
     label: string
+    help: string
     choices: AxisChoice[]
     value: string[]
     onChange: (value: string[]) => void
@@ -18,7 +21,7 @@ export function AxisSelect({
 
     return (
         <MultiSelect
-            label={label}
+            label={<FieldLabel label={label} help={help} />}
             size="sm"
             data={choices.map((choice) => ({ value: choice.value, label: choice.label }))}
             value={value}

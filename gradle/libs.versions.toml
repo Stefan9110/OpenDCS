@@ -96,6 +96,7 @@ quarkus-hibernate-validator = { module = "io.quarkus:quarkus-hibernate-validator
 quarkus-jdbc-h2 = { module = "io.quarkus:quarkus-jdbc-h2" }
 quarkus-jdbc-postgresql = { module = "io.quarkus:quarkus-jdbc-postgresql" }
 quarkus-flyway = { module = "io.quarkus:quarkus-flyway" }
+quarkus-scheduler = { module = "io.quarkus:quarkus-scheduler" }
 quarkus-rest = { module = "io.quarkus:quarkus-rest" }
 quarkus-rest-kotlin-serialization = { module = "io.quarkus:quarkus-rest-kotlin-serialization" }
 quarkus-hibernate-orm-panache-kotlin = { module = "io.quarkus:quarkus-hibernate-orm-panache-kotlin" }

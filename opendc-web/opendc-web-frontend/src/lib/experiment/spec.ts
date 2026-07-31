@@ -103,6 +103,14 @@ export type CheckpointSpec = z.infer<typeof checkpointSpecSchema>
 export type ExportSpec = z.infer<typeof exportSpecSchema>
 export type ExperimentSpec = z.infer<typeof experimentSpecSchema>
 
+// The sdk-model's own defaults, repeated here so a field the document leaves out still shows the
+// value the simulator will use. Written in units the backend's parser accepts, not as ISO-8601,
+// because these are also what the editor writes back.
+export const DEFAULT_CHECKPOINT_INTERVAL = "1 h"
+export const DEFAULT_CHECKPOINT_DURATION = "5 min"
+export const DEFAULT_INTERVAL_SCALING = 1
+export const DEFAULT_EXPORT_INTERVAL = "5 min"
+
 export const DEFAULT_SCHEDULER = "Mem"
 export const DEFAULT_ALLOCATION_POLICY: AllocationPolicySpec = { type: "prefab", prefabName: DEFAULT_SCHEDULER }
 export const DEFAULT_FAILURE_MODEL: FailureModelSpec = { type: "none" }
@@ -151,6 +159,15 @@ export interface ScenarioSpec {
     initialSeed: number
     id: number
     name: string
+}
+
+/**
+ * The positions of [count] things, for a list whose entries are identified by where they sit. That
+ * is how the expansion identifies them: a scenario's index is built from the position taken on each
+ * axis, so two entries that print the same label are still two entries.
+ */
+export function positions(count: number): number[] {
+    return Array.from({ length: count }, (_, position) => position)
 }
 
 export function scenarioCount(spec: ExperimentSpec): number {

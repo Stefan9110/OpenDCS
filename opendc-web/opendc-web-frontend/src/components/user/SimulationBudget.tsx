@@ -12,7 +12,7 @@ export function SimulationBudget({ budgets }: Readonly<{ budgets: BudgetWindow[]
             </Text>
             {budgets.length === 0 ? (
                 <Text size="sm" c="dimmed">
-                    This deployment does not meter simulation time.
+                    This account has unlimited simulation budget. Enjoy!
                 </Text>
             ) : (
                 budgets.map((budget) => <BudgetBar key={budget.period} budget={budget} />)
