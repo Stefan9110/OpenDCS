@@ -28,8 +28,8 @@ import org.opendc.trace.spi.TraceFormat
 import org.opendc.web.server.model.TraceKind
 import org.opendc.web.server.rest.DocumentIssue
 import org.opendc.web.server.rest.invalidDocument
+import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.StoredObjectFile
-import org.opendc.web.server.storage.TraceStore
 import java.nio.file.Path
 
 /** What a table turned out to hold. */
@@ -47,7 +47,7 @@ data class TableFacts(
  * the whole object back out of storage to learn nothing further.
  */
 @ApplicationScoped
-class TraceIngest(private val store: TraceStore) {
+class TraceIngest(private val store: ObjectStore) {
     fun inspect(
         kind: TraceKind,
         table: String,

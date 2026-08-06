@@ -32,8 +32,8 @@ import org.opendc.trace.spi.TraceFormat
 import org.opendc.web.server.ApiTest
 import org.opendc.web.server.model.TraceKind
 import org.opendc.web.server.rest.InvalidDocumentException
-import org.opendc.web.server.storage.LocalTraceStore
-import org.opendc.web.server.storage.TraceStore
+import org.opendc.web.server.storage.LocalObjectStore
+import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.traceKey
 import java.nio.file.Files
 import java.nio.file.Path
@@ -43,7 +43,7 @@ class TraceIngestTest {
     @TempDir
     lateinit var root: Path
 
-    private val store: TraceStore by lazy { LocalTraceStore(root) }
+    private val store: ObjectStore by lazy { LocalObjectStore(root) }
     private val ingest: TraceIngest by lazy { TraceIngest(store) }
 
     // The format a table is checked against is the kind's own name in lower case rather than a

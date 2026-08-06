@@ -43,7 +43,7 @@ import java.nio.file.Path
 import java.time.Duration
 import java.util.Optional
 
-enum class TraceStoreKind {
+enum class ObjectStoreKind {
     /** A directory on disk. What a development machine and the test suite use. */
     LOCAL,
 
@@ -51,13 +51,13 @@ enum class TraceStoreKind {
     S3,
 }
 
-@ConfigMapping(prefix = "opendc.trace-store")
-interface TraceStoreConfig {
+@ConfigMapping(prefix = "opendc.storage")
+interface ObjectStoreConfig {
     @WithDefault("local")
-    fun kind(): TraceStoreKind
+    fun kind(): ObjectStoreKind
 
-    /** Where [TraceStoreKind.LOCAL] keeps its objects. */
-    @WithDefault("data/traces")
+    /** Where [ObjectStoreKind.LOCAL] keeps its objects. */
+    @WithDefault("data")
     fun directory(): String
 
     fun s3(): S3Config
@@ -95,29 +95,29 @@ interface TraceStoreConfig {
 
 /** Builds the store the deployment asked for, and holds it open for as long as it runs. */
 @ApplicationScoped
-class TraceStorage(private val config: TraceStoreConfig) {
+class ObjectStorage(private val config: ObjectStoreConfig) {
     @Produces
     @Singleton
-    fun traceStore(): TraceStore =
+    fun objectStore(): ObjectStore =
         when (config.kind()) {
-            TraceStoreKind.LOCAL -> LocalTraceStore(Path.of(config.directory()))
-            TraceStoreKind.S3 -> s3Store(config.s3())
+            ObjectStoreKind.LOCAL -> LocalObjectStore(Path.of(config.directory()))
+            ObjectStoreKind.S3 -> s3Store(config.s3())
         }
 
     fun closeStore(
-        @Disposes store: TraceStore,
+        @Disposes store: ObjectStore,
     ) {
         store.close()
     }
 
-    private fun s3Store(s3: TraceStoreConfig.S3Config): TraceStore {
+    private fun s3Store(s3: ObjectStoreConfig.S3Config): ObjectStore {
         val credentials =
             StaticCredentialsProvider.create(
                 AwsBasicCredentials.create(required(s3.accessKey(), "access-key"), required(s3.secretKey(), "secret-key")),
             )
         val region = Region.of(s3.region())
         val endpoint = s3.endpoint().map(URI::create)
-        return S3TraceStore(
+        return S3ObjectStore(
             client = buildClient(s3, credentials, region, endpoint),
             presigner = buildPresigner(s3, credentials, region, endpoint),
             bucket = required(s3.bucket(), "bucket"),
@@ -126,7 +126,7 @@ class TraceStorage(private val config: TraceStoreConfig) {
     }
 
     private fun buildClient(
-        s3: TraceStoreConfig.S3Config,
+        s3: ObjectStoreConfig.S3Config,
         credentials: AwsCredentialsProvider,
         region: Region,
         endpoint: Optional<URI>,
@@ -148,7 +148,7 @@ class TraceStorage(private val config: TraceStoreConfig) {
     }
 
     private fun buildPresigner(
-        s3: TraceStoreConfig.S3Config,
+        s3: ObjectStoreConfig.S3Config,
         credentials: AwsCredentialsProvider,
         region: Region,
         endpoint: Optional<URI>,
@@ -168,6 +168,6 @@ class TraceStorage(private val config: TraceStoreConfig) {
         name: String,
     ): String =
         value.orElseThrow {
-            IllegalStateException("opendc.trace-store.s3.$name must be set when opendc.trace-store.kind=s3")
+            IllegalStateException("opendc.storage.s3.$name must be set when opendc.storage.kind=s3")
         }
 }

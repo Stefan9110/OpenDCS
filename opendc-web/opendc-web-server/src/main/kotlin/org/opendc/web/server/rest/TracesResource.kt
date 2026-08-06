@@ -48,7 +48,7 @@ import org.opendc.web.server.model.UserAccount
 import org.opendc.web.server.service.Identity
 import org.opendc.web.server.service.TraceDisposal
 import org.opendc.web.server.service.TraceIngest
-import org.opendc.web.server.storage.TraceStore
+import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.UploadTarget
 import org.opendc.web.server.storage.traceKey
 import java.io.InputStream
@@ -185,7 +185,7 @@ data class ShareRequest(
 @Consumes(MediaType.APPLICATION_JSON)
 class TracesResource(
     private val identity: Identity,
-    private val store: TraceStore,
+    private val store: ObjectStore,
     private val ingest: TraceIngest,
     private val disposal: TraceDisposal,
 ) {

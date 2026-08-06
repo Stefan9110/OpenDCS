@@ -29,7 +29,7 @@ import org.opendc.web.server.model.Trace
 import org.opendc.web.server.model.TraceGrant
 import org.opendc.web.server.model.TraceOrigin
 import org.opendc.web.server.model.TracePart
-import org.opendc.web.server.storage.TraceStore
+import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.traceKey
 import org.slf4j.LoggerFactory
 import java.time.Duration
@@ -45,7 +45,7 @@ import java.time.Instant
  * storage, and only a sweep like this one gives it back.
  */
 @ApplicationScoped
-class TraceDisposal(private val store: TraceStore) {
+class TraceDisposal(private val store: ObjectStore) {
     /** Removes a trace and everything belonging to it, in the store as well as the database. */
     fun discard(trace: Trace) {
         for (grant in TraceGrant.findByTrace(trace.id)) {

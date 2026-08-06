@@ -26,3 +26,9 @@ plugins {
     `kotlin-conventions`
     `testing-conventions`
 }
+
+dependencies {
+    // The launcher owns the manifest this module writes.
+    api(projects.opendcWeb.opendcWebLauncher)
+    implementation(libs.kotlinx.serialization.json)
+}

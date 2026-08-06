@@ -29,7 +29,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 
 /** A directory of objects, one file per key. What a development machine and the test suite use. */
-class LocalTraceStore(private val root: Path) : TraceStore {
+class LocalObjectStore(private val root: Path) : ObjectStore {
     override fun put(
         key: String,
         content: InputStream,
@@ -95,6 +95,9 @@ class LocalTraceStore(private val root: Path) : TraceStore {
 
     /** Bytes that came through the server were a whole file by the time the request that carried them ended. */
     override fun completeUpload(key: String): Boolean = exists(key)
+
+    /** A launcher on this machine reads and writes the files itself, so nothing is signed. */
+    override fun locationOf(prefix: String): String = fileOf(prefix).toAbsolutePath().toUri().toString()
 
     /** A directory holds nothing open between calls. */
     override fun close() {}

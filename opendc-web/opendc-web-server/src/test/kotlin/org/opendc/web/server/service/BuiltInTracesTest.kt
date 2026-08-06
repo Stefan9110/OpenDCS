@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.opendc.web.server.model.Trace
 import org.opendc.web.server.model.TracePart
-import org.opendc.web.server.storage.TraceStore
+import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.traceKey
 
 /**
@@ -42,7 +42,7 @@ import org.opendc.web.server.storage.traceKey
 @QuarkusTest
 class BuiltInTracesTest {
     @Inject
-    lateinit var store: TraceStore
+    lateinit var store: ObjectStore
 
     @Inject
     lateinit var seeder: BuiltInTraces
@@ -60,10 +60,12 @@ class BuiltInTracesTest {
         }
     }
 
-    // What a deployment ships is taken as given rather than inspected, so no row count is claimed
-    // for it. Claiming one would mean reading files the server did not receive from anybody.
+    // How many rows a trace holds decides the memory an experiment over it is granted, so a
+    // built-in is counted like an upload. A file that is not parquet at all, which is what the
+    // placeholders bundled here are, leaves the deployment running with no count rather than
+    // refusing to start.
     @Test
-    fun `a bundled trace is stored without being counted`() {
+    fun `a bundled file that cannot be read as parquet is stored without a count`() {
         assertTrue(partsOf("bitbrains-small").all { it.rowCount == null })
     }
 

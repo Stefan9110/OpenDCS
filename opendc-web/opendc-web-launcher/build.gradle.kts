@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 AtLarge Research
+ * Copyright (c) 2026 AtLarge Research
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -20,32 +20,27 @@
  * SOFTWARE.
  */
 
-package org.opendc.compute.simulator.telemetry
+description = "The process that runs one bag of simulation work"
 
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
+plugins {
+    `kotlin-conventions`
+    `testing-conventions`
+    alias(libs.plugins.kotlin.serialization)
+    application
+}
 
-/**
- * A category of output a simulation run produces, and the file it is written to.
- *
- * [fileName] belongs here because this is where the file is created: anything that has to know
- * where a run's output lands ahead of time, such as a scheduler signing an upload target before the
- * run starts, reads it from here rather than spelling it again.
- */
-@Serializable
-public enum class OutputFiles(public val fileName: String) {
-    @SerialName("host")
-    HOST("host.parquet"),
+application {
+    applicationName = "opendc-launcher"
+    mainClass.set("org.opendc.web.launcher.MainKt")
+}
 
-    @SerialName("task")
-    TASK("task.parquet"),
+dependencies {
+    // Deliberately dependency-light: the simulator, the model, and the JDK's own HTTP client.
+    // Anything added here is staged onto every compute node the launcher ever runs on.
+    api(projects.opendcSdk.opendcSdkModel)
+    implementation(projects.opendcSdk.opendcSdkRunner)
+    implementation(libs.kotlinx.serialization.json)
 
-    @SerialName("powerSource")
-    POWER_SOURCE("powerSource.parquet"),
-
-    @SerialName("battery")
-    BATTERY("battery.parquet"),
-
-    @SerialName("service")
-    SERVICE("service.parquet"),
+    implementation(libs.log4j.core)
+    runtimeOnly(libs.log4j.slf4j)
 }

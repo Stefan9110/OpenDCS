@@ -38,9 +38,9 @@ import jakarta.ws.rs.core.Response
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
-import org.opendc.web.server.model.BagExecution
+import org.opendc.web.dispatcher.ExitReason
+import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.ExecutionState
-import org.opendc.web.server.model.ExitReason
 import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.RunUnit
@@ -363,7 +363,7 @@ class ExperimentsResource(
     ): ExperimentStatus {
         val experiment = accessibleExperiment(id)
         val units = RunUnit.findByExperiment(experiment.id)
-        val scenarios = scenarioStatuses(units)
+        val scenarios = scenarioStatuses(units, executionsOf(experiment.id))
         return ExperimentStatus(
             id = experiment.publicId.toString(),
             name = experiment.name,
@@ -386,7 +386,25 @@ class ExperimentsResource(
         if (units.isEmpty()) {
             throw notFound("Scenario")
         }
-        return scenarioStatus(index, units)
+        return scenarioStatus(index, units, executionsOf(experiment.id))
+    }
+
+    /**
+     * Runs one scenario again.
+     *
+     * A scenario that failed for a reason outside the simulation, or one whose result is doubted, is
+     * put back in the queue without the whole experiment having to be resubmitted.
+     */
+    @POST
+    @Path("{id}/scenarios/{index}/retry")
+    @Transactional
+    fun retryScenario(
+        @PathParam("id") id: String,
+        @PathParam("index") index: Int,
+    ): ScenarioStatus {
+        val experiment = accessibleExperiment(id)
+        val units = pipeline.retryScenario(experiment, index)
+        return scenarioStatus(index, units, executionsOf(experiment.id))
     }
 
     @GET
@@ -447,15 +465,28 @@ class ExperimentsResource(
             RunUnit.list("experiment.id in ?1", experimentIds).groupBy { it.experiment.id }
         }
 
-    private fun scenarioStatuses(units: List<RunUnit>): List<ScenarioStatus> =
+    /**
+     * The execution carrying each unit.
+     *
+     * A unit that has been retried belongs to more than one, and executions arrive oldest first, so
+     * the last write per unit is the attempt that counts.
+     */
+    private fun executionsOf(experimentId: Long): Map<Long, Execution> =
+        Execution.findByExperiment(experimentId).flatMap { execution -> execution.units.map { it.id to execution } }.toMap()
+
+    private fun scenarioStatuses(
+        units: List<RunUnit>,
+        executions: Map<Long, Execution>,
+    ): List<ScenarioStatus> =
         units
             .groupBy { it.scenarioIndex }
             .toSortedMap()
-            .map { (index, scenarioUnits) -> scenarioStatus(index, scenarioUnits) }
+            .map { (index, scenarioUnits) -> scenarioStatus(index, scenarioUnits, executions) }
 
     private fun scenarioStatus(
         index: Int,
         units: List<RunUnit>,
+        executions: Map<Long, Execution>,
     ): ScenarioStatus {
         val failed = units.firstOrNull { it.state == ExecutionState.FAILED || it.state == ExecutionState.CANCELLED }
         return ScenarioStatus(
@@ -463,12 +494,12 @@ class ExperimentsResource(
             state = foldStates(units.map { it.state }),
             completedTasks = units.sumOf { it.completedTasks },
             totalTasks = units.sumOf { it.totalTasks },
-            attempt = units.maxOf { it.bag.attempt },
-            exitInfo = failed?.bag?.let(::exitInfo),
+            attempt = units.maxOf { executions[it.id]?.attempt ?: 1 },
+            exitInfo = failed?.let { executions[it.id] }?.let(::exitInfo),
         )
     }
 
-    private fun exitInfo(bag: BagExecution): ExitInfo? =
+    private fun exitInfo(bag: Execution): ExitInfo? =
         bag.exitReason?.let { reason ->
             ExitInfo(
                 exitCode = bag.exitCode ?: -1,

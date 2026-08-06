@@ -1,9 +1,16 @@
 import { apiRequest } from "@/lib/api/client"
-import type { Experiment, ExperimentPreview, ExperimentStatus, ExperimentSummary, Id } from "@/lib/api/types"
+import type {
+    Experiment,
+    ExperimentPreview,
+    ExperimentStatus,
+    ExperimentSummary,
+    Id,
+    ScenarioStatus,
+} from "@/lib/api/types"
 import { type ExperimentResults, isLiveResults } from "@/lib/experiment/results"
 import type { ExperimentSpec } from "@/lib/experiment/spec"
 import { isTerminalExperiment } from "@/lib/experiment/status"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 const LIVE_POLL_MS = 2000
 
@@ -96,10 +103,7 @@ export function useSubmitExperiment(experimentId: Id) {
     const queryClient = useQueryClient()
     return useMutation({
         mutationFn: () => apiRequest<Experiment>(`api/v1/experiments/${experimentId}/submit`, { method: "POST" }),
-        onSuccess: (experiment) => {
-            queryClient.setQueryData(experimentKeys.detail(experimentId), experiment)
-            queryClient.invalidateQueries({ queryKey: experimentKeys.list(experiment.projectId) })
-        },
+        onSuccess: (experiment) => applyExperiment(queryClient, experiment),
     })
 }
 
@@ -107,11 +111,35 @@ export function useCancelExperiment(experimentId: Id) {
     const queryClient = useQueryClient()
     return useMutation({
         mutationFn: () => apiRequest<Experiment>(`api/v1/experiments/${experimentId}/cancel`, { method: "POST" }),
-        onSuccess: (experiment) => {
-            queryClient.setQueryData(experimentKeys.detail(experimentId), experiment)
-            queryClient.invalidateQueries({ queryKey: experimentKeys.list(experiment.projectId) })
-        },
+        onSuccess: (experiment) => applyExperiment(queryClient, experiment),
     })
+}
+
+export function useRetryScenario(experimentId: Id) {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: (scenarioIndex: number) =>
+            apiRequest<ScenarioStatus>(`api/v1/experiments/${experimentId}/scenarios/${scenarioIndex}/retry`, {
+                method: "POST",
+            }),
+        // The detail key is a prefix of the status and results keys, so one invalidation reaches
+        // the panel that has to start polling again.
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: experimentKeys.detail(experimentId) }),
+    })
+}
+
+/**
+ * Takes the experiment a write returned, and drops what that write invalidated.
+ *
+ * Status and results have to go: their cached copies still describe a draft, and a query whose data
+ * says draft does not poll, so leaving them would show a submitted experiment as one that never
+ * started.
+ */
+function applyExperiment(queryClient: QueryClient, experiment: Experiment): void {
+    queryClient.setQueryData(experimentKeys.detail(experiment.id), experiment)
+    queryClient.invalidateQueries({ queryKey: experimentKeys.status(experiment.id) })
+    queryClient.invalidateQueries({ queryKey: experimentKeys.results(experiment.id) })
+    queryClient.invalidateQueries({ queryKey: experimentKeys.list(experiment.projectId) })
 }
 
 export function useCloneExperiment(experimentId: Id) {

@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test
  * means opening an upload with the bucket, so the rest of the multipart path is only exercisable
  * against a real one.
  */
-class S3TraceStoreTest {
+class S3ObjectStoreTest {
     private val partSize = 32L * 1024 * 1024
 
     @Test
@@ -61,7 +61,7 @@ class S3TraceStoreTest {
     }
 
     /**
-     * What [S3TraceStore] recognises an incomplete upload by: storage joins up whatever parts it is
+     * What [S3ObjectStore] recognises an incomplete upload by: storage joins up whatever parts it is
      * handed, so a part missing out of the middle is only detectable because the one after it is
      * numbered too high, or because a part that should be full turns out to be short.
      */

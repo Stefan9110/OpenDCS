@@ -72,12 +72,12 @@ private fun ceilDiv(
 ): Long = (value + by - 1) / by
 
 /** Objects in an S3-compatible bucket, which is what a deployment uses. */
-class S3TraceStore(
+class S3ObjectStore(
     private val client: S3Client,
     private val presigner: S3Presigner,
     private val bucket: String,
     private val uploadWindow: Duration,
-) : TraceStore {
+) : ObjectStore {
     override fun put(
         key: String,
         content: InputStream,
@@ -163,6 +163,13 @@ class S3TraceStore(
             },
         )
     }
+
+    /**
+     * A launcher reaching a bucket needs credentials of its own, which is what a Kubernetes secret
+     * or a SLURM job's environment is for. Signing is not an alternative here: a signature covers
+     * one object, and what is named is a directory of them.
+     */
+    override fun locationOf(prefix: String): String = "s3://$bucket/$prefix"
 
     override fun completeUpload(key: String): Boolean {
         val uploadId = uploadsOf(key).maxByOrNull { it.initiated() }?.uploadId() ?: return exists(key)

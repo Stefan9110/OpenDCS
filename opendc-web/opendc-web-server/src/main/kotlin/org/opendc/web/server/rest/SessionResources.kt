@@ -28,14 +28,11 @@ import jakarta.ws.rs.Path
 import jakarta.ws.rs.Produces
 import jakarta.ws.rs.core.MediaType
 import kotlinx.serialization.EncodeDefault
-import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.opendc.web.server.model.PlanTier
 import org.opendc.web.server.model.ProjectMember
-import org.opendc.web.server.service.AuthMode
 import org.opendc.web.server.service.Identity
-import org.opendc.web.server.service.OpenDcConfig
 
 /** The current user's identity, account shape and billing. */
 @Path("me")
@@ -64,7 +61,6 @@ class MeResource(private val identity: Identity) {
     @Path("billing")
     fun billing(): Billing = Billing(invoices = emptyList())
 }
-
 
 @Serializable
 enum class WirePlan {

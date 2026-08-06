@@ -29,7 +29,7 @@ import java.io.InputStream
 import java.nio.ByteBuffer
 
 /** A stored object presented to parquet, which reads it by seeking rather than start to finish. */
-class StoredObjectFile(private val store: TraceStore, private val key: String) : InputFile {
+class StoredObjectFile(private val store: ObjectStore, private val key: String) : InputFile {
     private val length = store.size(key)
 
     override fun getLength(): Long = length
@@ -43,7 +43,7 @@ class StoredObjectFile(private val store: TraceStore, private val key: String) :
  * of the file the footer pointed at.
  */
 private class StoredObjectStream(
-    private val store: TraceStore,
+    private val store: ObjectStore,
     private val key: String,
     private val length: Long,
 ) : SeekableInputStream() {

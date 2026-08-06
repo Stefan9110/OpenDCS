@@ -23,23 +23,25 @@
 package org.opendc.web.dispatcher
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 
 /**
- * Packing decides what a dispatcher asks a cluster for, so the properties worth pinning are the
- * ones that cost real money or kill real runs: never asking for more memory than a slot holds,
- * never silently dropping work, and never sizing a bag from anything but its hungriest unit.
+ * Packing decides what a dispatcher asks a cluster for, so the properties worth pinning are the ones
+ * that cost real money or kill real runs: never asking for more memory than a slot holds, never
+ * dropping work, and never giving a bag less time than the work inside it needs.
  */
 class PackingTest {
-    private val slot =
-        Slot(
-            cores = 4,
-            memoryCeilingMb = 4096.0,
-            timeBudgetSeconds = 600.0,
-            jvmBaselineMb = 512.0,
-            timeSafetyFactor = 3.0,
+    private val slot = ExecutionSlot(cores = 4, memoryMb = 4096.0)
+    private val policy =
+        DispatchPolicy(
+            jvmBaselineMb = JVM_BASELINE_MB,
+            startupSeconds = STARTUP_SECONDS,
+            timeSafetyFactor = TIME_SAFETY_FACTOR,
+            maxAttempts = 3,
+            growthFactor = 2.0,
+            maxMemoryRequestMb = 32_768.0,
         )
 
     private fun unit(
@@ -49,89 +51,126 @@ class PackingTest {
         peakMemoryMb: Double = 256.0,
     ) = PlannedUnit(scenarioIndex, seed, cpuSeconds, peakMemoryMb)
 
+    private fun bags(units: List<PlannedUnit>) = planBags(units, slot, policy)
+
     @Test
-    @DisplayName("packs nothing into nothing rather than an empty bag")
-    fun `empty input`() {
-        assertEquals(emptyList<PlannedBag>(), packUnits(emptyList(), slot))
+    fun `packs nothing into nothing rather than an empty bag`() {
+        assertEquals(emptyList<PlannedBag>(), bags(emptyList()))
     }
 
     @Test
-    @DisplayName("keeps every unit exactly once, so no work is dropped or run twice")
-    fun `conserves units`() {
+    fun `keeps every unit exactly once, so no work is dropped or run twice`() {
         val units = (0 until 40).map { unit(scenarioIndex = it, peakMemoryMb = 200.0 + it * 40.0) }
 
-        val packed = packUnits(units, slot).flatMap { it.units }
+        val packed = bags(units).flatMap { it.units }
 
         assertEquals(units.size, packed.size)
         assertEquals(units.toSet(), packed.toSet())
     }
 
     @Test
-    @DisplayName("never requests more memory than the slot holds, for any mix of unit sizes")
-    fun `stays under the ceiling`() {
+    fun `gives a bag at least as long as its slowest unit needs, however skewed the bag`() {
+        // One long unit among short ones. Treating a bag's duration as its summed work divided by
+        // its parallelism puts the limit below what the long unit alone requires.
+        val units =
+            listOf(
+                unit(0, cpuSeconds = 400.0, peakMemoryMb = 64.0),
+                unit(1, cpuSeconds = 10.0, peakMemoryMb = 64.0),
+                unit(2, cpuSeconds = 10.0, peakMemoryMb = 64.0),
+                unit(3, cpuSeconds = 10.0, peakMemoryMb = 64.0),
+            )
+
+        for (bag in bags(units)) {
+            val slowest = bag.units.maxOf { it.cpuSeconds }
+            assertTrue(
+                bag.timeLimitSeconds >= slowest,
+                "bag was given ${bag.timeLimitSeconds}s for a unit needing ${slowest}s",
+            )
+            assertEquals(slowest, bag.makespanSeconds)
+        }
+    }
+
+    @Test
+    fun `runs every unit in a bag at once, so no unit waits on another`() {
         val units = (0 until 30).map { unit(scenarioIndex = it, peakMemoryMb = 100.0 + it * 100.0) }
 
-        for (bag in packUnits(units, slot)) {
+        for (bag in bags(units)) {
+            assertEquals(bag.units.size, bag.parallelism)
+        }
+    }
+
+    @Test
+    fun `never requests more memory than the slot holds, for any mix of unit sizes`() {
+        val units = (0 until 30).map { unit(scenarioIndex = it, peakMemoryMb = 100.0 + it * 100.0) }
+
+        for (bag in bags(units)) {
             val largest = bag.units.maxOf { it.peakMemoryMb }
-            // A unit too large to ever fit is the one documented exception: it gets an honest
-            // oversized request rather than being silently dropped or split.
-            if (slot.jvmBaselineMb + largest <= slot.memoryCeilingMb) {
+            // A unit too large to ever fit is the documented exception: it gets an honest oversized
+            // request rather than being silently dropped or split.
+            if (JVM_BASELINE_MB + largest <= slot.memoryMb) {
                 assertTrue(
-                    bag.memoryRequestMb <= slot.memoryCeilingMb,
-                    "bag asked for ${bag.memoryRequestMb} MB against a ${slot.memoryCeilingMb} MB slot",
+                    bag.memoryRequestMb <= slot.memoryMb,
+                    "bag asked for ${bag.memoryRequestMb} MB against a ${slot.memoryMb} MB slot",
                 )
             }
         }
     }
 
     @Test
-    @DisplayName("sizes a bag from its hungriest unit, not its average")
-    fun `memory follows the peak`() {
-        val bags = packUnits(listOf(unit(0, peakMemoryMb = 3000.0), unit(1, peakMemoryMb = 100.0)), slot)
+    fun `sizes a bag from its hungriest unit, not its average`() {
+        val first = bags(listOf(unit(0, peakMemoryMb = 3000.0), unit(1, peakMemoryMb = 100.0))).first()
 
-        val first = bags.first()
         assertEquals(1, first.parallelism, "3000 MB leaves no room for a second concurrent unit")
-        assertEquals(slot.jvmBaselineMb + 3000.0, first.memoryRequestMb)
+        assertEquals(JVM_BASELINE_MB + 3000.0, first.memoryRequestMb)
+        assertEquals(3000.0, first.heapMb)
     }
 
     @Test
-    @DisplayName("runs small units concurrently up to the core count, not beyond it")
-    fun `parallelism is capped by cores`() {
+    fun `runs small units concurrently up to the core count, not beyond it`() {
         val units = (0 until 8).map { unit(scenarioIndex = it, peakMemoryMb = 64.0) }
 
-        val parallelism = packUnits(units, slot).first().parallelism
+        val parallelism = bags(units).first().parallelism
 
         assertEquals(slot.cores, parallelism, "64 MB units fit far more than 4, but a slot has 4 cores")
     }
 
     @Test
-    @DisplayName("gives a unit larger than the whole slot its own sequential bag")
-    fun `oversized unit is isolated`() {
-        val bags = packUnits(listOf(unit(0, peakMemoryMb = 10_000.0)), slot)
+    fun `gives a unit larger than the whole slot its own bag rather than dropping it`() {
+        val oversized = bags(listOf(unit(0, peakMemoryMb = 10_000.0)))
 
-        assertEquals(1, bags.size)
-        assertEquals(1, bags.first().parallelism)
-        assertEquals(1, bags.first().units.size)
+        assertEquals(1, oversized.size)
+        assertEquals(1, oversized.first().parallelism)
+        assertEquals(1, oversized.first().units.size)
     }
 
     @Test
-    @DisplayName("derives the time limit from the work in the bag and the safety factor")
-    fun `time limit reflects the bag`() {
-        val units = (0 until 4).map { unit(scenarioIndex = it, cpuSeconds = 100.0, peakMemoryMb = 64.0) }
-
-        val bag = packUnits(units, slot).first()
-
-        // Four 100s units at parallelism 4 is 100s of wall clock, tripled by the safety factor.
-        assertEquals(4, bag.parallelism)
-        assertEquals(400.0, bag.estimatedSeconds)
-        assertEquals(300, bag.timeLimitSeconds)
+    fun `refuses an estimate of no memory instead of packing a slot into infinite parts`() {
+        assertThrows(IllegalArgumentException::class.java) { unit(0, peakMemoryMb = 0.0) }
+        assertThrows(IllegalArgumentException::class.java) { unit(0, peakMemoryMb = -1.0) }
     }
 
     @Test
-    @DisplayName("is deterministic, so the same submission always plans the same bags")
-    fun `stable ordering`() {
+    fun `is deterministic, so the same submission always plans the same bags`() {
         val units = (0 until 25).map { unit(scenarioIndex = it % 5, seed = it.toLong(), peakMemoryMb = 256.0) }
 
-        assertEquals(packUnits(units, slot), packUnits(units.shuffled(), slot))
+        assertEquals(bags(units), bags(units.shuffled()))
+    }
+
+    // A launcher spends seconds starting a JVM and loading its inputs before the first run begins.
+    // A limit that is only a multiple of the work kills every short bag on its first attempt.
+    @Test
+    fun `leaves room for the launcher to start, not only for the work`() {
+        val bag = bags(listOf(unit(0, cpuSeconds = 1.0))).single()
+
+        assertTrue(
+            bag.timeLimitSeconds >= STARTUP_SECONDS,
+            "a one-second bag was given ${bag.timeLimitSeconds}s, less than it takes to start",
+        )
+    }
+
+    private companion object {
+        const val JVM_BASELINE_MB = 512.0
+        const val STARTUP_SECONDS = 30.0
+        const val TIME_SAFETY_FACTOR = 3.0
     }
 }

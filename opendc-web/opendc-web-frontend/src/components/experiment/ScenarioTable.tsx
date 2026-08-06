@@ -13,8 +13,9 @@ import {
     scenarioCoordinates,
     scenarioCount,
 } from "@/lib/experiment/spec"
-import { progressFraction } from "@/lib/experiment/status"
-import { Group, Paper, Progress, Stack, Table, Text, Tooltip } from "@mantine/core"
+import { isTerminalScenario, progressFraction } from "@/lib/experiment/status"
+import { ActionIcon, Group, Paper, Progress, Stack, Table, Text, Tooltip } from "@mantine/core"
+import { IconRefresh } from "@tabler/icons-react"
 
 const MAX_HEIGHT = 520
 const INDEX_WIDTH = 56
@@ -45,7 +46,15 @@ const INDEX_COLUMN = { w: INDEX_WIDTH, pos: "sticky", left: 0 } as const
 const STATE_COLUMN = { w: STATE_WIDTH, pos: "sticky", right: { base: 0, sm: PROGRESS_WIDTH } } as const
 const PROGRESS_COLUMN = { w: PROGRESS_WIDTH, pos: "sticky", right: 0, visibleFrom: "sm" } as const
 
-export function ScenarioTable({ spec, statuses }: { spec: ExperimentSpec; statuses: ScenarioStatus[] }) {
+export function ScenarioTable({
+    spec,
+    statuses,
+    onRetry,
+}: {
+    spec: ExperimentSpec
+    statuses: ScenarioStatus[]
+    onRetry?: (scenarioIndex: number) => void
+}) {
     const axes = experimentAxes(spec)
     const total = scenarioCount(spec)
     const varying = [...AXIS_ORDER].reverse().filter((key) => axes[key].length > 1)
@@ -108,7 +117,9 @@ export function ScenarioTable({ spec, statuses }: { spec: ExperimentSpec; status
                                             <Text size="sm">{entryLabels.get(key)?.[at[key]] ?? ""}</Text>
                                         </Table.Td>
                                     ))}
-                                    {started && <ScenarioOutcome status={statusAt.get(scenarioIndex)} />}
+                                    {started && (
+                                        <ScenarioOutcome status={statusAt.get(scenarioIndex)} onRetry={onRetry} />
+                                    )}
                                 </Table.Tr>
                             )
                         })}
@@ -119,7 +130,13 @@ export function ScenarioTable({ spec, statuses }: { spec: ExperimentSpec; status
     )
 }
 
-function ScenarioOutcome({ status }: { status: ScenarioStatus | undefined }) {
+function ScenarioOutcome({
+    status,
+    onRetry,
+}: {
+    status: ScenarioStatus | undefined
+    onRetry?: (scenarioIndex: number) => void
+}) {
     if (status === undefined) {
         return (
             <>
@@ -159,7 +176,7 @@ function ScenarioOutcome({ status }: { status: ScenarioStatus | undefined }) {
                 <Group gap="xs" wrap="nowrap">
                     <Progress
                         value={fraction * 100}
-                        w={90}
+                        w={onRetry === undefined ? 90 : 62}
                         size="sm"
                         color={status.state === "failed" ? "red" : "opendc"}
                         aria-label={`Scenario ${status.scenarioIndex} progress`}
@@ -167,6 +184,19 @@ function ScenarioOutcome({ status }: { status: ScenarioStatus | undefined }) {
                     <Text size="xs" c="dimmed">
                         {formatPercent(fraction)}
                     </Text>
+                    {onRetry !== undefined && isTerminalScenario(status.state) && (
+                        <Tooltip label="Run this scenario again" withArrow>
+                            <ActionIcon
+                                variant="subtle"
+                                color="gray"
+                                size="sm"
+                                aria-label={`Run scenario ${status.scenarioIndex} again`}
+                                onClick={() => onRetry(status.scenarioIndex)}
+                            >
+                                <IconRefresh size={14} />
+                            </ActionIcon>
+                        </Tooltip>
+                    )}
                 </Group>
             </Table.Td>
         </>

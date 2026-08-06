@@ -33,7 +33,7 @@ import java.util.Optional
 import java.util.UUID
 
 /** How a store is addressed, and which one a deployment's configuration ends up with. */
-class TraceStorageTest {
+class ObjectStorageTest {
     @TempDir
     lateinit var root: Path
 
@@ -49,9 +49,29 @@ class TraceStorageTest {
         assertEquals(traceKey(id, "tasks"), traceKey(id, "tasks"))
     }
 
+    // A launcher is pointed at a trace, not at each of its tables, so the location of a trace has
+    // to be the directory its tables lie in.
+    @Test
+    fun `a trace locates as the directory holding its tables`() {
+        val id = UUID.randomUUID()
+        val store = ObjectStorage(config(ObjectStoreKind.LOCAL)).objectStore()
+
+        val location = store.locationOf(traceKey(id))
+
+        assertTrue(store.locationOf(traceKey(id, "tasks")).startsWith("$location/"), "tables must lie under the trace")
+        assertTrue(location.startsWith("file:"), "a local store is read where it lies")
+    }
+
+    @Test
+    fun `results are kept beside traces rather than in a directory of their own`() {
+        val id = UUID.randomUUID()
+
+        assertEquals("results/$id", resultKey(id))
+    }
+
     @Test
     fun `configuration selects which store is built`() {
-        assertTrue(TraceStorage(config(TraceStoreKind.LOCAL)).traceStore() is LocalTraceStore)
+        assertTrue(ObjectStorage(config(ObjectStoreKind.LOCAL)).objectStore() is LocalObjectStore)
     }
 
     // Building the client and signing a target is where a deployment against a third-party provider
@@ -60,8 +80,8 @@ class TraceStorageTest {
     @Test
     fun `an s3 store signs an upload target against a third-party endpoint`() {
         val store =
-            TraceStorage(config(TraceStoreKind.S3, bucket = "opendc-traces", endpoint = "https://fsn1.your-objectstorage.com"))
-                .traceStore()
+            ObjectStorage(config(ObjectStoreKind.S3, bucket = "opendc-traces", endpoint = "https://fsn1.your-objectstorage.com"))
+                .objectStore()
 
         val target = store.uploadTarget(key, 1024)
 
@@ -80,23 +100,23 @@ class TraceStorageTest {
     // handed a client that fails on the first upload with something from inside the SDK.
     @Test
     fun `an incomplete s3 configuration says which key is missing`() {
-        val missing = assertThrows<IllegalStateException> { TraceStorage(config(TraceStoreKind.S3, bucket = null)).traceStore() }
+        val missing = assertThrows<IllegalStateException> { ObjectStorage(config(ObjectStoreKind.S3, bucket = null)).objectStore() }
 
         assertTrue("bucket" in missing.message.orEmpty(), "unhelpful message: ${missing.message}")
     }
 
     private fun config(
-        kind: TraceStoreKind,
+        kind: ObjectStoreKind,
         bucket: String? = "bucket",
         endpoint: String? = null,
-    ): TraceStoreConfig =
-        object : TraceStoreConfig {
+    ): ObjectStoreConfig =
+        object : ObjectStoreConfig {
             override fun kind() = kind
 
             override fun directory() = root.toString()
 
             override fun s3() =
-                object : TraceStoreConfig.S3Config {
+                object : ObjectStoreConfig.S3Config {
                     override fun bucket(): Optional<String> = Optional.ofNullable(bucket)
 
                     override fun endpoint(): Optional<String> = Optional.ofNullable(endpoint)

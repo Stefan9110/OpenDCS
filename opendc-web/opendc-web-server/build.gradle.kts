@@ -86,6 +86,16 @@ dependencies {
     testImplementation(libs.restassured.core)
 }
 
+// The local dispatcher runs the launcher as a separate program, so the launcher's own distribution
+// has to exist before a development run or a test can start one.
+tasks.named("quarkusDev") {
+    dependsOn(":opendc-web:opendc-web-launcher:installDist")
+}
+
+tasks.test {
+    dependsOn(":opendc-web:opendc-web-launcher:installDist")
+}
+
 // Quinoa builds the frontend itself from ui-dir during quarkusBuild; the frontend module's own
 // nextBuild task stays as the standalone assemble/check path. Never run both pnpm processes in
 // the same directory concurrently under a parallel root build.

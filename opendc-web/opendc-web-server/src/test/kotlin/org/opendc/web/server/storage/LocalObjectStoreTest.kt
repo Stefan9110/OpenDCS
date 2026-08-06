@@ -33,7 +33,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 
-class LocalTraceStoreTest {
+class LocalObjectStoreTest {
     @TempDir
     lateinit var root: Path
 
@@ -127,5 +127,5 @@ class LocalTraceStoreTest {
         assertTrue(store.completeUpload(key))
     }
 
-    private fun store(): TraceStore = LocalTraceStore(root)
+    private fun store(): ObjectStore = LocalObjectStore(root)
 }

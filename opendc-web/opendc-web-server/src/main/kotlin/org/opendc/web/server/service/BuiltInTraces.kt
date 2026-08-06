@@ -26,9 +26,11 @@ import io.quarkus.runtime.StartupEvent
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.enterprise.event.Observes
 import jakarta.transaction.Transactional
+import org.apache.parquet.hadoop.ParquetFileReader
 import org.opendc.web.server.model.Trace
 import org.opendc.web.server.model.TracePart
-import org.opendc.web.server.storage.TraceStore
+import org.opendc.web.server.storage.ObjectStore
+import org.opendc.web.server.storage.StoredObjectFile
 import org.opendc.web.server.storage.traceKey
 import org.slf4j.LoggerFactory
 
@@ -42,7 +44,7 @@ import org.slf4j.LoggerFactory
  * guessed at, which is what a deployment that ships none of them looks like.
  */
 @ApplicationScoped
-class BuiltInTraces(private val store: TraceStore) {
+class BuiltInTraces(private val store: ObjectStore) {
     // Failures are deliberately not swallowed. A trace library that could not be filled is a
     // misconfigured deployment, and finding that out at boot is far better than finding it out
     // when somebody's experiment cannot resolve the trace it names.
@@ -57,9 +59,10 @@ class BuiltInTraces(private val store: TraceStore) {
         }
     }
 
-    // What a deployment ships is taken as given rather than inspected: these files are packaged
-    // with the server, so a broken one is a packaging mistake to fix at the source, not somebody's
-    // upload to refuse. That is also why they carry no row count.
+    // A shipped file is not checked for being the table it claims to be, the way an upload is:
+    // it is packaged with the server, so a wrong one is a packaging mistake to fix at the source.
+    // Its footer is still read, because how many rows a trace holds is what decides the memory an
+    // experiment over it is given, and a built-in with no count would be dispatched as if empty.
     private fun seedTable(
         trace: Trace,
         table: String,
@@ -85,11 +88,26 @@ class BuiltInTraces(private val store: TraceStore) {
                 it.tableName = table
             }
         part.sizeBytes = size
+        part.rowCount = rowCount(key)
         if (existing == null) {
             part.persist()
         }
-        LOG.info("Stored built-in trace {} table {} ({} bytes)", trace.slug, table, size)
+        LOG.info("Stored built-in trace {} table {} ({} bytes, {} rows)", trace.slug, table, size, part.rowCount)
     }
+
+    /**
+     * How many rows the stored file holds, or nothing when it cannot be read as parquet.
+     *
+     * A deployment that ships something unreadable is told so and keeps running: the trace still
+     * resolves, and dispatch falls back to estimating from the scenario alone.
+     */
+    private fun rowCount(key: String): Long? =
+        try {
+            ParquetFileReader.open(StoredObjectFile(store, key)).use { it.recordCount }
+        } catch (e: Exception) {
+            LOG.warn("Built-in {} could not be read as parquet, so it is stored uncounted: {}", key, e.message)
+            null
+        }
 
     private companion object {
         val LOG = LoggerFactory.getLogger(BuiltInTraces::class.java)

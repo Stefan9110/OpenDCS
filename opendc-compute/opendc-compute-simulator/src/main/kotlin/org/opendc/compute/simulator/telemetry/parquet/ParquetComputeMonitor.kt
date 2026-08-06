@@ -125,7 +125,7 @@ public class ParquetComputeMonitor(
             val hostExporter =
                 if (filesToExport[OutputFiles.HOST] == true) {
                     Exporter(
-                        outputFile = File(base, "$partition/host.parquet").also { it.parentFile.mkdirs() },
+                        outputFile = File(base, "$partition/${OutputFiles.HOST.fileName}").also { it.parentFile.mkdirs() },
                         columns = hostExportColumns ?: Exportable.getAllLoadedColumns(),
                         bufferSize = bufferSize,
                     )
@@ -136,7 +136,7 @@ public class ParquetComputeMonitor(
             val taskExporter =
                 if (filesToExport[OutputFiles.TASK] == true) {
                     Exporter(
-                        outputFile = File(base, "$partition/task.parquet").also { it.parentFile.mkdirs() },
+                        outputFile = File(base, "$partition/${OutputFiles.TASK.fileName}").also { it.parentFile.mkdirs() },
                         columns = taskExportColumns ?: Exportable.getAllLoadedColumns(),
                         bufferSize = bufferSize,
                     )
@@ -147,7 +147,7 @@ public class ParquetComputeMonitor(
             val powerSourceExporter =
                 if (filesToExport[OutputFiles.POWER_SOURCE] == true) {
                     Exporter(
-                        outputFile = File(base, "$partition/powerSource.parquet").also { it.parentFile.mkdirs() },
+                        outputFile = File(base, "$partition/${OutputFiles.POWER_SOURCE.fileName}").also { it.parentFile.mkdirs() },
                         columns = powerSourceExportColumns ?: Exportable.getAllLoadedColumns(),
                         bufferSize = bufferSize,
                     )
@@ -158,7 +158,7 @@ public class ParquetComputeMonitor(
             val batteryExporter =
                 if (filesToExport[OutputFiles.BATTERY] == true) {
                     Exporter(
-                        outputFile = File(base, "$partition/battery.parquet").also { it.parentFile.mkdirs() },
+                        outputFile = File(base, "$partition/${OutputFiles.BATTERY.fileName}").also { it.parentFile.mkdirs() },
                         columns = batteryExportColumns ?: Exportable.getAllLoadedColumns(),
                         bufferSize = bufferSize,
                     )
@@ -169,7 +169,7 @@ public class ParquetComputeMonitor(
             val serviceExporter =
                 if (filesToExport[OutputFiles.SERVICE] == true) {
                     Exporter(
-                        outputFile = File(base, "$partition/service.parquet").also { it.parentFile.mkdirs() },
+                        outputFile = File(base, "$partition/${OutputFiles.SERVICE.fileName}").also { it.parentFile.mkdirs() },
                         columns = serviceExportColumns ?: Exportable.getAllLoadedColumns(),
                         bufferSize = bufferSize,
                     )

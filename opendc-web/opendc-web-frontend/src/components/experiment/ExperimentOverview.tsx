@@ -6,12 +6,14 @@ import { RunProgress } from "@/components/experiment/RunProgress"
 import { ScenarioTable } from "@/components/experiment/ScenarioTable"
 import { TableGhost } from "@/components/util/Ghost"
 import { QueryState } from "@/components/util/QueryState"
-import { useExperimentStatus } from "@/lib/api/experiments"
+import { notifyProblem } from "@/components/util/feedback"
+import { useExperimentStatus, useRetryScenario } from "@/lib/api/experiments"
 import type { Experiment } from "@/lib/api/types"
 import { Grid, Stack } from "@mantine/core"
 
 export function ExperimentOverview({ experiment }: { experiment: Experiment }) {
     const status = useExperimentStatus(experiment.id)
+    const retry = useRetryScenario(experiment.id)
     const isDraft = experiment.state === "draft"
 
     return (
@@ -21,7 +23,15 @@ export function ExperimentOverview({ experiment }: { experiment: Experiment }) {
                     {(loaded) => (
                         <Stack gap="md">
                             {!isDraft && <RunProgress experiment={experiment} status={loaded} />}
-                            <ScenarioTable spec={experiment.spec} statuses={loaded.scenarios} />
+                            <ScenarioTable
+                                spec={experiment.spec}
+                                statuses={loaded.scenarios}
+                                onRetry={
+                                    isDraft
+                                        ? undefined
+                                        : (scenarioIndex) => retry.mutate(scenarioIndex, { onError: notifyProblem })
+                                }
+                            />
                         </Stack>
                     )}
                 </QueryState>

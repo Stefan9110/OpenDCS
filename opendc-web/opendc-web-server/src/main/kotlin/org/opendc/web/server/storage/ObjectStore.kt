@@ -53,13 +53,14 @@ sealed interface UploadTarget {
 }
 
 /**
- * Storage for the files a trace is made of, addressed by a key the caller chooses.
+ * Storage for the large files a deployment keeps: the tables a trace is made of, and the parquet
+ * its experiments produce. Objects are addressed by a key the caller chooses.
  *
- * Keys are derived from the trace an object belongs to rather than from its contents. Content
- * addressing would deduplicate, but it cannot survive uploads that never pass through the server:
- * a signed target has to name a key before anybody has seen the bytes that would hash to it.
+ * Keys are derived from what an object belongs to rather than from its contents. Content addressing
+ * would deduplicate, but it cannot survive writes that never pass through the server: a signed
+ * target has to name a key before anybody has seen the bytes that would hash to it.
  */
-interface TraceStore : AutoCloseable {
+interface ObjectStore : AutoCloseable {
     /** Stores [content] under [key], returning how much of it there was. */
     fun put(
         key: String,
@@ -94,6 +95,16 @@ interface TraceStore : AutoCloseable {
     ): UploadTarget
 
     /**
+     * Where a launcher finds everything under [prefix], as a URI it can read from and write into.
+     *
+     * A prefix rather than a key, because a workload trace is a directory of tables and a run's
+     * output is a directory of files. The scheme is what tells a launcher whether those bytes are
+     * beside it or somewhere it has to reach, which is the only difference between running next to
+     * the store and running on another site's cluster.
+     */
+    fun locationOf(prefix: String): String
+
+    /**
      * Assembles an upload that was sent in parts, and says whether [key] is now there and whole.
      *
      * Anything sent in one piece is an object already and there is nothing to assemble. An upload
@@ -105,13 +116,25 @@ interface TraceStore : AutoCloseable {
 }
 
 /**
- * Where the file holding [table] of the trace identified by [tracePublicId] lives in the store.
+ * Where the trace identified by [tracePublicId] keeps its tables.
  *
  * Derived rather than stored, and derived from identity rather than contents: a browser is handed
  * this key before it has sent a byte, which is what lets a trace of any size go straight to object
  * storage without passing through the server.
  */
+fun traceKey(tracePublicId: UUID): String = "traces/$tracePublicId"
+
+/** Where one [table] of that trace lives. */
 fun traceKey(
     tracePublicId: UUID,
     table: String,
-): String = "traces/$tracePublicId/$table.parquet"
+): String = "${traceKey(tracePublicId)}/$table.parquet"
+
+/**
+ * Where the runs of the experiment identified by [experimentPublicId] write their parquet, as
+ * `<prefix>/<scenario>/seed=<seed>/`.
+ *
+ * A launcher is given this prefix and puts its finished output under it, so results live beside the
+ * traces they came from rather than in a directory only one kind of dispatcher can reach.
+ */
+fun resultKey(experimentPublicId: UUID): String = "results/$experimentPublicId"

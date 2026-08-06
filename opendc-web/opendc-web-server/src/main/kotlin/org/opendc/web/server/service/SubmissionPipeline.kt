@@ -28,17 +28,19 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonElement
 import org.opendc.sdk.model.experiment.ExperimentSpec
+import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.experiment.expand
 import org.opendc.sdk.model.failure.TraceBasedFailureSpec
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.resource.ResourceReference
 import org.opendc.sdk.model.workload.TraceWorkloadSpec
-import org.opendc.web.dispatcher.PlannedBag
-import org.opendc.web.dispatcher.PlannedUnit
-import org.opendc.web.dispatcher.packUnits
-import org.opendc.web.server.model.BagExecution
+import org.opendc.web.dispatcher.Dispatcher
+import org.opendc.web.dispatcher.estimate.TraceSizeEstimator
+import org.opendc.web.server.execution.ExecutionConfig
+import org.opendc.web.server.execution.toCoefficients
+import org.opendc.web.server.execution.traceExtentOf
+import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.ExecutionState
-import org.opendc.web.server.model.ExitReason
 import org.opendc.web.server.model.Experiment
 import org.opendc.web.server.model.ExperimentResource
 import org.opendc.web.server.model.Project
@@ -47,9 +49,17 @@ import org.opendc.web.server.model.TraceKind
 import org.opendc.web.server.rest.DocumentIssue
 import org.opendc.web.server.rest.conflict
 import org.opendc.web.server.rest.invalidDocument
+import org.opendc.web.server.rest.notFound
 import org.opendc.web.server.rest.toWire
 import java.time.Instant
-import kotlin.math.ceil
+
+/** What an experiment is expected to cost its owner. Billing is in simulation seconds, never memory. */
+@Serializable
+data class CostEstimate(
+    val scenarioCount: Int,
+    val estimatedSimulationSeconds: Double,
+    val estimatedBudgetSeconds: Double,
+)
 
 /** What the draft editor needs to know about a spec before anything is persisted. */
 @Serializable
@@ -67,7 +77,8 @@ data class SubmissionPreview(
 @ApplicationScoped
 class SubmissionPipeline(
     private val codec: SpecCodec,
-    private val estimator: Estimator,
+    private val config: ExecutionConfig,
+    private val dispatcher: Dispatcher,
 ) {
     @Transactional
     fun createDraft(
@@ -99,7 +110,7 @@ class SubmissionPipeline(
         val spec = codec.decodeExperiment(document)
         return SubmissionPreview(
             scenarioCount = spec.expand().size,
-            estimate = estimator.estimate(spec.expand()),
+            estimate = estimate(spec.expand()),
             issues = spec.validate().toWire(),
         )
     }
@@ -115,24 +126,23 @@ class SubmissionPipeline(
             throw invalidDocument("The experiment document is invalid", issues.toWire())
         }
         val scenarios = spec.expand()
-        val units =
-            scenarios.flatMap { scenario ->
-                val estimate = estimator.estimateUnit(scenario)
-                (0 until scenario.runs).map { run ->
-                    PlannedUnit(
-                        scenarioIndex = scenario.id,
-                        seed = (scenario.initialSeed + run).toLong(),
-                        cpuSeconds = estimate.cpuSeconds,
-                        peakMemoryMb = estimate.peakMemoryMb,
-                    )
-                }
-            }
-        if (units.isEmpty()) {
+        if (scenarios.isEmpty()) {
             throw conflict("This experiment expands to no scenarios")
         }
 
         extractResources(experiment, spec)
-        persistBags(experiment, packUnits(units, estimator.slot()))
+        // Only the work is written here. How it is shaped into executions depends on the slot a
+        // dispatcher offers and on what earlier attempts did, neither of which is known yet.
+        for (scenario in scenarios) {
+            for (run in 0 until scenario.runs) {
+                val unit = RunUnit()
+                unit.experiment = experiment
+                unit.scenarioIndex = scenario.id
+                unit.seed = (scenario.initialSeed + run).toLong()
+                unit.state = ExecutionState.QUEUED
+                unit.persist()
+            }
+        }
         val now = Instant.now()
         experiment.submittedAt = now
         experiment.updatedAt = now
@@ -147,14 +157,41 @@ class SubmissionPipeline(
         if (units.all { it.state.isTerminal }) {
             throw conflict("This experiment has already finished")
         }
+        stopExecutions(experiment)
         for (unit in units.filterNot { it.state.isTerminal }) {
             unit.state = ExecutionState.CANCELLED
         }
-        for (bag in BagExecution.findByExperiment(experiment.id).filterNot { it.state.isTerminal }) {
-            bag.state = ExecutionState.CANCELLED
-            bag.exitReason = ExitReason.CANCELLED
+        experiment.updatedAt = Instant.now()
+    }
+
+    /**
+     * Queues one scenario's runs again.
+     *
+     * Only a scenario that has stopped can be restarted, and every run of it goes: a scenario is
+     * what a reader picked, and half of one running is not a state worth being able to reach. The
+     * output is written to the same place as before, so an earlier attempt's results are replaced
+     * rather than accumulated.
+     */
+    @Transactional
+    fun retryScenario(
+        experiment: Experiment,
+        scenarioIndex: Int,
+    ): List<RunUnit> {
+        if (experiment.isDraft) {
+            throw conflict("A draft experiment has nothing to restart")
+        }
+        val units = RunUnit.findByExperiment(experiment.id).filter { it.scenarioIndex == scenarioIndex }
+        if (units.isEmpty()) {
+            throw notFound("Scenario")
+        }
+        if (units.any { !it.state.isTerminal }) {
+            throw conflict("This scenario is still running")
+        }
+        for (unit in units) {
+            unit.state = ExecutionState.QUEUED
         }
         experiment.updatedAt = Instant.now()
+        return units
     }
 
     @Transactional
@@ -168,14 +205,46 @@ class SubmissionPipeline(
      * governs editing them, not keeping them: an owner may always delete their own work.
      *
      * Stopping the scenarios of a live experiment is a dispatcher call, not a database write. The
-     * bags and units are removed by the schema's cascade, so marking them cancelled on the way out
-     * would be wasted work, and worse: it dirties rows that point at an experiment being deleted in
-     * the same transaction, which fails the flush.
+     * executions and units are removed by the schema's cascade, so marking them cancelled on the
+     * way out would be wasted work, and worse: it dirties rows that point at an experiment being
+     * deleted in the same transaction, which fails the flush.
      */
     @Transactional
     fun delete(experiment: Experiment) {
-        // dispatcher.cancel(experiment) belongs here once a dispatcher exists.
+        stopExecutions(experiment)
         experiment.delete()
+    }
+
+    /**
+     * Kills whatever this experiment still has running.
+     *
+     * The rows are left as they are: the platform reports each execution ending in its own time,
+     * and settling on that rather than on this call is what keeps one account of what happened.
+     */
+    private fun stopExecutions(experiment: Experiment) {
+        for (execution in Execution.findByExperiment(experiment.id).filterNot { it.state.isTerminal }) {
+            if (execution.dispatcher == dispatcher.name) {
+                dispatcher.cancel(execution.publicId)
+            }
+        }
+    }
+
+    /**
+     * What a document will cost its owner, which is a different question from what dispatch needs
+     * to know: it reads the same model, but no per-deployment correction. What a user is quoted
+     * should not move because a cluster they never chose turned out to be slow.
+     */
+    private fun estimate(scenarios: List<ScenarioSpec>): CostEstimate {
+        val model = TraceSizeEstimator(config.estimator().toCoefficients())
+        val seconds =
+            scenarios.sumOf { scenario ->
+                scenario.runs * model.estimate(scenario, traceExtentOf(scenario.workload)).cpuSeconds
+            }
+        return CostEstimate(
+            scenarioCount = scenarios.size,
+            estimatedSimulationSeconds = seconds,
+            estimatedBudgetSeconds = seconds,
+        )
     }
 
     private fun applyDraft(
@@ -185,7 +254,7 @@ class SubmissionPipeline(
     ) {
         val spec = codec.decodeExperiment(document)
         val canonical = codec.canonical(spec)
-        val estimate = estimator.estimate(spec.expand())
+        val estimate = estimate(spec.expand())
         experiment.name = name
         experiment.spec = canonical
         experiment.specHash = codec.hash(canonical)
@@ -214,32 +283,6 @@ class SubmissionPipeline(
             row.reference = codec.json.encodeToString<ResourceReference>(reference)
             row.referenceName = (reference as? NamedReference)?.name
             row.persist()
-        }
-    }
-
-    private fun persistBags(
-        experiment: Experiment,
-        bags: List<PlannedBag>,
-    ) {
-        bags.forEachIndexed { index, planned ->
-            val bag = BagExecution()
-            bag.experiment = experiment
-            bag.bagIndex = index
-            bag.state = ExecutionState.QUEUED
-            bag.parallelism = planned.parallelism
-            bag.estimatedSeconds = planned.estimatedSeconds
-            bag.memoryLimitMb = ceil(planned.memoryRequestMb).toInt()
-            bag.timeLimitSeconds = planned.timeLimitSeconds
-            bag.persist()
-            for (planUnit in planned.units) {
-                val unit = RunUnit()
-                unit.bag = bag
-                unit.experiment = experiment
-                unit.scenarioIndex = planUnit.scenarioIndex
-                unit.seed = planUnit.seed
-                unit.state = ExecutionState.QUEUED
-                unit.persist()
-            }
         }
     }
 }
