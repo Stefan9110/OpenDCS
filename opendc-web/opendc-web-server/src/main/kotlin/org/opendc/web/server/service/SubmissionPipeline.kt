@@ -51,6 +51,7 @@ import org.opendc.web.server.rest.conflict
 import org.opendc.web.server.rest.invalidDocument
 import org.opendc.web.server.rest.notFound
 import org.opendc.web.server.rest.toWire
+import org.opendc.web.server.results.ResultsReader
 import java.time.Instant
 
 /** What an experiment is expected to cost its owner. Billing is in simulation seconds, never memory. */
@@ -79,6 +80,7 @@ class SubmissionPipeline(
     private val codec: SpecCodec,
     private val config: ExecutionConfig,
     private val dispatcher: Dispatcher,
+    private val results: ResultsReader,
 ) {
     @Transactional
     fun createDraft(
@@ -134,12 +136,14 @@ class SubmissionPipeline(
         // Only the work is written here. How it is shaped into executions depends on the slot a
         // dispatcher offers and on what earlier attempts did, neither of which is known yet.
         for (scenario in scenarios) {
+            val tasks = plannedTaskCount(scenario)
             for (run in 0 until scenario.runs) {
                 val unit = RunUnit()
                 unit.experiment = experiment
                 unit.scenarioIndex = scenario.id
                 unit.seed = (scenario.initialSeed + run).toLong()
                 unit.state = ExecutionState.QUEUED
+                unit.totalTasks = tasks
                 unit.persist()
             }
         }
@@ -187,8 +191,15 @@ class SubmissionPipeline(
         if (units.any { !it.state.isTerminal }) {
             throw conflict("This scenario is still running")
         }
+        // What the earlier attempt measured is about to be overwritten where it lies, so anything
+        // still holding it would go on showing a result that no longer has a file behind it.
+        results.forget(experiment.publicId, units)
         for (unit in units) {
             unit.state = ExecutionState.QUEUED
+            // A scenario about to be run again has got nowhere yet. Leaving the finished attempt's
+            // count would show it as complete until the new one reported over the top of it, which
+            // is the one moment a reader is watching the bar rather than the result.
+            unit.completedTasks = 0
         }
         experiment.updatedAt = Instant.now()
         return units
@@ -245,6 +256,24 @@ class SubmissionPipeline(
             estimatedSimulationSeconds = seconds,
             estimatedBudgetSeconds = seconds,
         )
+    }
+
+    /**
+     * How many tasks one run of [scenario] has to get through.
+     *
+     * The whole denominator of an experiment is settled here, before any of it is dispatched, so the
+     * bar it draws only ever moves forwards. Filling it in as launchers reported theirs ran the bar
+     * backwards every time another scenario started: what had been all of the work became a fraction
+     * of it.
+     *
+     * Sampling picks tasks by load rather than by count, so a sampled run lands near this number
+     * rather than on it. Every other run, which is nearly all of them, lands exactly on it.
+     */
+    private fun plannedTaskCount(scenario: ScenarioSpec): Int {
+        val workload = scenario.workload
+        val tasks = traceExtentOf(workload).taskCount
+        val sampled = if (workload is TraceWorkloadSpec) tasks * workload.sampleFraction.coerceIn(0.0, 1.0) else tasks.toDouble()
+        return sampled.toLong().coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
     }
 
     private fun applyDraft(

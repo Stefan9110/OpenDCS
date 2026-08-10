@@ -100,16 +100,36 @@ private fun run(
         throw LaunchFailure(EXIT_INVALID_SPEC, issues.joinToString(prefix = "The manifest carries invalid scenarios: "))
     }
 
+    val telemetry = TelemetrySink()
     val report =
-        OpenDC
-            .builder()
-            .provisioner(provisioner(workDir.resolve("inputs")))
-            .output(workDir.resolve("output"))
-            .parallelism(manifest.parallelism.coerceIn(1, Runtime.getRuntime().availableProcessors()))
-            .build()
-            .simulate(RUN, manifest.scenarios)
+        reporting(manifest.telemetry, telemetry).use {
+            OpenDC
+                .builder()
+                .provisioner(provisioner(workDir.resolve("inputs")))
+                .output(workDir.resolve("output"))
+                .sink(telemetry)
+                .parallelism(manifest.parallelism.coerceIn(1, Runtime.getRuntime().availableProcessors()))
+                .build()
+                .simulate(RUN, manifest.scenarios)
+        }
     publish(report, manifest.results)
 }
+
+/**
+ * Reports what [sink] measures for as long as the runs last, or does nothing where the manifest names
+ * nowhere to report to.
+ *
+ * The sink is attached either way, so a manifest run by hand takes the same path as one a server
+ * wrote and cannot behave differently for want of a listener.
+ */
+private fun reporting(
+    target: TelemetryTarget,
+    sink: TelemetrySink,
+): AutoCloseable =
+    when (target) {
+        is TelemetryTarget.None -> AutoCloseable {}
+        is TelemetryTarget.Endpoint -> TelemetryPoster(target, sink::report).also { it.start() }
+    }
 
 /**
  * Resolves the URIs the server wrote into the scenarios, bringing each one over at most once however

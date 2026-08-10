@@ -38,7 +38,10 @@ import jakarta.persistence.ManyToOne
 import jakarta.persistence.Table
 import org.intellij.lang.annotations.Language
 import org.opendc.web.dispatcher.ExitReason
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.time.Instant
+import java.util.Base64
 import java.util.UUID
 
 /** Lifecycle of one dispatched execution and of each unit inside it. */
@@ -77,6 +80,11 @@ class RunUnit : PanacheEntityBase {
     @Enumerated(EnumType.STRING)
     var state: ExecutionState = ExecutionState.QUEUED
 
+    /**
+     * How much work this run is. Written once, at submit, from the document's own workload, and never
+     * touched again: it is what progress is read against, and a denominator that moves is a bar that
+     * runs backwards.
+     */
     var totalTasks: Int = 0
 
     var completedTasks: Int = 0
@@ -135,6 +143,15 @@ class Execution : PanacheEntityBase {
 
     var attempt: Int = 1
 
+    /**
+     * All that is kept of the credential this execution's launcher reports progress with.
+     *
+     * Absent until the work is handed to a platform, which [state] already says. Nothing outside
+     * [grantToken] and [findByToken] ever sees this column, so how a token is turned into it is not
+     * a fact the rest of the server has to carry.
+     */
+    var tokenHash: String? = null
+
     lateinit var dispatcher: String
 
     var parallelism: Int = 1
@@ -159,6 +176,20 @@ class Execution : PanacheEntityBase {
     var exitReason: ExitReason? = null
 
     var exitMessage: String? = null
+
+    /**
+     * Mints the credential a launcher reports this execution's progress with, and returns it the one
+     * time it can be read.
+     *
+     * A fresh one every time the work goes out, so a token cannot outlive the attempt it was minted
+     * for: an execution that failed and was replaced leaves a process nobody stopped holding a
+     * credential that no longer resolves.
+     */
+    fun grantToken(): String {
+        val token = "$TOKEN_PREFIX${Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(TOKEN_BYTES).also(RANDOM::nextBytes))}"
+        tokenHash = hash(token)
+        return token
+    }
 
     companion object : PanacheCompanion<Execution> {
         // The units are fetched with the execution because every caller reads across the pair:
@@ -189,5 +220,18 @@ class Execution : PanacheEntityBase {
         fun findLive(): List<Execution> = list(LIVE)
 
         fun findByPublicId(publicId: UUID): Execution? = find("publicId = ?1", publicId).firstResult()
+
+        /** The execution [token] was minted for, or none if it was never minted or has been replaced. */
+        fun findByToken(token: String): Execution? = find("tokenHash = ?1", hash(token)).firstResult()
+
+        private const val TOKEN_PREFIX = "odc_exec_"
+
+        /** Enough entropy that guessing one is not a strategy, and short enough to fit a header. */
+        private const val TOKEN_BYTES = 24
+
+        private val RANDOM = SecureRandom()
+
+        private fun hash(token: String): String =
+            MessageDigest.getInstance("SHA-256").digest(token.toByteArray()).joinToString("") { "%02x".format(it) }
     }
 }

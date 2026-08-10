@@ -98,6 +98,37 @@ class LocalObjectStoreTest {
         assertThrows<Exception> { store().open(key) }
     }
 
+    // What an experiment produced is decided by its export spec, so an archive has to ask what is
+    // there rather than work out what should have been written.
+    @Test
+    fun `listing a prefix answers with the keys under it and nothing beside them`() {
+        val store = store()
+        store.put("results/one/0/seed=0/host.parquet", "h".byteInputStream())
+        store.put("results/one/0/seed=1/service.parquet", "s".byteInputStream())
+        store.put("results/two/0/seed=0/host.parquet", "other".byteInputStream())
+
+        assertEquals(
+            listOf("results/one/0/seed=0/host.parquet", "results/one/0/seed=1/service.parquet"),
+            store.list("results/one"),
+        )
+    }
+
+    @Test
+    fun `listing something nobody stored is empty rather than an error`() {
+        assertEquals(emptyList<String>(), store().list("results/never-run"))
+    }
+
+    // A transfer in flight is a file beside its destination. Handing one to a reader would give them
+    // half an object presented as a whole one.
+    @Test
+    fun `a transfer still in flight is not listed as an object`() {
+        val store = store()
+        store.put("results/one/0/seed=0/host.parquet", "h".byteInputStream())
+        Files.createFile(root.resolve("results/one/0/seed=0/.incoming-abc.part"))
+
+        assertEquals(listOf("results/one/0/seed=0/host.parquet"), store.list("results/one"))
+    }
+
     // A transfer that breaks partway must leave nothing where a whole object is expected, and no
     // spool beside it either.
     @Test

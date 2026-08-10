@@ -124,7 +124,7 @@ class ExecutionLoop(
         execution.units.forEach { it.state = ExecutionState.RUNNING }
         return LaunchRequest(
             executionId = execution.publicId,
-            manifest = planner.manifest(execution.experiment, execution.units, execution.parallelism),
+            manifest = planner.manifest(execution.experiment, execution.units, execution.parallelism, execution.grantToken()),
             heapMb = execution.heapMb.toDouble(),
             memoryRequestMb = execution.memoryRequestMb.toDouble(),
             timeLimitSeconds = execution.timeLimitSeconds,
@@ -180,7 +180,13 @@ class ExecutionLoop(
         execution.finishedAt = Instant.now()
 
         if (exit.reason == ExitReason.OK) {
-            execution.units.forEach { it.state = ExecutionState.SUCCEEDED }
+            // A run that finished got through all of its work, whatever the last report to reach the
+            // server said. The denominator is planned rather than measured, so a sampled run would
+            // otherwise leave the bar short of the end of a scenario that is over.
+            execution.units.forEach {
+                it.state = ExecutionState.SUCCEEDED
+                it.completedTasks = it.totalTasks
+            }
             return
         }
         val retries =
@@ -196,7 +202,11 @@ class ExecutionLoop(
             return
         }
         for (bag in retries) {
-            persist(execution.experiment, bag, unitsOf(bag, execution.units), execution.attempt + 1)
+            val units = unitsOf(bag, execution.units)
+            // The attempt starts over from nothing, so what the one it replaces got through is no
+            // longer progress towards anything.
+            units.forEach { it.completedTasks = 0 }
+            persist(execution.experiment, bag, units, execution.attempt + 1)
         }
     }
 

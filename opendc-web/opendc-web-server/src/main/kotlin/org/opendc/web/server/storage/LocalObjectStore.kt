@@ -83,6 +83,25 @@ class LocalObjectStore(private val root: Path) : ObjectStore {
 
     override fun exists(key: String): Boolean = Files.exists(fileOf(key))
 
+    /**
+     * The files under the directory [prefix] names, as the keys they were written under.
+     *
+     * A transfer in flight is written beside its destination under a name beginning with a dot, so
+     * skipping those is what keeps half a file out of an answer that reads as a finished one.
+     */
+    override fun list(prefix: String): List<String> {
+        val base = fileOf(prefix)
+        if (!Files.isDirectory(base)) {
+            return if (Files.exists(base)) listOf(prefix) else emptyList()
+        }
+        return Files
+            .walk(base)
+            .use { paths -> paths.toList() }
+            .filter { Files.isRegularFile(it) && !it.fileName.toString().startsWith(".") }
+            .map { root.relativize(it).joinToString("/") }
+            .sorted()
+    }
+
     override fun delete(key: String) {
         Files.deleteIfExists(fileOf(key))
     }

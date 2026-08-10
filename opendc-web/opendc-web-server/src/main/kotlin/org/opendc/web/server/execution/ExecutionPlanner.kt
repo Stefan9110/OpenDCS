@@ -42,6 +42,7 @@ import org.opendc.web.dispatcher.estimate.TraceSizeEstimator
 import org.opendc.web.dispatcher.estimate.scaledBy
 import org.opendc.web.dispatcher.planBags
 import org.opendc.web.launcher.LaunchManifest
+import org.opendc.web.launcher.TelemetryTarget
 import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.Experiment
 import org.opendc.web.server.model.RunUnit
@@ -95,11 +96,13 @@ class ExecutionPlanner(
      *
      * Every reference in the scenarios is resolved to a location here, so the launcher never has to
      * know what a name means, and the results go to the store beside the traces they came from.
+     * [token] is what it reports progress with, and can do nothing else.
      */
     fun manifest(
         experiment: Experiment,
         units: List<RunUnit>,
         parallelism: Int,
+        token: String,
     ): LaunchManifest {
         val scenarios = scenariosOf(experiment)
         return LaunchManifest(
@@ -113,6 +116,7 @@ class ExecutionPlanner(
                 },
             parallelism = parallelism,
             results = store.locationOf(resultKey(experiment.publicId)),
+            telemetry = TelemetryTarget.Endpoint(config.telemetryUrl(), token),
         )
     }
 

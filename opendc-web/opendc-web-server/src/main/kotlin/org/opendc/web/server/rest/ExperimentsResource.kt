@@ -35,6 +35,7 @@ import jakarta.ws.rs.Produces
 import jakarta.ws.rs.QueryParam
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
+import jakarta.ws.rs.core.StreamingOutput
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -44,12 +45,20 @@ import org.opendc.web.server.model.ExecutionState
 import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.RunUnit
+import org.opendc.web.server.results.ExperimentResults
+import org.opendc.web.server.results.ResultsReader
+import org.opendc.web.server.results.ScenarioResults
 import org.opendc.web.server.service.CostEstimate
 import org.opendc.web.server.service.Identity
 import org.opendc.web.server.service.SpecCodec
 import org.opendc.web.server.service.SubmissionPipeline
 import org.opendc.web.server.service.SubmissionPreview
+import org.opendc.web.server.storage.ObjectStore
+import org.opendc.web.server.storage.resultKey
 import java.util.UUID
+import java.util.zip.Deflater
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import org.opendc.web.server.model.Experiment as ExperimentEntity
 
 @Serializable
@@ -181,39 +190,6 @@ data class ExperimentStatus(
 )
 
 @Serializable
-data class ResultPoint(
-    val t: Long,
-    val value: Double,
-)
-
-@Serializable
-data class ResultSeries(
-    val metric: String,
-    val points: List<ResultPoint>,
-    val spread: Double,
-)
-
-// These collections carry no default: the wire form omits defaulted fields, and a chart that
-// receives no series array at all cannot tell "nothing reported yet" from a malformed response.
-// An empty list is the honest answer and has to be sent.
-@Serializable
-data class ScenarioResults(
-    val scenarioIndex: Int,
-    val seeds: Int,
-    val complete: Boolean,
-    val series: List<ResultSeries>,
-)
-
-@Serializable
-data class ExperimentResults(
-    val experimentId: String,
-    val exportIntervalMs: Long,
-    val bucketMs: Long,
-    val complete: Boolean,
-    val scenarios: List<ScenarioResults>,
-)
-
-@Serializable
 data class CreateExperimentRequest(
     val projectId: String,
     val name: String,
@@ -231,9 +207,13 @@ data class PreviewRequest(
     val spec: JsonElement,
 )
 
-// Metric samples are exported every five simulated minutes by default; the real value comes from
-// the spec's export models once the results pipeline exists.
-private const val DEFAULT_EXPORT_INTERVAL_MS = 300_000L
+// Far more than a chart has pixels and no more than the launcher itself holds, so a live series
+// passes through unfolded and a month of parquet does not arrive a point at a time.
+private const val MAX_BUCKETS = 2048
+
+private val WHITESPACE = Regex("\\s+")
+
+private val UNSAFE_IN_A_PATH = Regex("[^a-z0-9_-]")
 
 @Path("experiments")
 @Produces(MediaType.APPLICATION_JSON)
@@ -242,6 +222,8 @@ class ExperimentsResource(
     private val identity: Identity,
     private val codec: SpecCodec,
     private val pipeline: SubmissionPipeline,
+    private val results: ResultsReader,
+    private val store: ObjectStore,
 ) {
     @GET
     fun list(
@@ -411,18 +393,91 @@ class ExperimentsResource(
     @Path("{id}/results")
     fun results(
         @PathParam("id") id: String,
+        @QueryParam("buckets") @DefaultValue("512") buckets: Int,
     ): ExperimentResults {
         val experiment = accessibleExperiment(id)
         val units = RunUnit.findByExperiment(experiment.id)
-        // Queue-only pass: no execution writes samples yet, so results are an honest empty set;
-        // the shape and the complete flag are already contractual for the frontend's polling.
+        val scenarios = results.read(experiment.publicId, units, buckets.coerceIn(1, MAX_BUCKETS))
+        val exportIntervalMs = exportIntervalOf(experiment)
         return ExperimentResults(
             experimentId = experiment.publicId.toString(),
-            exportIntervalMs = DEFAULT_EXPORT_INTERVAL_MS,
-            bucketMs = DEFAULT_EXPORT_INTERVAL_MS,
+            exportIntervalMs = exportIntervalMs,
+            bucketMs = bucketWidth(scenarios, exportIntervalMs),
             complete = !experiment.isDraft && units.isNotEmpty() && units.all { it.state.isTerminal },
-            scenarios = emptyList(),
+            scenarios = scenarios,
         )
+    }
+
+    /**
+     * Everything the experiment's runs produced, as one zip.
+     *
+     * The entries are laid out the way a local run of the same experiment lays out its output
+     * directory, so an archive can be unpacked next to one and read by the same tooling without
+     * anything being moved about first. Streamed rather than assembled, because an experiment of
+     * many scenarios is far larger than anything worth holding in memory to send.
+     */
+    @GET
+    @Path("{id}/archive")
+    @Produces("application/zip")
+    fun archive(
+        @PathParam("id") id: String,
+    ): Response {
+        val experiment = accessibleExperiment(id)
+        val prefix = resultKey(experiment.publicId)
+        val keys = store.list(prefix)
+        if (keys.isEmpty()) {
+            throw notFound("Results")
+        }
+        val name = archiveName(experiment.name)
+        val body =
+            StreamingOutput { out ->
+                ZipOutputStream(out).use { zip ->
+                    // Parquet is compressed already, so deflating it again buys nothing and costs
+                    // the server the whole archive's worth of work on the way out.
+                    zip.setLevel(Deflater.NO_COMPRESSION)
+                    for (key in keys) {
+                        zip.putNextEntry(ZipEntry("$name/raw-output/${key.removePrefix("$prefix/")}"))
+                        store.open(key).use { it.copyTo(zip) }
+                        zip.closeEntry()
+                    }
+                }
+            }
+        return Response.ok(body).header("Content-Disposition", "attachment; filename=\"$name.zip\"").build()
+    }
+
+    /**
+     * An experiment's name as somewhere to unpack it.
+     *
+     * Names are written by people and end up in a header and in every entry path, so anything that
+     * could be read as a directory of its own, or as the end of the header, is dropped rather than
+     * escaped.
+     */
+    private fun archiveName(name: String): String =
+        name
+            .lowercase()
+            .replace(WHITESPACE, "-")
+            .replace(UNSAFE_IN_A_PATH, "")
+            .trim('-')
+            .ifEmpty { "experiment" }
+
+    /** How often the simulation samples, taking the finest of the export models the spec offers. */
+    private fun exportIntervalOf(experiment: ExperimentEntity): Long =
+        codec.decodeExperiment(codec.parseStored(experiment.spec)).exportModels.minOf { it.exportInterval.toMsLong() }
+
+    /**
+     * How far apart the points being sent are, read off the longest series rather than worked out
+     * from the bucket count: a series shorter than the cap is not folded at all, and reporting a
+     * width it does not have would mislabel the axis.
+     */
+    private fun bucketWidth(
+        scenarios: List<ScenarioResults>,
+        exportIntervalMs: Long,
+    ): Long {
+        val longest = scenarios.flatMap { it.series }.maxByOrNull { it.points.size }?.points.orEmpty()
+        if (longest.size < 2) {
+            return exportIntervalMs
+        }
+        return (longest.last().t - longest.first().t) / (longest.size - 1)
     }
 
     private fun accessibleProject(publicId: UUID): Project {

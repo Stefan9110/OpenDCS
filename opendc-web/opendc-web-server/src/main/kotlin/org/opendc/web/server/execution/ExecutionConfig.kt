@@ -33,6 +33,14 @@ interface ExecutionConfig {
     /** The platform this deployment dispatches to. **/
     fun dispatcher(): DispatcherKind
 
+    /**
+     * Where a launcher posts its progress.
+     *
+     * Absolute, and resolved from where the launcher runs rather than from here: a job on a cluster
+     * has no idea what this server calls itself.
+     */
+    fun telemetryUrl(): String
+
     fun estimator(): EstimatorSettings
 
     fun packing(): PackingSettings

@@ -71,6 +71,9 @@ dependencies {
     implementation(libs.quarkus.hibernate.validator)
     implementation(libs.quarkus.flyway)
     implementation(libs.quarkus.scheduler)
+    // Live telemetry only, and only where a deployment asks for it. Nothing reaches for a client
+    // unless opendc.telemetry.kind=redis, which is what lets dev and the test suite run without one.
+    implementation(libs.quarkus.redis.client)
     implementation(libs.quarkus.jdbc.postgresql)
     implementation(libs.quarkus.jdbc.h2)
     implementation(libs.quarkus.quinoa.runtime)

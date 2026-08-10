@@ -85,6 +85,15 @@ interface ObjectStore : AutoCloseable {
 
     fun exists(key: String): Boolean
 
+    /**
+     * Every object under [prefix], in order.
+     *
+     * A run's output is a directory of files whose names the export spec decides, so what an
+     * experiment produced can only be answered by asking, not by working out what it should have
+     * written and hoping. Objects still being written are not among them.
+     */
+    fun list(prefix: String): List<String>
+
     /** Removes an object, along with any upload of it still in flight. Safe to call twice. */
     fun delete(key: String)
 

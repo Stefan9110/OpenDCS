@@ -1,3 +1,4 @@
+import { formatScaled, timeAxis } from "@/components/experiment/results/resultsView"
 import {
     RESULT_METRICS,
     type ResultPoint,
@@ -5,6 +6,7 @@ import {
     alignOnTimestamp,
     bucketPoints,
     isLiveResults,
+    metricById,
     reduceMetric,
     reduceSeries,
     seriesOf,
@@ -22,6 +24,75 @@ function points(...values: number[]): ResultPoint[] {
 function scenario(overrides: Partial<ScenarioResults> = {}): ScenarioResults {
     return { scenarioIndex: 0, seeds: 1, complete: true, series: [], ...overrides }
 }
+
+const HALF_AN_HOUR = 30 * 60_000
+const A_SHIFT = 6 * 3_600_000
+const A_FEW_DAYS = 3 * 86_400_000
+const A_MONTH = 30 * 86_400_000
+const A_LONG_TRACE = 179 * 86_400_000
+const YEARS = 3 * 365 * 86_400_000
+
+// Marks left wherever a sample happens to fall and then labelled in whole weeks put one week on the
+// axis twice and leave the next off it, which reads as a chart that has lost track of its own time.
+describe("the simulated time axis", () => {
+    const spans = [HALF_AN_HOUR, A_SHIFT, A_FEW_DAYS, A_MONTH, A_LONG_TRACE, YEARS]
+
+    it("never puts the same label on the axis twice, however long the run", () => {
+        for (const span of spans) {
+            const { ticks, format } = timeAxis(span)
+            const labels = ticks.map(format)
+
+            expect(new Set(labels).size).toBe(labels.length)
+        }
+    })
+
+    it("leaves the same distance between every pair of marks, so none is skipped", () => {
+        const { ticks } = timeAxis(A_LONG_TRACE)
+        const gaps = new Set(ticks.slice(1).map((at, index) => at - (ticks[index] ?? 0)))
+
+        expect(gaps.size).toBe(1)
+    })
+
+    it("keeps enough marks to read the run by without crowding the axis", () => {
+        for (const span of spans) {
+            const { ticks } = timeAxis(span)
+
+            expect(ticks.length).toBeGreaterThanOrEqual(2)
+            expect(ticks.length).toBeLessThanOrEqual(9)
+        }
+    })
+
+    it("counts from the start of the run in whole units of the step it chose", () => {
+        expect(timeAxis(120 * 86_400_000).ticks.map(timeAxis(120 * 86_400_000).format)).toEqual([
+            "0w",
+            "4w",
+            "8w",
+            "12w",
+            "16w",
+        ])
+    })
+})
+
+// A fleet sized well past its workload runs at a fraction of a percent, which is a real reading and
+// not a zero. Rounded away, the chart reads as flat and every axis tick carries the same label.
+describe("showing a share of a large fleet", () => {
+    const utilization = metricById("host.cpu_utilization")
+
+    it("keeps a sub-percent share legible instead of rounding it to nothing", () => {
+        expect(formatScaled(0.694, utilization.sample)).toBe("0.7 %")
+        expect(formatScaled(1.204, utilization.sample)).toBe("1.2 %")
+    })
+
+    it("gives neighbouring axis ticks different labels at the scale a large fleet runs at", () => {
+        const ticks = [0.5, 1, 1.5, 2].map((tick) => formatScaled(tick, utilization.sample))
+
+        expect(new Set(ticks).size).toBe(ticks.length)
+    })
+
+    it("still reads plainly for a fleet that is busy", () => {
+        expect(formatScaled(42.9, utilization.sample)).toBe("42.9 %")
+    })
+})
 
 describe("the metric catalog", () => {
     it("identifies every metric by the export table and column it is read from", () => {
@@ -134,7 +205,7 @@ describe("alignOnTimestamp", () => {
 
 describe("live results", () => {
     const experiment = (scenarios: ScenarioResults[], complete: boolean) => ({
-        experimentId: 1,
+        experimentId: "4d2e0c34-2b0f-4a0f-9d21-8b0d4a1c9f77",
         exportIntervalMs: EXPORT_INTERVAL_MS,
         bucketMs: EXPORT_INTERVAL_MS,
         complete,

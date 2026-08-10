@@ -37,12 +37,15 @@ import org.opendc.sdk.model.experiment.ScenarioSpec
  *           `initialSeed`.
  * @property parallelism How many of [scenarios] run at once.
  * @property results Where the finished output tree is copied, as `<results>/<scenario>/seed=<seed>/`.
+ * @property telemetry Where progress is reported while the runs are still going. Defaulted to
+ *           [TelemetryTarget.None] so a manifest written by hand needs nothing to listen to it.
  */
 @Serializable
 data class LaunchManifest(
     val scenarios: List<ScenarioSpec>,
     val parallelism: Int,
     val results: String,
+    val telemetry: TelemetryTarget = TelemetryTarget.None,
 )
 
 /**

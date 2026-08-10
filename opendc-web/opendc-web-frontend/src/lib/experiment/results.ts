@@ -29,7 +29,12 @@ export const RESULT_METRICS = [
         label: "CPU utilization",
         description: "Share of the fleet's CPU capacity that is actually doing work.",
         reduce: "mean",
-        sample: { unit: "%", scale: 100, decimals: 0 },
+        // A decimal place, because this is the one metric whose honest range spans three orders of
+        // magnitude: a fleet sized for its workload sits near 40%, and one sized for a much larger
+        // one sits below 1%. Rounded to whole percents the second reads as a flat zero, and every
+        // axis tick collapses to the same label, which is the reading being deleted rather than
+        // blurred.
+        sample: { unit: "%", scale: 100, decimals: 1 },
         total: { unit: "%", scale: 100, decimals: 1 },
     },
     {
@@ -167,7 +172,7 @@ export interface ScenarioResults {
 }
 
 export interface ExperimentResults {
-    experimentId: number
+    experimentId: string
     // Resolution the simulation actually exported at.
     exportIntervalMs: number
     // Resolution these points are reported at. A trace covering months exports far more samples than

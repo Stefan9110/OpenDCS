@@ -111,6 +111,17 @@ class S3ObjectStore(
             false
         }
 
+    /**
+     * Paged, because a bucket answers a listing a thousand keys at a time however many there are and
+     * an experiment of many scenarios and seeds passes that without being unusual.
+     */
+    override fun list(prefix: String): List<String> =
+        client
+            .listObjectsV2Paginator { it.bucket(bucket).prefix(prefix) }
+            .contents()
+            .map { it.key() }
+            .sorted()
+
     override fun delete(key: String) {
         client.deleteObject { it.bucket(bucket).key(key) }
         // Parts of an upload nobody finished are stored, and charged for, without ever being an

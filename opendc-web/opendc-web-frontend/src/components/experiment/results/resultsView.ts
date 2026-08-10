@@ -20,8 +20,9 @@ import {
 } from "@/lib/experiment/spec"
 
 // Validated against the light (#ffffff) and dark (#242424) chart surfaces: every slot clears the
-// lightness, chroma, colour-vision and normal-vision gates. Three is the cap the ordering supports,
-// so the chart overlays at most three runs at a time.
+// lightness, chroma, colour-vision and normal-vision gates. Overlaid lines cross wherever they like,
+// so every pair has to hold apart rather than only neighbouring ones, and three is the cap that
+// ordering supports -- so the chart overlays at most three runs at a time.
 const SERIES_COLORS: Record<ColorScheme, string[]> = {
     light: ["#2a78d6", "#eb6834", "#1baf7a"],
     dark: ["#3987e5", "#d95926", "#199e70"],
@@ -135,16 +136,65 @@ export function formatReduced(value: number, metric: MetricId): string {
     return formatScaled(value * scale.scale, scale)
 }
 
+const MINUTE_MS = 60_000
 const HOUR_MS = 3_600_000
 const DAY_MS = 86_400_000
 const WEEK_MS = 7 * DAY_MS
 
-// A trace covering a year cannot label its axis in hours, and one covering a morning cannot label it
-// in weeks, so the tick unit follows the span the run actually reached.
-export function simulatedTimeFormatter(spanMs: number): (milliseconds: number) => string {
-    if (spanMs <= 2 * DAY_MS) return clockOf
-    if (spanMs <= 90 * DAY_MS) return (milliseconds) => `${Math.round(milliseconds / DAY_MS)}d`
-    return (milliseconds) => `${Math.round(milliseconds / WEEK_MS)}w`
+// Spans a reader recognises. A tick lands on an exact multiple of one of these, which is what lets
+// every label be a whole number of its own unit.
+const TICK_STEPS = [
+    MINUTE_MS,
+    5 * MINUTE_MS,
+    15 * MINUTE_MS,
+    30 * MINUTE_MS,
+    HOUR_MS,
+    2 * HOUR_MS,
+    3 * HOUR_MS,
+    6 * HOUR_MS,
+    12 * HOUR_MS,
+    DAY_MS,
+    2 * DAY_MS,
+    3 * DAY_MS,
+    WEEK_MS,
+    2 * WEEK_MS,
+    4 * WEEK_MS,
+    13 * WEEK_MS,
+    26 * WEEK_MS,
+    52 * WEEK_MS,
+]
+
+const TARGET_TICKS = 8
+
+export interface TimeAxis {
+    ticks: number[]
+    format: (milliseconds: number) => string
+}
+
+/**
+ * Where the time axis is marked, and how those marks read.
+ *
+ * The two are chosen together because they have to agree. Marks left where they fall and then
+ * labelled in whole weeks put the same week on the axis twice and leave the one between them off it,
+ * which reads as a chart that has lost track of its own time. Here a step is picked from spans a
+ * reader recognises, the marks land on exact multiples of it, and the unit is the one the step is a
+ * whole number of -- so no two labels can collide and none can be skipped.
+ */
+export function timeAxis(spanMs: number): TimeAxis {
+    const widest = TICK_STEPS[TICK_STEPS.length - 1] ?? DAY_MS
+    const step = TICK_STEPS.find((candidate) => spanMs / candidate <= TARGET_TICKS) ?? widest
+    const ticks: number[] = []
+    for (let at = 0; at <= spanMs; at += step) {
+        ticks.push(at)
+    }
+    return { ticks, format: labelEvery(step) }
+}
+
+function labelEvery(step: number): (milliseconds: number) => string {
+    if (step >= WEEK_MS) return (milliseconds) => `${milliseconds / WEEK_MS}w`
+    if (step >= DAY_MS) return (milliseconds) => `${milliseconds / DAY_MS}d`
+    if (step >= HOUR_MS) return (milliseconds) => `${milliseconds / HOUR_MS}h`
+    return (milliseconds) => `${milliseconds / MINUTE_MS}m`
 }
 
 function clockOf(milliseconds: number): string {

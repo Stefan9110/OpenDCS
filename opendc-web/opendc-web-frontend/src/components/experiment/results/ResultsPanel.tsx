@@ -14,7 +14,7 @@ import {
 } from "@/components/experiment/results/resultsView"
 import { PanelGhost } from "@/components/util/Ghost"
 import { QueryState } from "@/components/util/QueryState"
-import { useExperimentResults } from "@/lib/api/experiments"
+import { resultsArchiveUrl, useExperimentResults } from "@/lib/api/experiments"
 import type { Experiment } from "@/lib/api/types"
 import {
     type ExperimentResults,
@@ -25,7 +25,7 @@ import {
     simulatedSpan,
 } from "@/lib/experiment/results"
 import { ActionIcon, Alert, Button, Group, Paper, Select, Stack, Text, Title, Tooltip } from "@mantine/core"
-import { IconDownload, IconFlask, IconInfoCircle } from "@tabler/icons-react"
+import { IconDownload, IconFileZip, IconFlask, IconInfoCircle } from "@tabler/icons-react"
 import { type ReactNode, useState } from "react"
 
 export function ResultsPanel({ experiment }: { experiment: Experiment }) {
@@ -51,11 +51,18 @@ function LoadedResults({ experiment, results }: { experiment: Experiment; result
     const [preferred, setPreferred] = useState<MetricId>("host.cpu_utilization")
     const [chosen, setChosen] = useState<number[]>([])
 
+    // The parquet lands scenario by scenario, so an experiment that has run at all has something to
+    // download even while it has nothing to chart yet. Only a queued one has produced no file.
+    const downloads = experiment.state !== "queued" && <ResultDownloads experiment={experiment} results={results} />
+
     if (reported.length === 0) {
         return (
-            <Alert color="gray" icon={<IconFlask size={18} />} title="Waiting for the first samples">
-                Every scenario is still queued. Measurements stream in at the export interval once one starts.
-            </Alert>
+            <Stack gap="md">
+                {downloads && <Group justify="flex-end">{downloads}</Group>}
+                <Alert color="gray" icon={<IconFlask size={18} />} title="Waiting for the first samples">
+                    Every scenario is still queued. Measurements stream in at the export interval once one starts.
+                </Alert>
+            </Stack>
         )
     }
 
@@ -88,13 +95,7 @@ function LoadedResults({ experiment, results }: { experiment: Experiment; result
                         onChange={setChosen}
                     />
                 </Group>
-                <Button
-                    variant="default"
-                    leftSection={<IconDownload size={16} />}
-                    onClick={() => downloadCsv(experiment.name, results)}
-                >
-                    Export CSV
-                </Button>
+                {downloads}
             </Group>
 
             {primary && (
@@ -124,6 +125,36 @@ function LoadedResults({ experiment, results }: { experiment: Experiment; result
                 </ChartCard>
             )}
         </Stack>
+    )
+}
+
+/**
+ * The two ways of taking results away: the chart's own numbers, and everything the runs wrote.
+ *
+ * The archive is a link rather than a fetch, so a multi-gigabyte experiment streams to disk instead
+ * of being assembled in the tab first.
+ */
+function ResultDownloads({ experiment, results }: { experiment: Experiment; results: ExperimentResults }) {
+    return (
+        <Group gap="sm" wrap="wrap">
+            {results.scenarios.length > 0 && (
+                <Button
+                    variant="default"
+                    leftSection={<IconDownload size={16} />}
+                    onClick={() => downloadCsv(experiment.name, results)}
+                >
+                    Export CSV
+                </Button>
+            )}
+            <Button
+                component="a"
+                href={resultsArchiveUrl(experiment.id)}
+                variant="default"
+                leftSection={<IconFileZip size={16} />}
+            >
+                Download all results
+            </Button>
+        </Group>
     )
 }
 
