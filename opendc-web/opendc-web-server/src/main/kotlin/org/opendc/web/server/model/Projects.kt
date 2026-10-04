@@ -31,6 +31,7 @@ import jakarta.persistence.FetchType
 import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
+import jakarta.persistence.LockModeType
 import jakarta.persistence.ManyToOne
 import jakarta.persistence.Table
 import org.intellij.lang.annotations.Language
@@ -41,15 +42,6 @@ enum class ProjectRole {
     OWNER,
     EDITOR,
     VIEWER,
-    ;
-
-    /** Whether this role may change what a project holds. Viewers read it and nothing more. */
-    val mayEdit: Boolean
-        get() =
-            when (this) {
-                OWNER, EDITOR -> true
-                VIEWER -> false
-            }
 }
 
 /**
@@ -73,6 +65,10 @@ class Project : PanacheEntityBase {
 
     companion object : PanacheCompanion<Project> {
         fun findByPublicId(publicId: UUID): Project? = find("publicId = ?1", publicId).firstResult()
+
+        /** The project, locked for the rest of the transaction, so changes to who is in it take turns. */
+        fun lockByPublicId(publicId: UUID): Project? =
+            find("publicId = ?1", publicId).withLock(LockModeType.PESSIMISTIC_WRITE).firstResult()
     }
 }
 
@@ -102,7 +98,19 @@ class ProjectMember : PanacheEntityBase {
             WHERE m.user.id = ?1
         """
 
+        @Language("JPAQL")
+        private const val MEMBERS = """
+            SELECT m FROM ProjectMember m
+            JOIN FETCH m.user
+            WHERE m.project.id = ?1
+        """
+
         fun findByUser(userId: Long): List<ProjectMember> = list(BY_USER, userId)
+
+        /** Everyone in a project, with their accounts. */
+        fun findMembers(projectId: Long): List<ProjectMember> = list(MEMBERS, projectId)
+
+        fun countOwners(projectId: Long): Long = count("project.id = ?1 AND role = ?2", projectId, ProjectRole.OWNER)
 
         fun findMembership(
             projectId: Long,

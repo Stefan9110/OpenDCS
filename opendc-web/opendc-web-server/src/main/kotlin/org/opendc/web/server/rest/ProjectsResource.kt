@@ -37,6 +37,8 @@ import org.jboss.resteasy.reactive.RestPath
 import org.jboss.resteasy.reactive.RestQuery
 import org.jboss.resteasy.reactive.RestResponse
 import org.opendc.web.server.auth.Identity
+import org.opendc.web.server.auth.ProjectPermission
+import org.opendc.web.server.auth.projectFor
 import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.ProjectRole
@@ -101,7 +103,7 @@ class ProjectsResource(
     @Path("{id}")
     fun get(
         @RestPath id: String,
-    ): ProjectSummary = membership(id).toSummary()
+    ): ProjectSummary = projectFor(identity.currentUser(), id, ProjectPermission.READ).toSummary()
 
     @PATCH
     @Path("{id}")
@@ -111,10 +113,7 @@ class ProjectsResource(
         request: ProjectRequest,
     ): ProjectSummary {
         val name = validName(request.name, "Project")
-        val member = membership(id)
-        if (!member.role.mayEdit) {
-            throw forbidden("Viewers cannot rename a project")
-        }
+        val member = projectFor(identity.currentUser(), id, ProjectPermission.EDIT)
         val project = member.project
         project.name = name
         project.updatedAt = Instant.now()
@@ -127,10 +126,7 @@ class ProjectsResource(
     fun delete(
         @RestPath id: String,
     ) {
-        val member = membership(id)
-        if (member.role != ProjectRole.OWNER) {
-            throw forbidden("Only the project owner can delete it")
-        }
+        val member = projectFor(identity.currentUser(), id, ProjectPermission.MANAGE)
         // What the project's experiments still have on a platform or in the store goes once the
         // rows are gone; the rows themselves go with the project through the schema's cascades.
         pipeline.discardAll(member.project)
@@ -140,13 +136,6 @@ class ProjectsResource(
         // schema's cascades, which the session never sees.
         member.delete()
         member.project.delete()
-    }
-
-    // A project that is not the caller's reports exactly what a nonexistent one reports, so
-    // membership cannot be probed by watching which identifiers answer differently.
-    private fun membership(id: String): ProjectMember {
-        val project = Project.findByPublicId(publicId(id, "Project")) ?: throw notFound("Project")
-        return ProjectMember.findMembership(project.id, identity.currentUser().id) ?: throw notFound("Project")
     }
 }
 

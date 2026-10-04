@@ -36,16 +36,14 @@ import org.junit.jupiter.api.Test
 import org.opendc.web.server.ApiTest
 import org.opendc.web.server.TestAccounts
 import org.opendc.web.server.TestPerson
+import org.opendc.web.server.TestTraces
 import org.opendc.web.server.model.AccountState
 import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.ProjectRole
 import org.opendc.web.server.model.Trace
 import org.opendc.web.server.model.TraceKind
-import org.opendc.web.server.model.TraceOrigin
-import org.opendc.web.server.model.TracePart
 import org.opendc.web.server.model.UserAccount
-import java.time.Instant
 import java.util.UUID
 
 /** The caller's own account: who they are, choosing the handle they go by, and leaving. */
@@ -135,13 +133,13 @@ class MeResourceTest {
     @Test
     fun `changes a handle only while it prefixes no finished trace`() {
         val person = TestAccounts.person()
-        val unfinished = trace(person, finished = false)
+        val unfinished = TestTraces.owned(person, TraceKind.CARBON, finished = false)
 
         person.profile("renamed-${UUID.randomUUID().toString().take(8)}").then().statusCode(200)
-        QuarkusTransaction.requiringNew().run { assertNull(Trace.findByPublicId(unfinished)) }
+        QuarkusTransaction.requiringNew().run { assertNull(Trace.findByPublicId(unfinished.id)) }
 
         val finished = TestAccounts.person()
-        trace(finished, finished = true)
+        TestTraces.owned(finished, TraceKind.CARBON)
         finished.profile("renamed-${UUID.randomUUID().toString().take(8)}").then().statusCode(409)
     }
 
@@ -200,28 +198,4 @@ class MeResourceTest {
         member.role = role
         member.persist()
     }
-
-    private fun trace(
-        owner: TestPerson,
-        finished: Boolean,
-    ): UUID =
-        QuarkusTransaction.requiringNew().call {
-            val trace = Trace()
-            trace.slug = "${owner.handle}/trace-${UUID.randomUUID().toString().take(8)}"
-            trace.kind = TraceKind.CARBON
-            trace.origin = TraceOrigin.UPLOADED
-            trace.owner = UserAccount.findById(owner.id)
-            trace.createdAt = Instant.now()
-            trace.updatedAt = trace.createdAt
-            trace.persist()
-            if (finished) {
-                for (table in trace.kind.tables) {
-                    val part = TracePart()
-                    part.trace = trace
-                    part.tableName = table
-                    part.persist()
-                }
-            }
-            trace.publicId
-        }
 }

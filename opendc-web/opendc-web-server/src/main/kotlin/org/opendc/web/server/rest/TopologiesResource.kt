@@ -40,12 +40,12 @@ import kotlinx.serialization.json.JsonElement
 import org.jboss.resteasy.reactive.RestResponse
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.web.server.auth.Identity
-import org.opendc.web.server.model.Project
-import org.opendc.web.server.model.ProjectMember
+import org.opendc.web.server.auth.ProjectPermission
+import org.opendc.web.server.auth.projectFor
+import org.opendc.web.server.auth.topologyFor
 import org.opendc.web.server.model.TopologyTemplate
 import org.opendc.web.server.service.SpecCodec
 import java.time.Instant
-import java.util.UUID
 
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
@@ -100,16 +100,17 @@ class TopologiesResource(
                     "The project query parameter is required",
                     listOf(DocumentIssue("project", "must be provided")),
                 )
-        val project = accessibleProject(publicId(raw, "Project"))
+        val project = projectFor(identity.currentUser(), raw, ProjectPermission.READ).project
         return TopologyTemplate.findByProject(project.id).map { it.toWire() }
     }
 
     @POST
     @Transactional
     fun create(request: TopologyCreateRequest): RestResponse<TopologyTemplateWire> {
-        val project = accessibleProject(publicId(request.projectId, "Project"))
+        val project = projectFor(identity.currentUser(), request.projectId, ProjectPermission.EDIT).project
         val canonical = codec.canonical(decodeValidated(request.topology))
         val now = Instant.now()
+        project.updatedAt = now
         val template = TopologyTemplate()
         template.project = project
         template.name = validName(request.name, "Topology")
@@ -129,7 +130,7 @@ class TopologiesResource(
     @Path("{id}")
     fun get(
         @PathParam("id") id: String,
-    ): TopologyTemplateWire = accessibleTemplate(id).toWire()
+    ): TopologyTemplateWire = topologyFor(identity.currentUser(), id, ProjectPermission.READ).toWire()
 
     @PUT
     @Path("{id}")
@@ -138,13 +139,14 @@ class TopologiesResource(
         @PathParam("id") id: String,
         request: TopologyUpdateRequest,
     ): TopologyTemplateWire {
-        val template = accessibleTemplate(id)
+        val template = topologyFor(identity.currentUser(), id, ProjectPermission.EDIT)
         val canonical = codec.canonical(decodeValidated(request.topology))
         template.name = validName(request.name, "Topology")
         template.topology = canonical
         template.topologyHash = codec.hash(canonical)
         template.layout = request.layout?.let { codec.json.encodeToString(JsonElement.serializer(), it) }
         template.updatedAt = Instant.now()
+        template.project.updatedAt = template.updatedAt
         return template.toWire()
     }
 
@@ -154,7 +156,9 @@ class TopologiesResource(
     fun delete(
         @PathParam("id") id: String,
     ) {
-        accessibleTemplate(id).delete()
+        val template = topologyFor(identity.currentUser(), id, ProjectPermission.EDIT)
+        template.project.updatedAt = Instant.now()
+        template.delete()
     }
 
     private fun decodeValidated(document: JsonElement): TopologySpec {
@@ -164,18 +168,6 @@ class TopologiesResource(
             throw invalidDocument("The topology document is invalid", issues.toWire())
         }
         return spec
-    }
-
-    private fun accessibleProject(publicId: UUID): Project {
-        val project = Project.findByPublicId(publicId) ?: throw notFound("Project")
-        ProjectMember.findMembership(project.id, identity.currentUser().id) ?: throw notFound("Project")
-        return project
-    }
-
-    private fun accessibleTemplate(id: String): TopologyTemplate {
-        val template = TopologyTemplate.findByPublicId(publicId(id, "Topology")) ?: throw notFound("Topology")
-        ProjectMember.findMembership(template.project.id, identity.currentUser().id) ?: throw notFound("Topology")
-        return template
     }
 
     private fun TopologyTemplate.toWire(): TopologyTemplateWire =

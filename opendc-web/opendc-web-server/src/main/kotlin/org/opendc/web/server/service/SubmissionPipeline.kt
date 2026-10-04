@@ -52,6 +52,7 @@ import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.RunUnit
 import org.opendc.web.server.model.TraceKind
 import org.opendc.web.server.model.UnitState
+import org.opendc.web.server.model.UserAccount
 import org.opendc.web.server.rest.DocumentIssue
 import org.opendc.web.server.rest.conflict
 import org.opendc.web.server.rest.invalidDocument
@@ -98,13 +99,11 @@ class SubmissionPipeline(
         project: Project,
         name: String,
         document: JsonElement,
+        author: UserAccount,
     ): Experiment {
-        val experiment = Experiment()
-        experiment.project = project
-        experiment.createdAt = Instant.now()
-        applyDraft(experiment, name, document)
-        experiment.persist()
-        return experiment
+        val spec = codec.decodeExperiment(document)
+        refuseUriReferences(spec)
+        return newDraft(project, name, spec, author)
     }
 
     @Transactional
@@ -112,19 +111,30 @@ class SubmissionPipeline(
         experiment: Experiment,
         name: String,
         document: JsonElement,
+        author: UserAccount,
     ) {
         if (!experiment.isDraft) {
             throw conflict("A submitted experiment can no longer be edited")
         }
-        applyDraft(experiment, name, document)
+        val spec = codec.decodeExperiment(document)
+        refuseUriReferences(spec)
+        applyDraft(experiment, name, spec, author)
     }
 
-    fun preview(document: JsonElement): SubmissionPreview {
+    /**
+     * What submitting [document] would amount to for [caller]: its issues, including traces they may
+     * not use, and its cost counted over only the traces they may.
+     */
+    fun preview(
+        document: JsonElement,
+        caller: UserAccount,
+    ): SubmissionPreview {
         val spec = codec.decodeExperiment(document)
+        val traces = resolveTraces(spec, caller)
         return SubmissionPreview(
             scenarioCount = spec.expand().size,
-            estimate = estimate(spec.expand()),
-            issues = spec.validate().toWire() + unfitIssues(spec.expand()),
+            estimate = estimate(spec.expand(), traces),
+            issues = spec.validate().toWire() + traces.issues + unfitIssues(spec.expand()),
         )
     }
 
@@ -149,15 +159,22 @@ class SubmissionPipeline(
             }
         }
 
+    /**
+     * Freezes a draft and queues its work, if [submitter] may use every trace it names. A teammate's
+     * draft can name traces only they hold; whoever submits it has to be able to use them too.
+     */
     @Transactional
-    fun submit(experiment: Experiment) {
+    fun submit(
+        experiment: Experiment,
+        submitter: UserAccount,
+    ) {
         if (!experiment.isDraft) {
             throw conflict("This experiment has already been submitted")
         }
         val spec = codec.decodeExperiment(codec.parseStored(experiment.spec))
-        val issues = spec.validate()
+        val issues = spec.validate().toWire() + resolveTraces(spec, submitter).issues
         if (issues.isNotEmpty()) {
-            throw invalidDocument("The experiment document is invalid", issues.toWire())
+            throw invalidDocument("The experiment document is invalid", issues)
         }
         val scenarios = spec.expand()
         if (scenarios.isEmpty()) {
@@ -262,11 +279,13 @@ class SubmissionPipeline(
         return units
     }
 
+    /** A draft copy of [experiment], kept even when it names traces only its author may use. */
     @Transactional
     fun clone(
         experiment: Experiment,
         name: String,
-    ): Experiment = createDraft(experiment.project, name, codec.parseStored(experiment.spec))
+        author: UserAccount,
+    ): Experiment = newDraft(experiment.project, name, codec.decodeExperiment(codec.parseStored(experiment.spec)), author)
 
     /**
      * Removes an experiment whatever state it is in. Submitted experiments are immutable, which
@@ -302,12 +321,18 @@ class SubmissionPipeline(
      * What a document will cost its owner, which is a different question from what dispatch needs
      * to know: it reads the same model, but no per-deployment correction. What a user is quoted
      * should not move because a cluster they never chose turned out to be slow.
+     *
+     * Only [traces] the author may use are counted, so the size of a trace someone else keeps private
+     * never leaks through an estimate.
      */
-    private fun estimate(scenarios: List<ScenarioSpec>): CostEstimate {
+    private fun estimate(
+        scenarios: List<ScenarioSpec>,
+        traces: TraceResolution,
+    ): CostEstimate {
         val model = TraceSizeEstimator(config.estimator().toCoefficients())
         val seconds =
             scenarios.sumOf { scenario ->
-                scenario.runs * model.estimate(scenario, traceExtentOf(scenario.workload)).cpuSeconds
+                scenario.runs * model.estimate(scenario, traceExtentOf(scenario.workload, traces.usable::get)).cpuSeconds
             }
         return CostEstimate(
             scenarioCount = scenarios.size,
@@ -332,14 +357,29 @@ class SubmissionPipeline(
         return sampled.toLong().coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
     }
 
+    private fun newDraft(
+        project: Project,
+        name: String,
+        spec: ExperimentSpec,
+        author: UserAccount,
+    ): Experiment {
+        val experiment = Experiment()
+        experiment.project = project
+        experiment.createdAt = Instant.now()
+        applyDraft(experiment, name, spec, author)
+        experiment.persist()
+        project.updatedAt = experiment.updatedAt
+        return experiment
+    }
+
     private fun applyDraft(
         experiment: Experiment,
         name: String,
-        document: JsonElement,
+        spec: ExperimentSpec,
+        author: UserAccount,
     ) {
-        val spec = codec.decodeExperiment(document)
         val canonical = codec.canonical(spec)
-        val estimate = estimate(spec.expand())
+        val estimate = estimate(spec.expand(), resolveTraces(spec, author))
         experiment.name = name
         experiment.spec = canonical
         experiment.specHash = codec.hash(canonical)

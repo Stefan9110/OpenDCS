@@ -259,9 +259,13 @@ private class Staging(
  *
  * A workload written into the document is counted from the document; a stored trace from what was
  * measured when it was stored. One that was never measured is not guessed at, and estimates for it
- * rest on the model's fixed terms.
+ * rest on the model's fixed terms. [find] says which traces may be counted: a quote counts only those
+ * its author may use, dispatch every trace a submitted experiment names.
  */
-fun traceExtentOf(workload: WorkloadSpec): TraceExtent =
+fun traceExtentOf(
+    workload: WorkloadSpec,
+    find: (String) -> Trace? = Trace::findBySlug,
+): TraceExtent =
     when (workload) {
         is InlineWorkloadSpec ->
             TraceExtent(
@@ -269,12 +273,15 @@ fun traceExtentOf(workload: WorkloadSpec): TraceExtent =
                 fragmentCount = workload.tasks.sumOf { it.fragments.size }.toLong(),
             )
 
-        is TraceWorkloadSpec -> storedExtentOf(workload.source)
-        is EfficientTraceWorkloadSpec -> storedExtentOf(workload.source)
+        is TraceWorkloadSpec -> storedExtentOf(workload.source, find)
+        is EfficientTraceWorkloadSpec -> storedExtentOf(workload.source, find)
     }
 
-private fun storedExtentOf(source: ResourceReference): TraceExtent {
-    val trace = (source as? NamedReference)?.let { Trace.findBySlug(it.name) }
+private fun storedExtentOf(
+    source: ResourceReference,
+    find: (String) -> Trace?,
+): TraceExtent {
+    val trace = (source as? NamedReference)?.let { find(it.name) }
     val parts = trace?.let { TracePart.findByTrace(it.id).associateBy { part -> part.tableName } }.orEmpty()
     return TraceExtent(
         taskCount = parts[TABLE_TASKS]?.rowCount ?: 0,

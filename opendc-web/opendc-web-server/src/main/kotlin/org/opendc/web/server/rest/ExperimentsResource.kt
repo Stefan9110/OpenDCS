@@ -41,8 +41,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.server.auth.Identity
+import org.opendc.web.server.auth.ProjectPermission
+import org.opendc.web.server.auth.experimentFor
+import org.opendc.web.server.auth.projectFor
 import org.opendc.web.server.model.ExecutionUnit
-import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.RunUnit
 import org.opendc.web.server.model.UnitState
@@ -56,7 +58,6 @@ import org.opendc.web.server.service.SubmissionPreview
 import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.resultKey
 import org.opendc.web.server.storage.runKey
-import java.util.UUID
 import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -237,7 +238,7 @@ class ExperimentsResource(
     ): List<ExperimentSummary> {
         val experiments =
             if (projectId != null) {
-                ExperimentEntity.findByProject(accessibleProject(publicId(projectId, "Project")).id)
+                ExperimentEntity.findByProject(projectFor(identity.currentUser(), projectId, ProjectPermission.READ).project.id)
             } else {
                 val memberships = ProjectMember.findByUser(identity.currentUser().id)
                 memberships.flatMap { ExperimentEntity.findByProject(it.project.id) }
@@ -262,8 +263,8 @@ class ExperimentsResource(
     @Transactional
     fun create(request: CreateExperimentRequest): Response {
         val name = validName(request.name, "Experiment")
-        val project = accessibleProject(publicId(request.projectId, "Project"))
-        val experiment = pipeline.createDraft(project, name, request.spec)
+        val project = projectFor(identity.currentUser(), request.projectId, ProjectPermission.EDIT).project
+        val experiment = pipeline.createDraft(project, name, request.spec, identity.currentUser())
         return Response.status(201).entity(toWire(experiment)).build()
     }
 
@@ -271,7 +272,7 @@ class ExperimentsResource(
     @Path("{id}")
     fun get(
         @PathParam("id") id: String,
-    ): Experiment = toWire(accessibleExperiment(id))
+    ): Experiment = toWire(readable(id))
 
     // Every endpoint that writes builds its response inside the same transaction. Letting the
     // service commit and then assembling the reply outside it reads lazy associations with no
@@ -285,8 +286,8 @@ class ExperimentsResource(
         change: DraftChange,
     ): Experiment {
         val name = validName(change.name, "Experiment")
-        val experiment = accessibleExperiment(id)
-        pipeline.replaceDraft(experiment, name, change.spec)
+        val experiment = editable(id)
+        pipeline.replaceDraft(experiment, name, change.spec, identity.currentUser())
         return toWire(experiment)
     }
 
@@ -296,13 +297,13 @@ class ExperimentsResource(
     fun delete(
         @PathParam("id") id: String,
     ): Response {
-        pipeline.delete(accessibleExperiment(id))
+        pipeline.delete(editable(id))
         return Response.status(204).build()
     }
 
     @POST
     @Path("preview")
-    fun preview(request: PreviewRequest): SubmissionPreview = pipeline.preview(request.spec)
+    fun preview(request: PreviewRequest): SubmissionPreview = pipeline.preview(request.spec, identity.currentUser())
 
     @POST
     @Path("{id}/submit")
@@ -310,8 +311,8 @@ class ExperimentsResource(
     fun submit(
         @PathParam("id") id: String,
     ): Experiment {
-        val experiment = accessibleExperiment(id)
-        pipeline.submit(experiment)
+        val experiment = editable(id)
+        pipeline.submit(experiment, identity.currentUser())
         return toWire(experiment)
     }
 
@@ -321,7 +322,7 @@ class ExperimentsResource(
     fun cancel(
         @PathParam("id") id: String,
     ): Experiment {
-        val experiment = accessibleExperiment(id)
+        val experiment = editable(id)
         pipeline.cancel(experiment)
         return toWire(experiment)
     }
@@ -336,9 +337,9 @@ class ExperimentsResource(
         @PathParam("id") id: String,
         @QueryParam("name") name: String?,
     ): Response {
-        val experiment = accessibleExperiment(id)
+        val experiment = editable(id)
         val chosen = name?.let { validName(it, "Experiment") } ?: "${experiment.name} (copy)"
-        val clone = pipeline.clone(experiment, chosen)
+        val clone = pipeline.clone(experiment, chosen, identity.currentUser())
         return Response.status(201).entity(toWire(clone)).build()
     }
 
@@ -347,7 +348,7 @@ class ExperimentsResource(
     fun status(
         @PathParam("id") id: String,
     ): ExperimentStatus {
-        val experiment = accessibleExperiment(id)
+        val experiment = readable(id)
         val units = RunUnit.findByExperiment(experiment.id)
         val scenarios = scenarioStatuses(units, attemptsOf(experiment.id))
         return ExperimentStatus(
@@ -367,7 +368,7 @@ class ExperimentsResource(
         @PathParam("id") id: String,
         @PathParam("index") index: Int,
     ): ScenarioStatus {
-        val experiment = accessibleExperiment(id)
+        val experiment = readable(id)
         val units = RunUnit.findByExperiment(experiment.id).filter { it.scenarioIndex == index }
         if (units.isEmpty()) {
             throw notFound("Scenario")
@@ -388,7 +389,7 @@ class ExperimentsResource(
         @PathParam("id") id: String,
         @PathParam("index") index: Int,
     ): ScenarioStatus {
-        val experiment = accessibleExperiment(id)
+        val experiment = editable(id)
         val units = pipeline.retryScenario(experiment, index)
         return scenarioStatus(index, units, attemptsOf(experiment.id))
     }
@@ -399,7 +400,7 @@ class ExperimentsResource(
         @PathParam("id") id: String,
         @QueryParam("buckets") @DefaultValue("512") buckets: Int,
     ): ExperimentResults {
-        val experiment = accessibleExperiment(id)
+        val experiment = readable(id)
         val units = RunUnit.findByExperiment(experiment.id)
         val scenarios = results.read(experiment.publicId, units, buckets.coerceIn(1, MAX_BUCKETS))
         val exportIntervalMs = exportIntervalOf(experiment)
@@ -426,7 +427,7 @@ class ExperimentsResource(
     fun archive(
         @PathParam("id") id: String,
     ): Response {
-        val experiment = accessibleExperiment(id)
+        val experiment = readable(id)
         val prefix = resultKey(experiment.publicId)
         // Only what a unit certified: an attempt cut off partway can have published some of its
         // files, and those must never be readable as a result.
@@ -490,19 +491,9 @@ class ExperimentsResource(
         return (longest.last().t - longest.first().t) / (longest.size - 1)
     }
 
-    private fun accessibleProject(publicId: UUID): Project {
-        val project = Project.findByPublicId(publicId) ?: throw notFound("Project")
-        ProjectMember.findMembership(project.id, identity.currentUser().id) ?: throw notFound("Project")
-        return project
-    }
+    private fun readable(id: String): ExperimentEntity = experimentFor(identity.currentUser(), id, ProjectPermission.READ)
 
-    // An experiment that is not the caller's reports exactly what a nonexistent one reports, so
-    // membership cannot be probed by watching which identifiers answer differently.
-    private fun accessibleExperiment(id: String): ExperimentEntity {
-        val experiment = ExperimentEntity.findByPublicId(publicId(id, "Experiment")) ?: throw notFound("Experiment")
-        ProjectMember.findMembership(experiment.project.id, identity.currentUser().id) ?: throw notFound("Experiment")
-        return experiment
-    }
+    private fun editable(id: String): ExperimentEntity = experimentFor(identity.currentUser(), id, ProjectPermission.EDIT)
 
     private fun toWire(experiment: ExperimentEntity): Experiment =
         Experiment(
