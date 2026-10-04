@@ -26,10 +26,12 @@ import org.opendc.cli.progress.ProgressSnapshot
 import org.opendc.cli.progress.ProgressSource
 import org.opendc.cli.render.OutputView
 import org.opendc.sdk.model.experiment.expand
+import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import java.time.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipInputStream
@@ -61,6 +63,7 @@ internal class RemoteBackend(
     private val api: OpendcApi,
     private val project: ProjectChoice,
     private val pollInterval: Duration = Duration.ofSeconds(1),
+    private val pollPatience: Duration = Duration.ofMinutes(2),
 ) : SimulationBackend {
     override fun prepare(request: RunRequest): SimulationSession {
         val projectId =
@@ -111,10 +114,17 @@ internal class RemoteBackend(
             }
 
         override fun run(): RunOutcome {
-            val cancelOnExit = Thread { if (!ended.get()) runCatching { api.cancel(experimentId) } }
+            val cancelOnExit = Thread(::cancelUnlessEnded)
             Runtime.getRuntime().addShutdownHook(cancelOnExit)
             try {
-                val status = follow()
+                val status =
+                    try {
+                        follow()
+                    } catch (e: Exception) {
+                        // A run nobody is following any more would only use up its owner's budget.
+                        cancelUnlessEnded()
+                        throw e
+                    }
                 val outputs =
                     when (status.state) {
                         RemoteState.SUCCEEDED, RemoteState.PARTIAL -> OutputView(api.archive(experimentId) { unpack(it, output) }, output)
@@ -130,19 +140,39 @@ internal class RemoteBackend(
             }
         }
 
+        /** Polls until the run ends, riding out a server or network that stops answering for less than [pollPatience]. */
         private fun follow(): RemoteStatus {
+            var lastAnswer = Instant.now()
             while (true) {
-                val status = api.status(experimentId)
-                latest.set(ProgressSnapshot(status.completedTasks, status.totalTasks))
-                if (status.state.isTerminal) {
-                    ended.set(true)
-                    return status
+                try {
+                    val status = api.status(experimentId)
+                    lastAnswer = Instant.now()
+                    latest.set(ProgressSnapshot(status.completedTasks, status.totalTasks))
+                    if (status.state.isTerminal) {
+                        ended.set(true)
+                        return status
+                    }
+                } catch (e: Exception) {
+                    if (!isTransient(e) || Duration.between(lastAnswer, Instant.now()) > pollPatience) {
+                        throw e
+                    }
                 }
                 Thread.sleep(pollInterval.toMillis())
             }
         }
+
+        private fun cancelUnlessEnded() {
+            if (!ended.get()) {
+                runCatching { api.cancel(experimentId) }
+            }
+        }
     }
 }
+
+/** A failure that may well pass: the network, or the server erring rather than refusing. */
+private fun isTransient(e: Exception): Boolean = e is IOException || (e is ApiFailure && e.status >= HTTP_SERVER_ERROR)
+
+private const val HTTP_SERVER_ERROR = 500
 
 /**
  * Writes the archive's files under [root] and returns how many runs it held. An entry naming a path

@@ -553,6 +553,14 @@ class ExecutionUnit : PanacheEntityBase {
             ORDER BY u.scenarioIndex, u.seed
         """
 
+        @Language("JPAQL")
+        private const val BY_EXECUTIONS = """
+            SELECT eu FROM ExecutionUnit eu
+            JOIN FETCH eu.unit u
+            WHERE eu.execution.id IN ?1
+            ORDER BY u.scenarioIndex, u.seed
+        """
+
         // A unit failed here and nowhere since: no later attempt carries it.
         @Language("JPAQL")
         private const val RETRYABLE = """
@@ -572,6 +580,10 @@ class ExecutionUnit : PanacheEntityBase {
         fun findByExperiment(experimentId: Long): List<ExecutionUnit> = list(BY_EXPERIMENT, experimentId)
 
         fun findByExecution(executionId: Long): List<ExecutionUnit> = list(BY_EXECUTION, executionId)
+
+        /** Every unit of several executions at once, for a page of them. */
+        fun findByExecutions(executionIds: List<Long>): List<ExecutionUnit> =
+            if (executionIds.isEmpty()) emptyList() else list(BY_EXECUTIONS, executionIds)
 
         /** The units [executionId] was the last attempt for and that ended failed. */
         fun findRetryable(executionId: Long): List<ExecutionUnit> = list(RETRYABLE, executionId)

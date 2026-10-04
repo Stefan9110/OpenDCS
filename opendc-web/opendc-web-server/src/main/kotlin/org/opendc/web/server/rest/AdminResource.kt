@@ -105,8 +105,9 @@ class AdminResource(
         val wanted = if (states.isEmpty()) LIVE else states.map(::stateOf)
         val now = Instant.now()
         val page = Execution.find(EXECUTIONS_IN, wanted).within(Window.of(offset, limit))
+        val units = ExecutionUnit.findByExecutions(page.map { it.id }).groupBy { it.execution.id }
         // Counted on its own: a count of the fetching query would fetch associations it never selects.
-        return Page(page.map { it.toAdmin(now) }, Execution.count("state IN ?1", wanted))
+        return Page(page.map { it.toAdmin(now, units[it.id].orEmpty()) }, Execution.count("state IN ?1", wanted))
     }
 
     @GET
@@ -116,9 +117,10 @@ class AdminResource(
     ): AdminExecutionDetail {
         val execution = Execution.findByPublicId(publicId(id, "Execution")) ?: throw notFound("Execution")
         val retryable = if (execution.state.isTerminal) ExecutionUnit.findRetryable(execution.id).size else 0
+        val units = ExecutionUnit.findByExecution(execution.id)
         return AdminExecutionDetail(
-            execution = execution.toAdmin(Instant.now()),
-            units = ExecutionUnit.findByExecution(execution.id).map { it.toCarried() },
+            execution = execution.toAdmin(Instant.now(), units),
+            units = units.map { it.toCarried() },
             retryableUnits = retryable,
         )
     }
@@ -146,7 +148,7 @@ class AdminResource(
         @PathParam("id") id: String,
     ): RestResponse<List<AdminExecution>> {
         val now = Instant.now()
-        val queued = settlement.resubmit(publicId(id, "Execution")).map { it.toAdmin(now) }
+        val queued = settlement.resubmit(publicId(id, "Execution")).map { it.toAdmin(now, ExecutionUnit.findByExecution(it.id)) }
         return RestResponse.ResponseBuilder.create<List<AdminExecution>>(201).entity(queued).build()
     }
 
@@ -184,9 +186,11 @@ class AdminResource(
         return Page(matching.within(Window.of(offset, limit)).map { it.toAdmin() }, matching.count())
     }
 
-    private fun Execution.toAdmin(now: Instant): AdminExecution {
-        val units = ExecutionUnit.findByExecution(id)
-        return AdminExecution(
+    private fun Execution.toAdmin(
+        now: Instant,
+        units: List<ExecutionUnit>,
+    ): AdminExecution =
+        AdminExecution(
             id = publicId.toString(),
             experimentId = experiment.publicId.toString(),
             experimentName = experiment.name,
@@ -207,7 +211,6 @@ class AdminResource(
             createdAt = createdAt.toString(),
             phase = phase(now),
         )
-    }
 
     private fun Execution.phase(now: Instant): ExecutionPhase =
         when (state) {

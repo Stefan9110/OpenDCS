@@ -172,6 +172,17 @@ Beside the JVM's and the API's request timings, the server exports:
 The gauges are read from the database every 15 seconds, so every replica reports the same numbers;
 take the maximum across replicas, not the sum.
 
+### Trace imports
+
+People can import a trace from public URLs, one per table; the server fetches them itself. It
+refuses URLs that resolve to private, loopback, link-local or other non-public addresses, checks
+every redirect the same way, and gives up on a table larger than
+`OPENDC_TRACES_IMPORT_MAX_BYTES` (10 GiB), a server that goes quiet for two minutes, or an import
+older than `OPENDC_TRACES_IMPORT_DEADLINE` (6 h). A host is checked before each request and resolved
+again when connecting, so a name whose DNS answer changes in between is not caught: where the server
+can reach sensitive internal services, restrict its egress at the network as well. An intranet
+deployment that imports from its own mirrors sets `OPENDC_TRACES_IMPORT_ALLOW_PRIVATE_HOSTS=true`.
+
 ### Administrators and plans
 
 Administrators (those in `OPENDC_AUTH_ADMINS`, and everybody in anonymous mode) get an admin panel

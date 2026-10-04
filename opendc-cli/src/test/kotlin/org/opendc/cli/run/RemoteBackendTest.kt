@@ -107,6 +107,34 @@ class RemoteBackendTest {
     }
 
     @Test
+    fun `rides out a server that stops answering for a moment`() {
+        FakeOpendcServer(runningPolls = 1, unavailablePolls = 3).use { server ->
+            val outcome = backend(server).prepare(request()).run()
+
+            assertEquals(1, outcome.outputs.runCount)
+            assertTrue(server.cancelled.isEmpty())
+        }
+    }
+
+    @Test
+    fun `cancels the run when the server stays unreachable, rather than leave it running unwatched`() {
+        FakeOpendcServer(unavailablePolls = Int.MAX_VALUE).use { server ->
+            val impatient =
+                RemoteBackend(
+                    OpendcApi(server.url, Credentials.Anonymous),
+                    ProjectChoice.Named("opendc-cli"),
+                    Duration.ofMillis(10),
+                    Duration.ZERO,
+                )
+
+            val failure = assertFailsWith<ApiFailure> { impatient.prepare(request()).run() }
+
+            assertEquals(503, failure.status)
+            assertEquals(listOf("x-1"), server.cancelled)
+        }
+    }
+
+    @Test
     fun `refuses an archive entry that would land outside the output directory`() {
         val zip = ByteArrayOutputStream()
         ZipOutputStream(zip).use {

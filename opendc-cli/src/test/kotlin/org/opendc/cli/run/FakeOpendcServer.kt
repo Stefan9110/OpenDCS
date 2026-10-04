@@ -50,12 +50,15 @@ internal class FakeOpendcServer(
     private val submit: SubmitAnswer = SubmitAnswer.Accept,
     private val finalState: String = "succeeded",
     private val runningPolls: Int = 2,
+    /** How many status reads after the first one answer 503, as a server restarting would. */
+    private val unavailablePolls: Int = 0,
 ) : AutoCloseable {
     val projects = CopyOnWriteArrayList<String>()
     val authorizations = CopyOnWriteArrayList<String>()
     val cancelled = CopyOnWriteArrayList<String>()
     val deleted = CopyOnWriteArrayList<String>()
     private val polls = AtomicInteger()
+    private val statusReads = AtomicInteger()
     private val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
 
     val url: String get() = "http://127.0.0.1:${server.address.port}"
@@ -88,6 +91,8 @@ internal class FakeOpendcServer(
                 exchange.close()
             }
             path == "experiments/x-1/submit" -> submitted(exchange)
+            path == "experiments/x-1/status" && statusReads.getAndIncrement() in 1..unavailablePolls ->
+                json(exchange, 503, """{"status":503,"title":"Service unavailable","issues":[]}""")
             path == "experiments/x-1/status" -> json(exchange, 200, status())
             path == "experiments/x-1/cancel" -> {
                 cancelled += "x-1"

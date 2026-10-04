@@ -25,18 +25,20 @@ package org.opendc.web.server.traces
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
+import java.net.SocketTimeoutException
 import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.time.Duration
 import java.time.Instant
 
 private const val MAX_REDIRECTS = 5
 
 private val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(30)
+
+private val IDLE_TIMEOUT: Duration = Duration.ofMinutes(2)
 
 private val HTTP_SCHEMES = setOf("http", "https")
 
@@ -76,25 +78,59 @@ fun checkSource(
     return if (private == null) SourceCheck.Allowed else SourceCheck.Refused("${uri.host} is not a public address")
 }
 
+/** An IPv4 block given as its first address and prefix length. */
+private class Ipv4Block(
+    first: String,
+    private val prefix: Int,
+) {
+    private val base = bitsOf(InetAddress.getByName(first) as Inet4Address)
+
+    fun contains(address: Inet4Address): Boolean = (bitsOf(address) xor base) ushr (Int.SIZE_BITS - prefix) == 0
+}
+
+private fun bitsOf(address: Inet4Address): Int =
+    address.address.fold(
+        0,
+    ) { bits, byte -> (bits shl Byte.SIZE_BITS) or (byte.toInt() and 0xff) }
+
+/** Blocks the JDK's own predicates do not cover: "this network", carrier-grade NAT, IETF, benchmarking, reserved. */
+private val SPECIAL_IPV4 =
+    listOf(
+        Ipv4Block("0.0.0.0", 8),
+        Ipv4Block("100.64.0.0", 10),
+        Ipv4Block("192.0.0.0", 24),
+        Ipv4Block("198.18.0.0", 15),
+        Ipv4Block("240.0.0.0", 4),
+    )
+
 private fun isPrivate(address: InetAddress): Boolean =
     address.isAnyLocalAddress ||
         address.isLoopbackAddress ||
         address.isLinkLocalAddress ||
         address.isSiteLocalAddress ||
         address.isMulticastAddress ||
-        (address is Inet6Address && address.address[0].toInt() and 0xfe == 0xfc)
+        when (address) {
+            is Inet4Address -> SPECIAL_IPV4.any { it.contains(address) }
+            is Inet6Address -> address.address[0].toInt() and 0xfe == 0xfc
+            else -> false
+        }
 
 /**
  * Downloads from URLs on a user's behalf: following redirects itself so every hop is checked, and
- * giving up on anything larger than [maxBytes] or still arriving after [deadline].
+ * giving up on anything larger than [maxBytes], quiet for longer than [idleTimeout], or still
+ * arriving after [deadline].
+ *
+ * Each hop's host is resolved and checked before the request, and the connection resolves it again,
+ * so a name whose answer changes in between (DNS rebinding) is not caught here. Closing that would
+ * mean connecting to the checked address itself, which a TLS connection cannot do without giving up
+ * the check of the host's certificate.
  */
 class RemoteFetch(
     private val allowPrivateHosts: Boolean,
     private val maxBytes: Long,
     private val deadline: Instant,
+    private val idleTimeout: Duration = IDLE_TIMEOUT,
 ) {
-    private val client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).connectTimeout(CONNECT_TIMEOUT).build()
-
     fun <T> read(
         uri: URI,
         consume: (InputStream) -> T,
@@ -105,26 +141,31 @@ class RemoteFetch(
             if (check is SourceCheck.Refused) {
                 throw FetchFailure(check.reason)
             }
-            val request = HttpRequest.newBuilder(current).timeout(remaining()).GET().build()
-            val response = client.send(request, HttpResponse.BodyHandlers.ofInputStream())
-            when (response.statusCode()) {
-                in REDIRECTS -> {
-                    response.body().close()
-                    val location = response.headers().firstValue("location").orElseThrow { FetchFailure("$current redirected nowhere") }
-                    current = current.resolve(location)
-                }
-                HTTP_OK -> {
-                    val declared = response.headers().firstValueAsLong("content-length").orElse(0)
-                    if (declared > maxBytes) {
-                        response.body().close()
-                        throw tooLarge()
+            remaining()
+            val connection = current.toURL().openConnection() as HttpURLConnection
+            try {
+                connection.instanceFollowRedirects = false
+                connection.connectTimeout = CONNECT_TIMEOUT.toMillis().toInt()
+                // Bounds every blocking read, so a server that answers and then goes quiet cannot
+                // hold a worker past the deadline.
+                connection.readTimeout = idleTimeout.toMillis().toInt()
+                when (val status = connection.responseCode) {
+                    in REDIRECTS -> {
+                        val location = connection.getHeaderField("Location") ?: throw FetchFailure("$current redirected nowhere")
+                        current = current.resolve(location)
                     }
-                    return CappedStream(response.body()).use(consume)
+                    HTTP_OK -> {
+                        if (connection.contentLengthLong > maxBytes) {
+                            throw tooLarge()
+                        }
+                        return CappedStream(connection.inputStream).use(consume)
+                    }
+                    else -> throw FetchFailure("${current.host} answered HTTP $status")
                 }
-                else -> {
-                    response.body().close()
-                    throw FetchFailure("${current.host} answered HTTP ${response.statusCode()}")
-                }
+            } catch (e: SocketTimeoutException) {
+                throw FetchFailure("${current.host} stopped sending for longer than ${idleTimeout.seconds} seconds")
+            } finally {
+                connection.disconnect()
             }
         }
         throw FetchFailure("$uri redirected more than $MAX_REDIRECTS times")
@@ -137,12 +178,10 @@ class RemoteFetch(
             throw FetchFailure("${uri.host} could not be resolved")
         }
 
-    private fun remaining(): Duration {
-        val left = Duration.between(Instant.now(), deadline)
-        if (left <= Duration.ZERO) {
+    private fun remaining() {
+        if (Instant.now() >= deadline) {
             throw tookTooLong()
         }
-        return left
     }
 
     private fun tooLarge() = FetchFailure("the file is larger than the ${maxBytes / BYTES_PER_MB} MB this deployment imports")

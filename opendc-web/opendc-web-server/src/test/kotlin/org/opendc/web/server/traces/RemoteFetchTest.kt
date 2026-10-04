@@ -61,6 +61,14 @@ class RemoteFetchTest {
             exchange.sendResponseHeaders(302, -1)
             exchange.close()
         }
+        // Answers, sends a little, then goes quiet without closing.
+        server.createContext("/stalled") { exchange ->
+            exchange.sendResponseHeaders(200, SMALL.size * 2L)
+            exchange.responseBody.write(SMALL)
+            exchange.responseBody.flush()
+            Thread.sleep(STALL_MILLIS)
+            exchange.close()
+        }
         server.createContext("/loop") { exchange ->
             exchange.responseHeaders.add("Location", "/loop")
             exchange.sendResponseHeaders(302, -1)
@@ -77,7 +85,12 @@ class RemoteFetchTest {
     @Test
     fun `refuses private, loopback, link-local and unique-local addresses unless they are allowed`() {
         val uri = URI("https://example.org/tasks.parquet")
-        for (address in listOf("127.0.0.1", "10.1.2.3", "192.168.1.1", "172.16.0.9", "169.254.169.254", "0.0.0.0", "::1", "fd12::1")) {
+        val addresses =
+            listOf(
+                "127.0.0.1", "10.1.2.3", "192.168.1.1", "172.16.0.9", "169.254.169.254", "0.0.0.0", "0.1.2.3",
+                "100.100.100.200", "198.18.0.1", "192.0.0.8", "255.255.255.255", "::1", "fd12::1", "::ffff:10.0.0.1",
+            )
+        for (address in addresses) {
             val check = checkSource(uri, listOf(InetAddress.getByName(address)), allowPrivateHosts = false)
             assertInstanceOf(SourceCheck.Refused::class.java, check, address)
         }
@@ -127,6 +140,16 @@ class RemoteFetchTest {
     }
 
     @Test
+    fun `gives up on a server that answers and then goes quiet`() {
+        val failure =
+            assertThrows<FetchFailure> {
+                RemoteFetch(true, MAX, later(), idleTimeout = Duration.ofMillis(200)).read(url("/stalled")) { it.readBytes() }
+            }
+
+        assertTrue(failure.message!!.contains("stopped sending"), failure.message)
+    }
+
+    @Test
     fun `starts nothing once the deadline has passed`() {
         assertThrows<FetchFailure> { RemoteFetch(true, MAX, Instant.now().minusSeconds(1)).read(url("/small")) { it.readBytes() } }
     }
@@ -142,5 +165,6 @@ class RemoteFetchTest {
         const val CHUNK = 8192
         const val LARGE_CHUNKS = 64
         const val MAX = 1L shl 30
+        const val STALL_MILLIS = 2000L
     }
 }
