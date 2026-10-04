@@ -36,6 +36,8 @@ dependencies {
         exclude(group = "io.fabric8", module = "kubernetes-httpclient-vertx")
     }
     implementation(libs.fabric8.kubernetes.httpclient.jdk)
+    implementation(libs.sshd.core)
+    implementation(libs.sshd.sftp)
     implementation(libs.slf4j.api)
 
     testImplementation(libs.fabric8.kubernetes.server.mock)

@@ -24,24 +24,32 @@ package org.opendc.web.server.rest
 
 import io.quarkus.test.junit.QuarkusTest
 import io.restassured.response.Response
+import jakarta.inject.Inject
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
+import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.equalTo
 import org.hamcrest.Matchers.greaterThan
+import org.hamcrest.Matchers.hasItem
 import org.hamcrest.Matchers.hasItems
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.opendc.web.dispatcher.TimeCap
 import org.opendc.web.server.ApiTest
+import org.opendc.web.server.execution.RecordingDispatcher
 import java.time.Instant
 import java.util.UUID
 
 @QuarkusTest
 class ExperimentsResourceTest {
+    @Inject
+    lateinit var dispatcher: RecordingDispatcher
+
     private lateinit var projectId: String
 
     @BeforeEach
@@ -215,6 +223,27 @@ class ExperimentsResourceTest {
             .statusCode(200)
             .body("scenarioCount", equalTo(0))
             .body("issues.path", hasItems("topologies", "workloads"))
+    }
+
+    // A scenario estimated past what one execution here may run would only be killed at its limit,
+    // every attempt. The editor shows that while the draft is written, and submit refuses it.
+    @Test
+    fun aScenarioNoExecutionHereCanHoldIsShownInPreviewAndRefusedAtSubmit() {
+        dispatcher.capTime(TimeCap.Limited(1))
+        try {
+            ApiTest.requestJson()
+                .body("""{"spec":$SPEC}""")
+                .post("/api/v1/experiments/preview")
+                .then()
+                .statusCode(200)
+                .body("issues.message", hasItem(containsString("may run at most 1 s")))
+            val id = draftId("Too long")
+
+            ApiTest.requestJson().post("/api/v1/experiments/$id/submit").then().statusCode(400)
+            ApiTest.requestJson().get("/api/v1/experiments/$id").then().body("state", equalTo("draft"))
+        } finally {
+            dispatcher.capTime(TimeCap.Unlimited)
+        }
     }
 
     // Malformed content is different from unfinished content: nothing can be previewed at all, so

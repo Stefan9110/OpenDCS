@@ -37,10 +37,13 @@ import org.opendc.trace.conv.TABLE_TASKS
 import org.opendc.web.dispatcher.ExecutionSlot
 import org.opendc.web.dispatcher.PlannedBag
 import org.opendc.web.dispatcher.PlannedUnit
+import org.opendc.web.dispatcher.Unfit
+import org.opendc.web.dispatcher.estimate.ResourceEstimator
 import org.opendc.web.dispatcher.estimate.TraceExtent
 import org.opendc.web.dispatcher.estimate.TraceSizeEstimator
 import org.opendc.web.dispatcher.estimate.scaledBy
 import org.opendc.web.dispatcher.planBags
+import org.opendc.web.dispatcher.unfit
 import org.opendc.web.launcher.LaunchManifest
 import org.opendc.web.launcher.LaunchUnit
 import org.opendc.web.launcher.OutputTarget
@@ -84,6 +87,18 @@ class ExecutionPlanner(
         units: List<RunUnit>,
         slot: ExecutionSlot,
     ): List<PlannedBag> = planBags(estimate(scenariosOf(experiment), units), slot, config.toPolicy())
+
+    /**
+     * The scenarios no execution on [slot] can hold, whatever they are packed with: one estimated to
+     * run past the slot's time cap, or to need more memory than any grant worth asking for.
+     */
+    fun unfit(
+        scenarios: List<ScenarioSpec>,
+        slot: ExecutionSlot,
+    ): List<Unfit> {
+        val model = estimator()
+        return unfit(scenarios.map { planned(model, it, seed = 0) }, slot, config.toPolicy())
+    }
 
     /**
      * What the units [carried] were expected to cost when they last ran, which is where a retry starts.
@@ -183,14 +198,22 @@ class ExecutionPlanner(
         scenarios: Map<Int, ScenarioSpec>,
         units: List<RunUnit>,
     ): List<PlannedUnit> {
-        val estimator =
-            TraceSizeEstimator(config.estimator().toCoefficients())
-                .scaledBy(config.estimator().runtimeMultiplier(), config.estimator().memoryMultiplier())
-        return units.mapNotNull { unit ->
-            val scenario = scenarios[unit.scenarioIndex] ?: return@mapNotNull null
-            val estimate = estimator.estimate(scenario, traceExtentOf(scenario.workload))
-            PlannedUnit(unit.scenarioIndex, unit.seed, estimate.cpuSeconds, estimate.peakMemoryMb)
-        }
+        val model = estimator()
+        return units.mapNotNull { unit -> scenarios[unit.scenarioIndex]?.let { planned(model, it, unit.seed) } }
+    }
+
+    /** The dispatch estimate, corrected by this deployment's multipliers. */
+    private fun estimator(): ResourceEstimator =
+        TraceSizeEstimator(config.estimator().toCoefficients())
+            .scaledBy(config.estimator().runtimeMultiplier(), config.estimator().memoryMultiplier())
+
+    private fun planned(
+        model: ResourceEstimator,
+        scenario: ScenarioSpec,
+        seed: Long,
+    ): PlannedUnit {
+        val estimate = model.estimate(scenario, traceExtentOf(scenario.workload))
+        return PlannedUnit(scenario.id, seed, estimate.cpuSeconds, estimate.peakMemoryMb)
     }
 
     private fun scenariosOf(experiment: Experiment): Map<Int, ScenarioSpec> =

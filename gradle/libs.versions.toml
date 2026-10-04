@@ -31,6 +31,8 @@ quarkus = "3.33.1"
 quarkus-quinoa = "2.8.1"
 slf4j = "2.0.9"
 spotless = "6.25.0"
+# Follows the Quarkus BOM; sshd-sftp has to move together with sshd-core.
+sshd = "2.17.1"
 
 [libraries]
 # Kotlin
@@ -104,6 +106,10 @@ aws-url-connection-client = { module = "software.amazon.awssdk:url-connection-cl
 fabric8-kubernetes-client = { module = "io.fabric8:kubernetes-client", version.ref = "fabric8" }
 fabric8-kubernetes-httpclient-jdk = { module = "io.fabric8:kubernetes-httpclient-jdk", version.ref = "fabric8" }
 fabric8-kubernetes-server-mock = { module = "io.fabric8:kubernetes-server-mock", version.ref = "fabric8" }
+
+# SSH to a SLURM head node, and an embeddable server of the same library for tests.
+sshd-core = { module = "org.apache.sshd:sshd-core", version.ref = "sshd" }
+sshd-sftp = { module = "org.apache.sshd:sshd-sftp", version.ref = "sshd" }
 
 # Calcite (SQL)
 calcite-core = { module = "org.apache.calcite:calcite-core", version.ref = "calcite" }

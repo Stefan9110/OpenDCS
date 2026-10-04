@@ -99,6 +99,11 @@ class RecordingDispatcher : Dispatcher {
 
     override fun close() {}
 
+    /** Caps how long one execution may run here, the way a SLURM partition does. */
+    fun capTime(cap: TimeCap) {
+        capacity.updateAndGet { it.copy(timeCap = cap) }
+    }
+
     /** The next launches are answered with [launches], in order. */
     fun answer(vararg launches: Launch) {
         answers += launches

@@ -33,10 +33,13 @@ import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.experiment.expand
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.resource.ResourceReference
+import org.opendc.web.dispatcher.Dispatcher
+import org.opendc.web.dispatcher.Unfit
 import org.opendc.web.dispatcher.estimate.TraceSizeEstimator
 import org.opendc.web.dispatcher.estimate.sampledShare
 import org.opendc.web.server.execution.DiscardRequested
 import org.opendc.web.server.execution.ExecutionConfig
+import org.opendc.web.server.execution.ExecutionPlanner
 import org.opendc.web.server.execution.Settlement
 import org.opendc.web.server.execution.StopRequested
 import org.opendc.web.server.execution.toCoefficients
@@ -83,6 +86,8 @@ data class SubmissionPreview(
 class SubmissionPipeline(
     private val codec: SpecCodec,
     private val config: ExecutionConfig,
+    private val planner: ExecutionPlanner,
+    private val dispatcher: Dispatcher,
     private val settlement: Settlement,
     private val results: ResultsReader,
     private val stops: Event<StopRequested>,
@@ -119,9 +124,30 @@ class SubmissionPipeline(
         return SubmissionPreview(
             scenarioCount = spec.expand().size,
             estimate = estimate(spec.expand()),
-            issues = spec.validate().toWire(),
+            issues = spec.validate().toWire() + unfitIssues(spec.expand()),
         )
     }
+
+    /**
+     * One issue per scenario no execution on this deployment can hold: estimated past the platform's
+     * time cap, or past the largest grant worth asking for. Such a scenario would only fail at its
+     * limit, every attempt, so it is refused before it is run rather than after.
+     */
+    private fun unfitIssues(scenarios: List<ScenarioSpec>): List<DocumentIssue> =
+        planner.unfit(scenarios, dispatcher.slot()).map { unfit ->
+            val scenario = "Scenario ${unfit.unit.scenarioIndex}"
+            when (unfit) {
+                is Unfit.TooLong ->
+                    DocumentIssue(
+                        "",
+                        "$scenario is estimated at ${unfit.seconds} s; an execution here may run at most ${unfit.capSeconds} s",
+                    )
+                is Unfit.TooLarge -> {
+                    val needs = unfit.memoryMb.toLong()
+                    DocumentIssue("", "$scenario needs about $needs MB; an execution here may have at most ${unfit.capMb.toLong()} MB")
+                }
+            }
+        }
 
     @Transactional
     fun submit(experiment: Experiment) {
@@ -136,6 +162,10 @@ class SubmissionPipeline(
         val scenarios = spec.expand()
         if (scenarios.isEmpty()) {
             throw conflict("This experiment expands to no scenarios")
+        }
+        val unfit = unfitIssues(scenarios)
+        if (unfit.isNotEmpty()) {
+            throw invalidDocument("Some scenarios cannot run on this deployment", unfit)
         }
 
         extractResources(experiment, spec)

@@ -40,6 +40,11 @@ import org.opendc.web.dispatcher.kubernetes.PriorityClass
 import org.opendc.web.dispatcher.kubernetes.PullPolicy
 import org.opendc.web.dispatcher.local.LocalDispatcher
 import org.opendc.web.dispatcher.local.LocalDispatcherConfig
+import org.opendc.web.dispatcher.slurm.JumpHost
+import org.opendc.web.dispatcher.slurm.Partition
+import org.opendc.web.dispatcher.slurm.SlurmDispatcher
+import org.opendc.web.dispatcher.slurm.SlurmDispatcherConfig
+import org.opendc.web.dispatcher.slurm.SshTarget
 import org.opendc.web.server.storage.ObjectStoreConfig
 import org.opendc.web.server.storage.ObjectStoreKind
 import java.io.File
@@ -62,6 +67,9 @@ enum class DispatcherKind {
 
     /** One Job per execution on a Kubernetes cluster. */
     KUBERNETES,
+
+    /** One batch job per execution on a SLURM cluster reached over SSH, staged through its shared filesystem. */
+    SLURM,
 }
 
 /**
@@ -86,6 +94,7 @@ class Dispatch(
         return when (config.dispatcher()) {
             DispatcherKind.LOCAL -> dispatchers.localDispatcher()
             DispatcherKind.KUBERNETES -> KubernetesDispatcher.connect(dispatchers.kubernetes().toConfig())
+            DispatcherKind.SLURM -> SlurmDispatcher(dispatchers.slurm().toConfig(dispatchers.launcherDistribution()))
         }
     }
 
@@ -111,6 +120,8 @@ interface DispatcherConfig {
     fun local(): Local
 
     fun kubernetes(): Kubernetes
+
+    fun slurm(): Slurm
 
     /** What [DispatcherKind.LOCAL] needs to run launchers beside this server. */
     interface Local {
@@ -171,6 +182,66 @@ interface DispatcherConfig {
         @WithDefault("PT1H")
         fun pendingTimeout(): Duration
     }
+
+    /** What [DispatcherKind.SLURM] needs to reach a head node and run launchers through it. */
+    interface Slurm {
+        fun host(): Optional<String>
+
+        @WithDefault("22")
+        fun port(): Int
+
+        fun user(): Optional<String>
+
+        /** An unencrypted private key, readable by this server only. */
+        fun identityFile(): Optional<String>
+
+        /** Has to vouch for the jump host as well as the head node; nothing else is trusted. */
+        @WithDefault("~/.ssh/known_hosts")
+        fun knownHosts(): String
+
+        /** `[user@]host[:port]` of a bastion the head node is reached through. */
+        fun jumpHost(): Optional<String>
+
+        /** Where launchers, cached traces and executions live, on a filesystem the compute nodes share. */
+        @WithDefault("opendc")
+        fun remoteRoot(): String
+
+        /** The JRE on the shared filesystem the nodes run the launcher with: Java 21 or newer. */
+        @WithDefault("java")
+        fun java(): String
+
+        fun partition(): Optional<String>
+
+        /** Site flags every submission carries, such as an account or a QOS. */
+        fun sbatchOptions(): Optional<List<String>>
+
+        /** One node's cores and memory, which is what bags are packed for. */
+        fun slotCores(): Optional<Int>
+
+        fun slotMemoryMb(): Optional<Double>
+
+        /** The longest a job may run, where the site caps it below the partition's own limit. */
+        fun timeCap(): Optional<Duration>
+
+        /** How many jobs may be pending or running at once. */
+        @WithDefault("4")
+        fun maxJobs(): Int
+
+        @WithDefault("PT1H")
+        fun pendingTimeout(): Duration
+
+        /** How often the queue is asked about. Follow the site's etiquette. */
+        @WithDefault("PT15S")
+        fun pollInterval(): Duration
+
+        /** At least the shared filesystem's attribute cache time, so a fresh exit record is seen. */
+        @WithDefault("PT90S")
+        fun recordGrace(): Duration
+
+        /** At least opendc.execution.url-lifetime, so nothing live still reads what is removed. */
+        @WithDefault("P7D")
+        fun cacheRetention(): Duration
+    }
 }
 
 /** How much of the machine's memory a deployment that says nothing may use for simulations. */
@@ -184,7 +255,8 @@ private val LOOPBACK = setOf("localhost", "::1", "[::1]", "0.0.0.0")
  *
  * A pod reads its inputs through signed URLs and reports to the telemetry URL, so it can neither read
  * this server's disk nor reach this server's loopback address. Both are certain misconfigurations,
- * and failing at boot says so before anything is submitted.
+ * and failing at boot says so before anything is submitted. A SLURM job reaches nothing but its
+ * shared filesystem, which this server stages into and collects from itself.
  */
 fun deploymentProblems(
     kind: DispatcherKind,
@@ -192,7 +264,7 @@ fun deploymentProblems(
     telemetryUrl: String,
 ): List<String> =
     when (kind) {
-        DispatcherKind.LOCAL -> emptyList()
+        DispatcherKind.LOCAL, DispatcherKind.SLURM -> emptyList()
         DispatcherKind.KUBERNETES ->
             buildList {
                 if (storage == ObjectStoreKind.LOCAL) {
@@ -230,6 +302,45 @@ fun DispatcherConfig.Kubernetes.toConfig(): KubernetesDispatcherConfig =
         ttl = ttl(),
         pendingTimeout = pendingTimeout(),
     )
+
+fun DispatcherConfig.Slurm.toConfig(launcherLib: Path): SlurmDispatcherConfig {
+    val user = required(user(), "user")
+    return SlurmDispatcherConfig(
+        ssh =
+            SshTarget(
+                host = required(host(), "host"),
+                port = port(),
+                user = user,
+                identity = Path.of(home(required(identityFile(), "identity-file"))),
+                knownHosts = Path.of(home(knownHosts())),
+                jump = jumpHost().map { JumpHost.parse(it, user) }.orElse(JumpHost.Direct),
+            ),
+        remoteRoot = remoteRoot(),
+        java = java(),
+        launcherLib = launcherLib,
+        partition = partition().map<Partition> { Partition.Named(it) }.orElse(Partition.ClusterDefault),
+        sbatchOptions = sbatchOptions().orElse(emptyList()),
+        slot =
+            ExecutionSlot(
+                cores = required(slotCores(), "slot-cores"),
+                memoryMb = required(slotMemoryMb(), "slot-memory-mb"),
+                timeCap = timeCap().map<TimeCap> { TimeCap.Limited(it.seconds.toInt()) }.orElse(TimeCap.Unlimited),
+            ),
+        maxJobs = maxJobs(),
+        pendingTimeout = pendingTimeout(),
+        pollInterval = pollInterval(),
+        recordGrace = recordGrace(),
+        cacheRetention = cacheRetention(),
+    )
+}
+
+private fun <T : Any> required(
+    value: Optional<T>,
+    key: String,
+): T = value.orElseThrow { IllegalStateException("opendc.dispatcher.slurm.$key must be set when opendc.execution.dispatcher=slurm") }
+
+/** [path] with a leading `~/` read as this user's home. */
+private fun home(path: String): String = if (path.startsWith("~/")) System.getProperty("user.home") + path.removePrefix("~") else path
 
 /** The launcher's `lib` directory, refused at boot unless it holds the launcher. */
 private fun DispatcherConfig.launcherDistribution(): Path {

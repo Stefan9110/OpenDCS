@@ -63,4 +63,14 @@ class DispatchTest {
             deploymentProblems(DispatcherKind.LOCAL, ObjectStoreKind.LOCAL, "http://localhost:8080/api/v1/telemetry"),
         )
     }
+
+    // This server stages a SLURM job's inputs and collects its outputs itself, and the job reports
+    // nothing, so neither the disk nor the loopback address is out of a job's reach.
+    @Test
+    fun `lets a SLURM deployment start on local storage behind a loopback address`() {
+        assertEquals(
+            emptyList<String>(),
+            deploymentProblems(DispatcherKind.SLURM, ObjectStoreKind.LOCAL, "http://localhost:8080/api/v1/telemetry"),
+        )
+    }
 }
