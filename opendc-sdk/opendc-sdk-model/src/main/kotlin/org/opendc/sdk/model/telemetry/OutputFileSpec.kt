@@ -25,27 +25,33 @@ package org.opendc.sdk.model.telemetry
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Identifies a category of output produced by a simulation run. */
+/**
+ * Identifies a category of output produced by a simulation run, and the file it is written to.
+ *
+ * [fileName] lives here so that anything which has to know where a run's output lands ahead of time,
+ * such as a scheduler signing an upload target before the run starts, reads it rather than spelling
+ * it again.
+ */
 @Serializable
-public enum class OutputFileSpec {
+public enum class OutputFileSpec(public val fileName: String) {
     @SerialName("battery")
-    BATTERY,
+    BATTERY("battery.parquet"),
 
     @SerialName("cluster")
-    CLUSTER,
+    CLUSTER("cluster.parquet"),
 
     @SerialName("datacenter")
-    DATA_CENTER,
+    DATA_CENTER("dataCenter.parquet"),
 
     @SerialName("host")
-    HOST,
+    HOST("host.parquet"),
 
     @SerialName("powerSource")
-    POWER_SOURCE,
+    POWER_SOURCE("powerSource.parquet"),
 
     @SerialName("service")
-    SERVICE,
+    SERVICE("service.parquet"),
 
     @SerialName("task")
-    TASK,
+    TASK("task.parquet"),
 }
