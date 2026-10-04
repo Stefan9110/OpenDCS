@@ -27,10 +27,10 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.descriptors.elementNames
-import org.opendc.sdk.model.export.OutputFileSpec
 import org.opendc.sdk.model.failure.FailurePrefabSpec
-import org.opendc.sdk.model.scheduler.SchedulerNameSpec
-import org.opendc.sdk.model.topology.BatteryPolicy
+import org.opendc.sdk.model.scheduler.SchedulerPrefabSpec
+import org.opendc.sdk.model.telemetry.OutputFileSpec
+import org.opendc.sdk.model.topology.BatteryPolicySpec
 import org.opendc.sdk.model.topology.PowerModelType
 
 /** One entry of a catalog served by the catalogs endpoint. */
@@ -48,6 +48,9 @@ private const val POWER_MODELS = "power-models"
 private const val BATTERY_POLICIES = "battery-policies"
 private const val EXPORT_COLUMNS = "export-columns"
 
+/** Battery policies the model can spell but the simulator refuses to build, so no editor offers them. */
+private val UNBUILT_BATTERY_POLICIES = setOf("runningMedian", "runningQuartiles")
+
 /**
  * Reflects the option catalogs the draft and topology editors offer out of the sdk-model types
  * themselves, via their serializer descriptors, so the catalogs cannot drift from what the
@@ -60,10 +63,13 @@ class CatalogReflection {
 
     fun entries(name: String): List<CatalogEntry>? =
         when (name) {
-            SCHEDULERS -> SchedulerNameSpec.entries.map { entry(name, it.name) }
+            SCHEDULERS -> SchedulerPrefabSpec.entries.map { entry(name, it.name) }
             FAILURE_PREFABS -> FailurePrefabSpec.entries.map { entry(name, it.name) }
             POWER_MODELS -> PowerModelType.serializer().descriptor.elementNames.map { entry(name, it) }
-            BATTERY_POLICIES -> sealedSubtypeNames(BatteryPolicy.serializer().descriptor).map { entry(name, it) }
+            BATTERY_POLICIES ->
+                sealedSubtypeNames(BatteryPolicySpec.serializer().descriptor)
+                    .filterNot { it in UNBUILT_BATTERY_POLICIES }
+                    .map { entry(name, it) }
             EXPORT_COLUMNS -> OutputFileSpec.serializer().descriptor.elementNames.map { entry(name, it) }
             else -> null
         }

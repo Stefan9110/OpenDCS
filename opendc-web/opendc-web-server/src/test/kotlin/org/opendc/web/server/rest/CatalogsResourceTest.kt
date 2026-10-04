@@ -56,7 +56,7 @@ class CatalogsResourceTest {
     // option in the SDK must fail here until the web contract is looked at.
     @Test
     fun `reflected catalogs pin the sdk option surface`() {
-        assertEquals(14, ids("schedulers").size)
+        assertEquals(13, ids("schedulers").size)
         assertTrue("Timeshift" in ids("schedulers"))
         assertEquals(36, ids("failure-prefabs").size)
         assertTrue("G5k06Exp" in ids("failure-prefabs"))
@@ -64,11 +64,11 @@ class CatalogsResourceTest {
             setOf("constant", "linear", "square", "cubic", "sqrt", "mse", "asymptotic"),
             ids("power-models").toSet(),
         )
+        assertEquals(setOf("single", "double", "runningMean", "runningMeanPlus"), ids("battery-policies").toSet())
         assertEquals(
-            setOf("single", "double", "runningMean", "runningMeanPlus", "runningMedian", "runningQuartiles"),
-            ids("battery-policies").toSet(),
+            setOf("battery", "cluster", "datacenter", "host", "powerSource", "service", "task"),
+            ids("export-columns").toSet(),
         )
-        assertEquals(setOf("host", "task", "powerSource", "battery", "service"), ids("export-columns").toSet())
     }
 
     @Test

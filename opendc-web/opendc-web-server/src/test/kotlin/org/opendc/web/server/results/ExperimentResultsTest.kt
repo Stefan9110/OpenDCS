@@ -34,7 +34,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
-import org.opendc.trace.util.parquet.LocalOutputFile
+import org.opendc.trace.parquet.LocalOutputFile
 import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.launcher.ResultMetric
