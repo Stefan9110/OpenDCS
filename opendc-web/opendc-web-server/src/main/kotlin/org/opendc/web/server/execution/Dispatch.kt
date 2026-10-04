@@ -51,62 +51,68 @@ enum class DispatcherKind {
  * Builds the one dispatcher this deployment runs work on.
  *
  * Kept past bean removal because a test supplies its own dispatcher instead: dropping this producer
- * would drop the only injection point of [LocalDispatchConfig] with it, and a deployment's local
+ * would drop the only injection point of [DispatcherConfig] with it, and a deployment's dispatcher
  * settings would then be refused as configuration that maps to nothing.
  */
 @Unremovable
 @ApplicationScoped
 class Dispatch(
     private val config: ExecutionConfig,
-    private val local: LocalDispatchConfig,
+    private val dispatchers: DispatcherConfig,
 ) {
     @Produces
     @Singleton
     fun dispatcher(): Dispatcher =
         when (config.dispatcher()) {
-            DispatcherKind.LOCAL -> local.toDispatcher()
+            DispatcherKind.LOCAL -> dispatchers.localDispatcher()
         }
 }
 
-/** What [DispatcherKind.LOCAL] needs to run launchers beside this server. */
-@ConfigMapping(prefix = "opendc.dispatcher.local")
-interface LocalDispatchConfig {
-    /** Cores one execution may use. Defaults to every core this machine has. */
-    fun cores(): Optional<Int>
-
+/** How this deployment's dispatchers are set up. Each kind reads its own section. */
+@ConfigMapping(prefix = "opendc.dispatcher")
+interface DispatcherConfig {
     /**
-     * Memory the pool may use between all its executions.
-     *
-     * Defaults to [MEMORY_SHARE] of what the machine has, since the rest of it belongs to this
-     * server, to the database and to whoever else is using the machine.
-     */
-    fun memoryMb(): Optional<Double>
-
-    /**
-     * The `lib` directory of the launcher's distribution.
+     * The `lib` directory of the launcher's distribution, for every dispatcher that starts the
+     * launcher from files rather than from an image.
      *
      * The launcher is published as its own program, so this names where that program was installed
      * rather than describing how to assemble one.
      */
     fun launcherLib(): String
 
-    /** Where manifests and launcher logs are written. */
-    @WithDefault("data/executions")
-    fun workDir(): String
+    fun local(): Local
+
+    /** What [DispatcherKind.LOCAL] needs to run launchers beside this server. */
+    interface Local {
+        /** Cores one execution may use. Defaults to every core this machine has. */
+        fun cores(): Optional<Int>
+
+        /**
+         * Memory the pool may use between all its executions.
+         *
+         * Defaults to [MEMORY_SHARE] of what the machine has, since the rest of it belongs to this
+         * server, to the database and to whoever else is using the machine.
+         */
+        fun memoryMb(): Optional<Double>
+
+        /** Where manifests and launcher logs are written. */
+        @WithDefault("data/executions")
+        fun workDir(): String
+    }
 }
 
 /** How much of the machine's memory a deployment that says nothing may use for simulations. */
 private const val MEMORY_SHARE = 0.5
 
-fun LocalDispatchConfig.toDispatcher(): LocalDispatcher =
+fun DispatcherConfig.localDispatcher(): LocalDispatcher =
     LocalDispatcher(
         LocalDispatcherConfig(
-            cores = cores().orElseGet { Runtime.getRuntime().availableProcessors() },
-            memoryMb = memoryMb().orElseGet { machineMemoryMb() * MEMORY_SHARE },
+            cores = local().cores().orElseGet { Runtime.getRuntime().availableProcessors() },
+            memoryMb = local().memoryMb().orElseGet { machineMemoryMb() * MEMORY_SHARE },
             // The wildcard is expanded by the JVM rather than by a shell, so naming the directory
             // puts the launcher's whole distribution on the classpath.
             classpath = "${Path.of(launcherLib()).toAbsolutePath()}${File.separator}*",
-            workDir = Path.of(workDir()),
+            workDir = Path.of(local().workDir()),
         ),
     )
 
