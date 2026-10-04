@@ -30,9 +30,24 @@ import jakarta.ws.rs.core.MediaType
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.opendc.web.server.auth.AuthSettings
 import org.opendc.web.server.auth.Identity
 import org.opendc.web.server.model.PlanTier
 import org.opendc.web.server.model.ProjectMember
+
+/**
+ * What a frontend has to know about this deployment before it can show anything, chiefly how to
+ * sign in. Served rather than built into the frontend, so one export serves every deployment.
+ */
+@Path("config")
+@Produces(MediaType.APPLICATION_JSON)
+class ConfigResource(private val auth: AuthSettings) {
+    @GET
+    fun config(): DeploymentConfig = DeploymentConfig(auth)
+}
+
+@Serializable
+data class DeploymentConfig(val auth: AuthSettings)
 
 /** The current user's identity, account shape and billing. */
 @Path("me")

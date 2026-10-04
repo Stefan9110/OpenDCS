@@ -28,11 +28,16 @@ import io.smallrye.config.ConfigMapping
 import io.smallrye.config.WithDefault
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.enterprise.event.Observes
+import jakarta.enterprise.inject.Produces
+import jakarta.inject.Singleton
 import jakarta.transaction.Transactional
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
 import org.opendc.web.server.model.PlanTier
 import org.opendc.web.server.model.UserAccount
 import org.slf4j.LoggerFactory
 import java.time.Instant
+import java.util.Optional
 
 /** How a deployment tells its callers apart. */
 enum class AuthMode {
@@ -49,7 +54,50 @@ interface AuthConfig {
     // authentication rather than an open administrator account.
     @WithDefault("auth0")
     fun mode(): AuthMode
+
+    fun auth0(): Auth0Tenant
+
+    /** The Auth0 application the frontend signs in through. Read only in auth0 mode. */
+    interface Auth0Tenant {
+        fun domain(): Optional<String>
+
+        fun clientId(): Optional<String>
+
+        fun audience(): Optional<String>
+    }
 }
+
+/** How the frontend is to sign in, which it learns from `/config` rather than from its own build. */
+@Serializable
+sealed interface AuthSettings {
+    @Serializable
+    @SerialName("auth0")
+    data class Auth0(
+        val domain: String,
+        val clientId: String,
+        val audience: String,
+    ) : AuthSettings
+
+    @Serializable
+    @SerialName("anonymous")
+    data object Anonymous : AuthSettings
+}
+
+/** The sign-in [config] describes. A missing Auth0 setting is an error naming its key. */
+fun authSettings(config: AuthConfig): AuthSettings =
+    when (config.mode()) {
+        AuthMode.ANONYMOUS -> AuthSettings.Anonymous
+        AuthMode.AUTH0 -> {
+            val tenant = config.auth0()
+            AuthSettings.Auth0(
+                domain = tenant.domain().orElseThrow { missingAuth0Setting("domain") },
+                clientId = tenant.clientId().orElseThrow { missingAuth0Setting("client-id") },
+                audience = tenant.audience().orElseThrow { missingAuth0Setting("audience") },
+            )
+        }
+    }
+
+private fun missingAuth0Setting(key: String) = IllegalStateException("opendc.auth.mode=auth0 needs opendc.auth.auth0.$key")
 
 /** Who the implicit account of anonymous mode is to the identity provider, which it never meets. */
 const val IMPLICIT_SUBJECT = "anonymous"
@@ -57,21 +105,30 @@ const val IMPLICIT_SUBJECT = "anonymous"
 const val IMPLICIT_HANDLE = "local"
 
 /**
- * Puts the implicit account in place before anything asks for it, since anonymous mode resolves
- * every request to it and a self-hosted deployment has no identity provider to create one.
+ * Settles how this deployment signs callers in, once and at boot, so a misconfigured one fails to
+ * start rather than at its first sign-in.
  *
- * Anonymous mode is allowed in a deployment, for a single person running OpenDC for themselves, but
- * it is said out loud at boot: anyone who can reach the port is the administrator.
+ * Anonymous mode resolves every request to an implicit account, which is put in place here before
+ * anything asks for it. That mode is allowed in a deployment, for a single person running OpenDC for
+ * themselves, but it is said out loud at boot: anyone who can reach the port is the administrator.
  */
 @ApplicationScoped
-class ImplicitAccount(private val config: AuthConfig) {
+class AuthSetup(private val config: AuthConfig) {
+    @Produces
+    @Singleton
+    fun settings(): AuthSettings = authSettings(config)
+
     @Transactional
-    internal fun seed(
+    internal fun onStart(
         @Suppress("UNUSED_PARAMETER") @Observes event: StartupEvent,
+        settings: AuthSettings,
     ) {
-        if (config.mode() != AuthMode.ANONYMOUS) {
-            return
+        if (settings is AuthSettings.Anonymous) {
+            seedImplicitAccount()
         }
+    }
+
+    private fun seedImplicitAccount() {
         if (LaunchMode.current() == LaunchMode.NORMAL) {
             LOG.warn("opendc.auth.mode=anonymous: every request acts as one implicit administrator with no budget")
         }
@@ -89,6 +146,6 @@ class ImplicitAccount(private val config: AuthConfig) {
     }
 
     private companion object {
-        val LOG = LoggerFactory.getLogger(ImplicitAccount::class.java)
+        val LOG = LoggerFactory.getLogger(AuthSetup::class.java)
     }
 }

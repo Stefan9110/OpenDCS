@@ -33,12 +33,12 @@ import org.opendc.web.server.ApiTest
 @QuarkusTest
 class SessionResourcesTest {
     @Test
-    fun `config reports the developer auth mode`() {
+    fun `config tells the frontend that nobody has to sign in`() {
         ApiTest.requestJson()
             .get("/api/v1/config")
             .then()
             .statusCode(200)
-            .body("authMode", equalTo("developer"))
+            .body("auth.type", equalTo("anonymous"))
     }
 
     // An account with no email must omit the field rather than send an explicit null: the client

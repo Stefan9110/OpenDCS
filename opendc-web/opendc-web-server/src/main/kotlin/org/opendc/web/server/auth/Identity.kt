@@ -36,19 +36,19 @@ import org.opendc.web.server.rest.notAuthenticated
  * rather than by its key, so this is a query that the persistence context cannot spare.
  */
 @RequestScoped
-class Identity(private val config: AuthConfig) {
+class Identity(private val settings: AuthSettings) {
     private val caller by lazy(LazyThreadSafetyMode.NONE) { resolve() }
 
     fun currentUser(): UserAccount = caller
 
     private fun resolve(): UserAccount =
-        when (config.mode()) {
-            AuthMode.ANONYMOUS ->
+        when (settings) {
+            AuthSettings.Anonymous ->
                 checkNotNull(UserAccount.findBySubject(IMPLICIT_SUBJECT)) {
                     "the implicit account is seeded at startup"
                 }
             // Until OIDC is wired every request in this mode is unauthenticated, which is what the
             // frontend's sign-in gate expects to see.
-            AuthMode.AUTH0 -> throw notAuthenticated()
+            is AuthSettings.Auth0 -> throw notAuthenticated()
         }
 }
