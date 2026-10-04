@@ -30,11 +30,8 @@ import kotlinx.serialization.json.JsonElement
 import org.opendc.sdk.model.experiment.ExperimentSpec
 import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.experiment.expand
-import org.opendc.sdk.model.failure.TraceBasedFailureSpec
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.resource.ResourceReference
-import org.opendc.sdk.model.workload.EfficientTraceWorkloadSpec
-import org.opendc.sdk.model.workload.TraceWorkloadSpec
 import org.opendc.web.dispatcher.Dispatcher
 import org.opendc.web.dispatcher.estimate.TraceSizeEstimator
 import org.opendc.web.dispatcher.estimate.sampledShare
@@ -297,21 +294,12 @@ class SubmissionPipeline(
         experiment: Experiment,
         spec: ExperimentSpec,
     ) {
-        val references =
-            spec.workloads.filterIsInstance<TraceWorkloadSpec>().map { TraceKind.WORKLOAD to it.source } +
-                spec.workloads.filterIsInstance<EfficientTraceWorkloadSpec>().map { TraceKind.WORKLOAD to it.source } +
-                spec.failureModels.filterIsInstance<TraceBasedFailureSpec>().map { TraceKind.FAILURE to it.source } +
-                spec.topologies.flatMap { topology ->
-                    topology.datacenters.orEmpty().mapNotNull { dataCenter ->
-                        dataCenter.powerSource.carbon?.let { TraceKind.CARBON to it }
-                    }
-                }
-        for ((kind, reference) in references) {
+        for (use in spec.references()) {
             val row = ExperimentResource()
             row.experiment = experiment
-            row.kind = kind
-            row.reference = codec.json.encodeToString<ResourceReference>(reference)
-            row.referenceName = (reference as? NamedReference)?.name
+            row.kind = TraceKind.of(use.role)
+            row.reference = codec.json.encodeToString<ResourceReference>(use.reference)
+            row.referenceName = (use.reference as? NamedReference)?.name
             row.persist()
         }
     }

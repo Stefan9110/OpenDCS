@@ -36,6 +36,7 @@ import jakarta.persistence.Table
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
 import org.intellij.lang.annotations.Language
+import org.opendc.sdk.model.resource.ResourceRole
 import org.opendc.trace.conv.TABLE_CARBON
 import org.opendc.trace.conv.TABLE_FAILURES
 import org.opendc.trace.conv.TABLE_FRAGMENTS
@@ -55,6 +56,17 @@ enum class TraceKind(val tables: List<String>) {
     WORKLOAD(listOf(TABLE_TASKS, TABLE_FRAGMENTS)),
     CARBON(listOf(TABLE_CARBON)),
     FAILURE(listOf(TABLE_FAILURES)),
+    ;
+
+    companion object {
+        /** The kind of trace a document asks for where it uses a resource as [role]. */
+        fun of(role: ResourceRole): TraceKind =
+            when (role) {
+                ResourceRole.WORKLOAD -> WORKLOAD
+                ResourceRole.CARBON -> CARBON
+                ResourceRole.FAILURE -> FAILURE
+            }
+    }
 }
 
 /**

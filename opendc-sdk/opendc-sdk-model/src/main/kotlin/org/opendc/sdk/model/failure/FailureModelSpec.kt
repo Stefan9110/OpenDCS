@@ -25,6 +25,8 @@ package org.opendc.sdk.model.failure
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.opendc.sdk.model.resource.ResourceReference
+import org.opendc.sdk.model.resource.ResourceRole
+import org.opendc.sdk.model.resource.ResourceUse
 import org.opendc.sdk.model.validation.Validatable
 import org.opendc.sdk.model.validation.ValidationIssue
 import org.opendc.sdk.model.validation.prefixed
@@ -34,6 +36,16 @@ import org.opendc.sdk.model.validation.prefixed
 public sealed interface FailureModelSpec : Validatable {
     override fun validate(): List<ValidationIssue> = emptyList()
 }
+
+/** This model with the trace it replays, if any, replaced by what [transform] makes of it. */
+internal fun FailureModelSpec.mapReferences(
+    path: String,
+    transform: (ResourceUse) -> ResourceReference,
+): FailureModelSpec =
+    when (this) {
+        is TraceBasedFailureSpec -> copy(source = transform(ResourceUse(ResourceRole.FAILURE, "$path.source", source)))
+        is NoFailureSpec, is PrefabFailureSpec, is CustomFailureSpec -> this
+    }
 
 /** No failures are injected. */
 @Serializable

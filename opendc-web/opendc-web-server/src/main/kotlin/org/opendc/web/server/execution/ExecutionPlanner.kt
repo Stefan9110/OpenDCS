@@ -25,7 +25,6 @@ package org.opendc.web.server.execution
 import jakarta.enterprise.context.ApplicationScoped
 import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.experiment.expand
-import org.opendc.sdk.model.failure.TraceBasedFailureSpec
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.resource.ResourceReference
 import org.opendc.sdk.model.resource.UriReference
@@ -139,27 +138,7 @@ class ExecutionPlanner(
         codec.decodeExperiment(codec.parseStored(experiment.spec)).expand().associateBy { it.id }
 
     /** The same scenario with every reference in it pointing at where its bytes are. */
-    private fun located(scenario: ScenarioSpec): ScenarioSpec {
-        val workload = scenario.workload
-        val failure = scenario.failureModel
-        return scenario.copy(
-            workload =
-                when (workload) {
-                    is TraceWorkloadSpec -> workload.copy(source = located(workload.source))
-                    is EfficientTraceWorkloadSpec -> workload.copy(source = located(workload.source))
-                    is InlineWorkloadSpec -> workload
-                },
-            failureModel = if (failure is TraceBasedFailureSpec) failure.copy(source = located(failure.source)) else failure,
-            topology =
-                scenario.topology.copy(
-                    datacenters =
-                        scenario.topology.datacenters?.map { dataCenter ->
-                            val carbon = dataCenter.powerSource.carbon ?: return@map dataCenter
-                            dataCenter.copy(powerSource = dataCenter.powerSource.copy(carbon = located(carbon)))
-                        },
-                ),
-        )
-    }
+    private fun located(scenario: ScenarioSpec): ScenarioSpec = scenario.mapReferences { located(it.reference) }
 
     /**
      * A name the deployment knows becomes the location of its bytes; anything else is left alone.
