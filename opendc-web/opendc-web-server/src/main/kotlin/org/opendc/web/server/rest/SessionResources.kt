@@ -30,9 +30,9 @@ import jakarta.ws.rs.core.MediaType
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.opendc.web.server.auth.Identity
 import org.opendc.web.server.model.PlanTier
 import org.opendc.web.server.model.ProjectMember
-import org.opendc.web.server.service.Identity
 
 /** The current user's identity, account shape and billing. */
 @Path("me")
@@ -50,7 +50,7 @@ class MeResource(private val identity: Identity) {
             plan = user.planTier.toWire(),
             isAdmin = user.isAdmin,
             projectCount = ProjectMember.count("user.id = ?1", user.id).toInt(),
-            // Developer mode meters nothing, so the account is charged against no window at all.
+            // Anonymous mode meters nothing, so the account is charged against no window at all.
             // Reporting an uncapped one instead would draw a bar that can never move and a reset
             // time that never arrives, which says less than saying nothing.
             budgets = emptyList(),
@@ -92,7 +92,7 @@ enum class WireBudgetPeriod {
 
 /**
  * How much simulation an accounting window allows. Unlimited is a deliberate grant, held by
- * developer mode and by accounts raised by hand, rather than the absence of a limit, so it is its
+ * anonymous mode and by accounts raised by hand, rather than the absence of a limit, so it is its
  * own variant instead of a missing number.
  */
 @Serializable

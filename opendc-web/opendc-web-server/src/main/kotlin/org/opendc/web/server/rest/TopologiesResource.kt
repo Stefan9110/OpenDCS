@@ -39,10 +39,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import org.jboss.resteasy.reactive.RestResponse
 import org.opendc.sdk.model.topology.TopologySpec
+import org.opendc.web.server.auth.Identity
 import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.TopologyTemplate
-import org.opendc.web.server.service.Identity
 import org.opendc.web.server.service.SpecCodec
 import java.time.Instant
 import java.util.UUID

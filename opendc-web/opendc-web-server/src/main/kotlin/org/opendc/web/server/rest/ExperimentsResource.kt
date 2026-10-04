@@ -40,6 +40,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import org.opendc.web.dispatcher.ExitReason
+import org.opendc.web.server.auth.Identity
 import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.ExecutionState
 import org.opendc.web.server.model.Project
@@ -49,7 +50,6 @@ import org.opendc.web.server.results.ExperimentResults
 import org.opendc.web.server.results.ResultsReader
 import org.opendc.web.server.results.ScenarioResults
 import org.opendc.web.server.service.CostEstimate
-import org.opendc.web.server.service.Identity
 import org.opendc.web.server.service.SpecCodec
 import org.opendc.web.server.service.SubmissionPipeline
 import org.opendc.web.server.service.SubmissionPreview

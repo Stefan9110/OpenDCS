@@ -44,19 +44,20 @@ class SessionResourcesTest {
     // An account with no email must omit the field rather than send an explicit null: the client
     // reads a present key as a value, and "null" would render as an address.
     @Test
-    fun `me exposes the implicit developer account`() {
+    fun `me exposes the implicit account`() {
         ApiTest.requestJson()
             .get("/api/v1/me")
             .then()
             .statusCode(200)
-            .body("subject", equalTo("developer"))
-            .body("displayName", equalTo("Developer"))
+            .body("subject", equalTo("anonymous"))
+            .body("handle", equalTo("local"))
+            .body("displayName", equalTo("Local user"))
             .body("plan", equalTo("free"))
             .body("isAdmin", equalTo(true))
             .body("$", not(hasKey("email")))
     }
 
-    // Developer mode meters nothing, so there is no window to charge against. Reporting an uncapped
+    // Anonymous mode meters nothing, so there is no window to charge against. Reporting an uncapped
     // one instead would draw a bar that can never move and a reset time that never arrives.
     @Test
     fun `me reports no budget window when nothing is metered`() {

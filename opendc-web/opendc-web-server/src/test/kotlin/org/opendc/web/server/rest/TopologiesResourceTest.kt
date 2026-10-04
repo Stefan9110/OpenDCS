@@ -34,11 +34,11 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.opendc.web.server.ApiTest
+import org.opendc.web.server.auth.Identity
 import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.ProjectRole
 import org.opendc.web.server.model.TopologyTemplate
-import org.opendc.web.server.service.Identity
 import java.time.Instant
 import java.util.UUID
 

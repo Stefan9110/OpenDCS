@@ -62,7 +62,7 @@ class TraceLibraryTest {
         val name = unique("registered")
         val registered = register("workload", name)
 
-        registered.then().statusCode(201).body("trace.slug", equalTo("developer/$name")).body("trace.sizeBytes", equalTo(0))
+        registered.then().statusCode(201).body("trace.slug", equalTo("local/$name")).body("trace.sizeBytes", equalTo(0))
         assertEquals(listOf("tasks", "fragments"), registered.jsonPath().getList<String>("uploads.table"))
     }
 
@@ -109,7 +109,7 @@ class TraceLibraryTest {
         completed
             .then()
             .statusCode(200)
-            .body("slug", equalTo("developer/$name"))
+            .body("slug", equalTo("local/$name"))
             .body("description", equalTo("Dutch grid"))
         assertEquals(ApiTest.fixtureBytes(CARBON).size.toLong(), completed.jsonPath().getLong("sizeBytes"))
         assertTrue(completed.jsonPath().getLong("tables[0].rowCount") > 0, "the footer gives a row count")
@@ -203,7 +203,7 @@ class TraceLibraryTest {
         val name = unique("abandoned")
         register("carbon", name).then().statusCode(201)
 
-        assertFalse(rows().any { it["slug"] == "developer/$name" })
+        assertFalse(rows().any { it["slug"] == "local/$name" })
     }
 
     // Since an unfinished upload is invisible, nothing would ever free the name it holds. Starting
@@ -217,7 +217,7 @@ class TraceLibraryTest {
         put(id, "carbon", CARBON).then().statusCode(204)
         ApiTest.requestJson().post("/api/v1/traces/$id/complete").then().statusCode(200)
 
-        assertEquals(1, rows().count { it["slug"] == "developer/$name" })
+        assertEquals(1, rows().count { it["slug"] == "local/$name" })
     }
 
     @Test
@@ -237,7 +237,7 @@ class TraceLibraryTest {
             .patch("/api/v1/traces/$id")
             .then()
             .statusCode(200)
-            .body("slug", equalTo("developer/$renamed"))
+            .body("slug", equalTo("local/$renamed"))
     }
 
     // The slug is what a submitted document names, so once something references it, correcting it
@@ -246,7 +246,7 @@ class TraceLibraryTest {
     fun `a referenced trace can no longer be renamed or deleted`() {
         val name = unique("referenced")
         val id = completedCarbon(name)
-        reference("developer/$name")
+        reference("local/$name")
 
         ApiTest.requestJson().body("""{"name":"${unique("other")}"}""").patch("/api/v1/traces/$id").then().statusCode(409)
         ApiTest.requestJson().delete("/api/v1/traces/$id").then().statusCode(409)

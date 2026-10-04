@@ -38,6 +38,7 @@ import jakarta.ws.rs.core.Response
 import jakarta.ws.rs.core.StreamingOutput
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.opendc.web.server.auth.Identity
 import org.opendc.web.server.model.ExperimentResource
 import org.opendc.web.server.model.Trace
 import org.opendc.web.server.model.TraceGrant
@@ -45,7 +46,6 @@ import org.opendc.web.server.model.TraceKind
 import org.opendc.web.server.model.TraceOrigin
 import org.opendc.web.server.model.TracePart
 import org.opendc.web.server.model.UserAccount
-import org.opendc.web.server.service.Identity
 import org.opendc.web.server.service.TraceDisposal
 import org.opendc.web.server.service.TraceIngest
 import org.opendc.web.server.storage.ObjectStore

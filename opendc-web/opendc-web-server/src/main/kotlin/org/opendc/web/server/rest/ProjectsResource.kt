@@ -36,10 +36,10 @@ import kotlinx.serialization.Serializable
 import org.jboss.resteasy.reactive.RestPath
 import org.jboss.resteasy.reactive.RestQuery
 import org.jboss.resteasy.reactive.RestResponse
+import org.opendc.web.server.auth.Identity
 import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.ProjectRole
-import org.opendc.web.server.service.Identity
 import java.time.Instant
 
 @Path("projects")
