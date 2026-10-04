@@ -86,7 +86,3 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           file: opendc-web/opendc-web-server/Dockerfile
-      - name: Build Runner
-        uses: docker/build-push-action@v7
-        with:
-          file: opendc-web/opendc-web-runner/Dockerfile

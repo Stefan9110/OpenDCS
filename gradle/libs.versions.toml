@@ -5,22 +5,17 @@ clikt5 = "5.0.3"
 commons-math3 = "3.6.1"
 dokka = "2.2.0"
 hadoop = "3.3.6"
-hypersistence-utils = "3.15.2"
 jackson = "2.16.1"
 jandex-gradle = "1.1.0"
 java = "21"
 jline = "3.25.1"
 jmh-gradle = "0.7.1"
-jakarta = "3.0.2"
-jakarta-ws-rs = "3.1.0"
 junit-jupiter = "5.10.2"
 kotlin = "2.3.20"
 kotlin-logging = "3.0.5"
 kotlinx-coroutines = "1.8.0"
 kotlinx-serialization = "1.6.0"
 log4j = "2.25.3"
-microprofile-rest-client = "3.0.1"
-microprofile-openapi = "3.1.1"
 microprofile-config = "3.1"
 mockk = "1.13.9"
 mordant = "3.0.2"
@@ -32,7 +27,6 @@ parquet = "1.13.1"
 progressbar = "0.10.0"
 quarkus = "3.33.1"
 quarkus-quinoa = "2.8.1"
-sentry = "7.4.0"
 slf4j = "2.0.9"
 spotless = "6.25.0"
 
@@ -50,7 +44,6 @@ slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 log4j-core = { module = "org.apache.logging.log4j:log4j-core", version.ref = "log4j" }
 log4j-slf4j = { module = "org.apache.logging.log4j:log4j-slf4j2-impl", version.ref = "log4j" }
-sentry-log4j2 = { module = "io.sentry:sentry-log4j2", version.ref = "sentry" }
 
 # Testing
 junit-jupiter-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit-jupiter" }
@@ -67,30 +60,18 @@ progressbar = { module = "me.tongfei:progressbar", version.ref = "progressbar" }
 
 # Format
 jackson-core = { module = "com.fasterxml.jackson.core:jackson-core", version.ref = "jackson" }
-jackson-annotations = { module = "com.fasterxml.jackson.core:jackson-annotations", version.ref = "jackson" }
 jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
 jackson-module-kotlin = { module = "com.fasterxml.jackson.module:jackson-module-kotlin", version.ref = "jackson" }
-jackson-datatype-jsr310 = { module = "com.fasterxml.jackson.datatype:jackson-datatype-jsr310", version.ref = "jackson" }
 jackson-dataformat-csv = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-csv", version.ref = "jackson" }
 parquet = { module = "org.apache.parquet:parquet-hadoop", version.ref = "parquet" }
 
 # Quarkus
 quarkus-gradle-application = { module = "io.quarkus:gradle-application-plugin", version.ref = "quarkus" }
-quarkus-gradle-extension = { module = "io.quarkus.extension:gradle-extension-plugin", version.ref = "quarkus" }
 quarkus-bom = { module = "io.quarkus:quarkus-bom", version.ref = "quarkus" }
 quarkus-kotlin = { module = "io.quarkus:quarkus-kotlin" }
-quarkus-core-runtime = { module = "io.quarkus:quarkus-core", version.ref = "quarkus" }
-quarkus-core-deployment = { module = "io.quarkus:quarkus-core-deployment" }
-quarkus-vertx-http-runtime = { module = "io.quarkus:quarkus-vertx-http" }
-quarkus-vertx-http-deployment = { module = "io.quarkus:quarkus-vertx-http-deployment" }
-quarkus-arc-runtime = { module = "io.quarkus:quarkus-arc" }
-quarkus-arc-deployment = { module = "io.quarkus:quarkus-arc-deployment" }
-quarkus-resteasy-core = { module = "io.quarkus:quarkus-resteasy" }
-quarkus-resteasy-jackson = { module = "io.quarkus:quarkus-resteasy-jackson" }
 quarkus-smallrye-openapi = { module = "io.quarkus:quarkus-smallrye-openapi" }
 quarkus-security = { module = "io.quarkus:quarkus-security" }
 quarkus-oidc = { module = "io.quarkus:quarkus-oidc" }
-quarkus-hibernate-orm-core = { module = "io.quarkus:quarkus-hibernate-orm" }
 quarkus-hibernate-orm-panache = { module = "io.quarkus:quarkus-hibernate-orm-panache" }
 quarkus-hibernate-validator = { module = "io.quarkus:quarkus-hibernate-validator" }
 quarkus-jdbc-h2 = { module = "io.quarkus:quarkus-jdbc-h2" }
@@ -101,14 +82,11 @@ quarkus-redis-client = { module = "io.quarkus:quarkus-redis-client" }
 quarkus-rest = { module = "io.quarkus:quarkus-rest" }
 quarkus-rest-kotlin-serialization = { module = "io.quarkus:quarkus-rest-kotlin-serialization" }
 quarkus-hibernate-orm-panache-kotlin = { module = "io.quarkus:quarkus-hibernate-orm-panache-kotlin" }
-hypersistence-utils-hibernate = { module = "io.hypersistence:hypersistence-utils-hibernate-71", version.ref = "hypersistence-utils" }
 quarkus-quinoa-runtime = { module = "io.quarkiverse.quinoa:quarkus-quinoa", version.ref = "quarkus-quinoa" }
-quarkus-quinoa-deployment = { module = "io.quarkiverse.quinoa:quarkus-quinoa-deployment", version.ref = "quarkus-quinoa" }
 
 # Quarkus (Testing)
 quarkus-junit5-core = { module = "io.quarkus:quarkus-junit" }
 quarkus-jacoco = { module = "io.quarkus:quarkus-jacoco" }
-quarkus-panache-mock = { module = "io.quarkus:quarkus-panache-mock" }
 quarkus-test-security = { module = "io.quarkus:quarkus-test-security" }
 restassured-core = { module = "io.rest-assured:rest-assured" }
 
@@ -124,13 +102,9 @@ calcite-core = { module = "org.apache.calcite:calcite-core", version.ref = "calc
 jline = { module = "org.jline:jline", version.ref = "jline" }
 
 # Other
-jakarta-validation = { module = "jakarta.validation:jakarta.validation-api", version.ref = "jakarta" }
-jakarta-ws-rs-api = { module = "jakarta.ws.rs:jakarta.ws.rs-api", version.ref = "jakarta-ws-rs" }
 hadoop-common = { module = "org.apache.hadoop:hadoop-common", version.ref = "hadoop" }
 hadoop-mapreduce-client-core = { module = "org.apache.hadoop:hadoop-mapreduce-client-core", version.ref = "hadoop" }
 commons-math3 = { module = "org.apache.commons:commons-math3", version.ref = "commons-math3" }
-microprofile-rest-client-api = { module = "org.eclipse.microprofile.rest.client:microprofile-rest-client-api", version.ref = "microprofile-rest-client" }
-microprofile-openapi-api = { module = "org.eclipse.microprofile.openapi:microprofile-openapi-api", version.ref = "microprofile-openapi" }
 microprofile-config = { module = "org.eclipse.microprofile.config:microprofile-config-api", version.ref = "microprofile-config" }
 
 # Other (Build)
