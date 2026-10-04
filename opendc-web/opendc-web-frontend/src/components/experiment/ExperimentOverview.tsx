@@ -9,11 +9,13 @@ import { QueryState } from "@/components/util/QueryState"
 import { notifyProblem } from "@/components/util/feedback"
 import { useExperimentStatus, useRetryScenario } from "@/lib/api/experiments"
 import type { Experiment } from "@/lib/api/types"
+import { usePermission } from "@/lib/project/permissions"
 import { Grid, Stack } from "@mantine/core"
 
 export function ExperimentOverview({ experiment }: { experiment: Experiment }) {
     const status = useExperimentStatus(experiment.id)
     const retry = useRetryScenario(experiment.id)
+    const canEdit = usePermission(experiment.projectId, "edit")
     const isDraft = experiment.state === "draft"
 
     return (
@@ -27,7 +29,7 @@ export function ExperimentOverview({ experiment }: { experiment: Experiment }) {
                                 spec={experiment.spec}
                                 statuses={loaded.scenarios}
                                 onRetry={
-                                    isDraft
+                                    isDraft || !canEdit
                                         ? undefined
                                         : (scenarioIndex) => retry.mutate(scenarioIndex, { onError: notifyProblem })
                                 }

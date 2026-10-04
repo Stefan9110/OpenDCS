@@ -23,11 +23,12 @@ import { EntityBreadcrumbs } from "@/components/util/EntityBreadcrumbs"
 import { openNamePrompt } from "@/components/util/NamePrompt"
 import { useProject } from "@/lib/api/projects"
 import type { Id, TopologyTemplate } from "@/lib/api/types"
+import { usePermission } from "@/lib/project/permissions"
 import { dataCenterHeadroom, isOverBudget } from "@/lib/topology/capacity"
 import { placeCluster } from "@/lib/topology/edits"
 import { dataCenterName } from "@/lib/topology/spec"
 import { brokenClusters, brokenDataCenters } from "@/lib/topology/validation"
-import { ActionIcon, Box, Skeleton, Stack } from "@mantine/core"
+import { ActionIcon, Box, Fieldset, Skeleton, Stack } from "@mantine/core"
 import { useDisclosure, useHotkeys, useMediaQuery } from "@mantine/hooks"
 import { IconPencil } from "@tabler/icons-react"
 import dynamic from "next/dynamic"
@@ -41,7 +42,9 @@ const FloorStage = dynamic(() => import("@/components/topology/canvas/FloorStage
 })
 
 export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
-    const editor = useTopologyEditor(template)
+    // A viewer sees the same builder with nothing that would change the topology.
+    const editable = usePermission(template.projectId, "edit")
+    const editor = useTopologyEditor(template, editable)
     const [zoom, setZoom] = useState<ZoomCommand>({ action: "fit", nonce: 0 })
     const inspector = useResizableWidth(360, 300, 720)
     const compact = useMediaQuery("(max-width: 75em)", false, { getInitialValueInEffect: true })
@@ -58,9 +61,9 @@ export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
         ["mod+z", editor.undo],
         ["mod+shift+Z", editor.redo],
         ["mod+s", editor.saveNow],
-        ["mod+d", actions.duplicateSelected],
-        ["Delete", actions.deleteSelected],
-        ["Backspace", actions.deleteSelected],
+        ["mod+d", () => editable && actions.duplicateSelected()],
+        ["Delete", () => editable && actions.deleteSelected()],
+        ["Backspace", () => editable && actions.deleteSelected()],
         ["Escape", () => editor.select(WHOLE_TOPOLOGY)],
     ])
 
@@ -69,15 +72,18 @@ export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
             <TopologyBreadcrumbs
                 projectId={template.projectId}
                 name={editor.name}
-                onRename={() =>
-                    openNamePrompt({
-                        title: "Rename topology",
-                        label: "Topology name",
-                        initial: editor.name,
-                        confirmLabel: "Rename",
-                        onSubmit: editor.rename,
-                    })
-                }
+                {...(editable
+                    ? {
+                          onRename: () =>
+                              openNamePrompt({
+                                  title: "Rename topology",
+                                  label: "Topology name",
+                                  initial: editor.name,
+                                  confirmLabel: "Rename",
+                                  onSubmit: editor.rename,
+                              }),
+                      }
+                    : {})}
             />
             <BuilderPanes
                 compact={compact}
@@ -113,7 +119,7 @@ export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
                             broken={brokenDataCenters(issues, dataCenters.length)}
                             active={shown}
                             onSelect={(index) => editor.select(selectDataCenter(index))}
-                            onAdd={actions.addDataCenter}
+                            {...(editable ? { onAdd: actions.addDataCenter } : {})}
                         />
                         <Box flex={1} mih={0}>
                             {dataCenter && floor && (
@@ -126,7 +132,7 @@ export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
                                     selected={selectedClusters(selection, shown)}
                                     broken={brokenClusters(issues, shown, dataCenter.clusters.length)}
                                     zoom={zoom}
-                                    onCreate={actions.createAt}
+                                    onCreate={(cell) => editable && actions.createAt(cell)}
                                     onSelect={(cluster, additive) => {
                                         const at = { dataCenter: shown, cluster }
                                         editor.select(additive ? extendToCluster(selection, at) : selectCluster(at))
@@ -147,16 +153,18 @@ export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
                     </>
                 }
                 inspector={
-                    <TopologyInspector
-                        plan={plan}
-                        selection={selection}
-                        issues={issues}
-                        apply={editor.apply}
-                        onSelectHost={(at) => editor.select(toggleHost(selection, at))}
-                        onMoveClusters={actions.moveClusters}
-                        onDuplicateDataCenter={actions.duplicateDataCenter}
-                        onRemoveDataCenter={actions.removeDataCenter}
-                    />
+                    <Fieldset variant="unstyled" disabled={!editable} h="100%">
+                        <TopologyInspector
+                            plan={plan}
+                            selection={selection}
+                            issues={issues}
+                            apply={editor.apply}
+                            onSelectHost={(at) => editor.select(toggleHost(selection, at))}
+                            onMoveClusters={actions.moveClusters}
+                            onDuplicateDataCenter={actions.duplicateDataCenter}
+                            onRemoveDataCenter={actions.removeDataCenter}
+                        />
+                    </Fieldset>
                 }
             />
         </Stack>
@@ -170,7 +178,7 @@ function TopologyBreadcrumbs({
 }: {
     projectId: Id
     name: string
-    onRename: () => void
+    onRename?: () => void
 }) {
     const project = useProject(projectId)
 
@@ -182,9 +190,11 @@ function TopologyBreadcrumbs({
                 { kind: "topology", label: name },
             ]}
             trailing={
-                <ActionIcon variant="subtle" color="gray" size="sm" aria-label="Rename topology" onClick={onRename}>
-                    <IconPencil size={14} />
-                </ActionIcon>
+                onRename && (
+                    <ActionIcon variant="subtle" color="gray" size="sm" aria-label="Rename topology" onClick={onRename}>
+                        <IconPencil size={14} />
+                    </ActionIcon>
+                )
             }
         />
     )

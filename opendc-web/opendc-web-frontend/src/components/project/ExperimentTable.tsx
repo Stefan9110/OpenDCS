@@ -6,6 +6,7 @@ import { notifyProblem } from "@/components/util/feedback"
 import { useCloneExperiment, useDeleteExperiment } from "@/lib/api/experiments"
 import type { ExperimentSummary, Id } from "@/lib/api/types"
 import { progressFraction } from "@/lib/experiment/status"
+import { usePermission } from "@/lib/project/permissions"
 import { ActionIcon, Anchor, Group, Menu, Progress, Table, Text } from "@mantine/core"
 import { modals } from "@mantine/modals"
 import { IconCopy, IconDots, IconTrash } from "@tabler/icons-react"
@@ -96,6 +97,7 @@ function ExperimentRow({ projectId, experiment }: { projectId: Id; experiment: E
 function ExperimentRowActions({ projectId, experiment }: { projectId: Id; experiment: ExperimentSummary }) {
     const clone = useCloneExperiment(experiment.id)
     const remove = useDeleteExperiment(projectId)
+    const canEdit = usePermission(projectId, "edit")
 
     const confirmDelete = () =>
         modals.openConfirmModal({
@@ -105,6 +107,9 @@ function ExperimentRowActions({ projectId, experiment }: { projectId: Id; experi
             confirmProps: { color: "red" },
             onConfirm: () => remove.mutate(experiment.id, { onError: notifyProblem }),
         })
+
+    // Cloning and deleting both change the project, which a viewer may not.
+    if (!canEdit) return null
 
     return (
         <Group justify="flex-end">

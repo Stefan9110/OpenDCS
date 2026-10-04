@@ -14,6 +14,7 @@ import { useExperiments } from "@/lib/api/experiments"
 import { useProject, useRenameProject } from "@/lib/api/projects"
 import { useTopologies } from "@/lib/api/topologies"
 import type { Id } from "@/lib/api/types"
+import { allows } from "@/lib/project/permissions"
 import { ActionIcon, Badge, Container, Group, Stack } from "@mantine/core"
 import { IconPencil } from "@tabler/icons-react"
 import { useSearchParams } from "next/navigation"
@@ -65,7 +66,7 @@ function LoadedProject({ projectId }: { projectId: Id }) {
                                     <Badge variant="light" color="opendc" tt="capitalize" size="sm">
                                         {loaded.role}
                                     </Badge>
-                                    {loaded.role === "owner" && (
+                                    {allows(loaded.role, "edit") && (
                                         <ActionIcon
                                             variant="subtle"
                                             color="gray"

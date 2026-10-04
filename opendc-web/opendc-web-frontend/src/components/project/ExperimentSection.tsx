@@ -6,6 +6,7 @@ import { notifyProblem } from "@/components/util/feedback"
 import { useCreateExperiment } from "@/lib/api/experiments"
 import type { ExperimentSummary, Id, TopologyTemplate } from "@/lib/api/types"
 import type { ExperimentSpec } from "@/lib/experiment/spec"
+import { usePermission } from "@/lib/project/permissions"
 import { Button, Group, Paper, Stack, Title, Tooltip } from "@mantine/core"
 import { IconPlus } from "@tabler/icons-react"
 import { useRouter } from "next/navigation"
@@ -20,6 +21,7 @@ export function ExperimentSection({
     templates: TopologyTemplate[]
 }) {
     const create = useCreateExperiment(projectId)
+    const canEdit = usePermission(projectId, "edit")
     const router = useRouter()
     const first = templates[0]
 
@@ -49,16 +51,18 @@ export function ExperimentSection({
             <Stack gap="sm">
                 <Group justify="space-between">
                     <Title order={4}>Experiments</Title>
-                    <Tooltip label="Create a topology first" disabled={first !== undefined}>
-                        <Button
-                            leftSection={<IconPlus size={16} />}
-                            onClick={promptCreate}
-                            disabled={first === undefined}
-                            loading={create.isPending}
-                        >
-                            New experiment
-                        </Button>
-                    </Tooltip>
+                    {canEdit && (
+                        <Tooltip label="Create a topology first" disabled={first !== undefined}>
+                            <Button
+                                leftSection={<IconPlus size={16} />}
+                                onClick={promptCreate}
+                                disabled={first === undefined}
+                                loading={create.isPending}
+                            >
+                                New experiment
+                            </Button>
+                        </Tooltip>
+                    )}
                 </Group>
                 <ExperimentTable projectId={projectId} experiments={experiments} />
             </Stack>

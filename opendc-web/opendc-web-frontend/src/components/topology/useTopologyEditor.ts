@@ -39,7 +39,8 @@ export interface TopologyEditor {
     saveNow: () => void
 }
 
-export function useTopologyEditor(template: TopologyTemplate): TopologyEditor {
+/** The editor's state. One that is not [editable], a viewer's, ignores every edit and saves nothing. */
+export function useTopologyEditor(template: TopologyTemplate, editable: boolean): TopologyEditor {
     const save = useSaveTopology(template.projectId)
     const [history, setHistory] = useState<History<TopologyPlan>>(() =>
         initialHistory({ topology: template.topology, layout: floorPlanOf(template.layout, template.topology) }),
@@ -69,9 +70,12 @@ export function useTopologyEditor(template: TopologyTemplate): TopologyEditor {
 
     const select = useCallback((selection: Selection) => setView((current) => focus(current, selection)), [])
 
-    const apply = useCallback((change: (plan: TopologyPlan) => TopologyPlan) => {
-        setHistory((current) => record(current, change(current.present)))
-    }, [])
+    const apply = useCallback(
+        (change: (plan: TopologyPlan) => TopologyPlan) => {
+            if (editable) setHistory((current) => record(current, change(current.present)))
+        },
+        [editable],
+    )
 
     const step = (move: (history: History<TopologyPlan>) => History<TopologyPlan>) => {
         const next = move(history)
@@ -89,7 +93,7 @@ export function useTopologyEditor(template: TopologyTemplate): TopologyEditor {
         canRedo: canRedoHistory(history),
         select,
         show: setView,
-        rename: setName,
+        rename: (next) => editable && setName(next),
         apply,
         undo: () => step(undoHistory),
         redo: () => step(redoHistory),

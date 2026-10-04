@@ -15,7 +15,7 @@ export function DataCenterTabs({
     broken: number[]
     active: number
     onSelect: (dataCenter: number) => void
-    onAdd: () => void
+    onAdd?: () => void
 }) {
     return (
         <Group gap={4} px="sm" wrap="nowrap">
@@ -44,11 +44,13 @@ export function DataCenterTabs({
                     ))}
                 </Tabs.List>
             </Tabs>
-            <Tooltip label="Add a data center">
-                <ActionIcon variant="subtle" color="gray" aria-label="Add a data center" onClick={onAdd}>
-                    <IconPlus size={16} />
-                </ActionIcon>
-            </Tooltip>
+            {onAdd && (
+                <Tooltip label="Add a data center">
+                    <ActionIcon variant="subtle" color="gray" aria-label="Add a data center" onClick={onAdd}>
+                        <IconPlus size={16} />
+                    </ActionIcon>
+                </Tooltip>
+            )}
         </Group>
     )
 }

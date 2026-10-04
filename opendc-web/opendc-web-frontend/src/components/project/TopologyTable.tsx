@@ -4,6 +4,7 @@ import { formatCount, formatMemory, formatPower, formatUpdatedAt } from "@/compo
 import { notifyProblem } from "@/components/util/feedback"
 import { useCreateTopology, useDeleteTopology } from "@/lib/api/topologies"
 import type { Id, TopologyTemplate } from "@/lib/api/types"
+import { usePermission } from "@/lib/project/permissions"
 import { topologyCapacity } from "@/lib/topology/capacity"
 import { ActionIcon, Anchor, Group, Menu, Table, Text } from "@mantine/core"
 import { modals } from "@mantine/modals"
@@ -75,6 +76,7 @@ function TopologyRow({ projectId, template }: { projectId: Id; template: Topolog
 function TopologyRowActions({ projectId, template }: { projectId: Id; template: TopologyTemplate }) {
     const duplicate = useCreateTopology(projectId)
     const remove = useDeleteTopology(projectId)
+    const canEdit = usePermission(projectId, "edit")
 
     const confirmDelete = () =>
         modals.openConfirmModal({
@@ -98,23 +100,27 @@ function TopologyRowActions({ projectId, template }: { projectId: Id; template: 
                     </ActionIcon>
                 </Menu.Target>
                 <Menu.Dropdown>
-                    <Menu.Item
-                        leftSection={<IconCopy size={16} />}
-                        onClick={() =>
-                            duplicate.mutate(
-                                { name: `${template.name} (copy)`, topology: template.topology },
-                                { onError: notifyProblem },
-                            )
-                        }
-                    >
-                        Duplicate
-                    </Menu.Item>
+                    {canEdit && (
+                        <Menu.Item
+                            leftSection={<IconCopy size={16} />}
+                            onClick={() =>
+                                duplicate.mutate(
+                                    { name: `${template.name} (copy)`, topology: template.topology },
+                                    { onError: notifyProblem },
+                                )
+                            }
+                        >
+                            Duplicate
+                        </Menu.Item>
+                    )}
                     <Menu.Item leftSection={<IconDownload size={16} />} onClick={() => downloadTopology(template)}>
                         Download JSON
                     </Menu.Item>
-                    <Menu.Item color="red" leftSection={<IconTrash size={16} />} onClick={confirmDelete}>
-                        Delete
-                    </Menu.Item>
+                    {canEdit && (
+                        <Menu.Item color="red" leftSection={<IconTrash size={16} />} onClick={confirmDelete}>
+                            Delete
+                        </Menu.Item>
+                    )}
                 </Menu.Dropdown>
             </Menu>
         </Group>

@@ -13,6 +13,7 @@ import {
 } from "@/lib/api/experiments"
 import type { Experiment } from "@/lib/api/types"
 import { isTerminalExperiment } from "@/lib/experiment/status"
+import { usePermission } from "@/lib/project/permissions"
 import { ActionIcon, Button, Group, Menu, Stack, Text } from "@mantine/core"
 import { modals } from "@mantine/modals"
 import {
@@ -32,6 +33,7 @@ export function ExperimentActions({ experiment }: { experiment: Experiment }) {
     const clone = useCloneExperiment(experiment.id)
     const rename = useSaveExperimentDraft(experiment.id)
     const remove = useDeleteExperiment(experiment.projectId)
+    const canEdit = usePermission(experiment.projectId, "edit")
     const router = useRouter()
 
     const isDraft = experiment.state === "draft"
@@ -89,6 +91,9 @@ export function ExperimentActions({ experiment }: { experiment: Experiment }) {
             confirmLabel: "Rename",
             onSubmit: (name) => rename.mutate({ name, spec: experiment.spec }, { onError: notifyProblem }),
         })
+
+    // Every action here changes the project, which a viewer may not.
+    if (!canEdit) return null
 
     return (
         <Group gap="xs" wrap="nowrap">

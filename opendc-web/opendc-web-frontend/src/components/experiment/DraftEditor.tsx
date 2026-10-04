@@ -23,7 +23,8 @@ import {
     failureModelAxis,
     scenarioCount,
 } from "@/lib/experiment/spec"
-import { Accordion, Divider, Group, NumberInput, Paper, Stack, Text } from "@mantine/core"
+import { usePermission } from "@/lib/project/permissions"
+import { Accordion, Divider, Fieldset, Group, NumberInput, Paper, Stack, Text } from "@mantine/core"
 import { useDebouncedCallback } from "@mantine/hooks"
 import { useState } from "react"
 
@@ -36,6 +37,7 @@ export function DraftEditor({ experiment }: { experiment: Experiment }) {
     const traces = useTraceOptions("workload")
     const schedulers = useCatalog("schedulers")
     const prefabs = useCatalog("failure-prefabs")
+    const canEdit = usePermission(experiment.projectId, "edit")
 
     const persist = useDebouncedCallback(
         (next: ExperimentSpec) => save.mutate({ name: experiment.name, spec: next }, { onError: notifyProblem }),
@@ -55,100 +57,107 @@ export function DraftEditor({ experiment }: { experiment: Experiment }) {
     const allocation = bindSchedulers(allocationPolicyAxis(spec), schedulers.data ?? [])
     const failures = bindFailureModels(failureModelAxis(spec), prefabs.data ?? [])
 
+    // A viewer reads the draft with every control disabled, rather than through a second layout.
     return (
         <Paper withBorder radius="md" p="md">
-            <Stack gap="md">
-                <AxisSelect
-                    label={AXIS_LABELS.topologies}
-                    help={AXIS_HELP.topologies}
-                    choices={topologies.choices}
-                    value={topologies.selected}
-                    onChange={(values) => edit((current) => ({ ...current, topologies: topologies.rebuild(values) }))}
-                />
-                <AxisSelect
-                    label={AXIS_LABELS.workloads}
-                    help={AXIS_HELP.workloads}
-                    choices={workloads.choices}
-                    value={workloads.selected}
-                    onChange={(values) => edit((current) => ({ ...current, workloads: workloads.rebuild(values) }))}
-                />
-                <AxisSelect
-                    label={AXIS_LABELS.allocationPolicies}
-                    help={AXIS_HELP.allocationPolicies}
-                    choices={allocation.choices}
-                    value={allocation.selected}
-                    onChange={(values) =>
-                        edit((current) => ({ ...current, allocationPolicies: allocation.rebuild(values) }))
-                    }
-                />
-                <AxisSelect
-                    label={AXIS_LABELS.failureModels}
-                    help={AXIS_HELP.failureModels}
-                    choices={failures.choices}
-                    value={failures.selected}
-                    onChange={(values) => edit((current) => ({ ...current, failureModels: failures.rebuild(values) }))}
-                />
+            <Fieldset variant="unstyled" disabled={!canEdit}>
+                <Stack gap="md">
+                    <AxisSelect
+                        label={AXIS_LABELS.topologies}
+                        help={AXIS_HELP.topologies}
+                        choices={topologies.choices}
+                        value={topologies.selected}
+                        onChange={(values) =>
+                            edit((current) => ({ ...current, topologies: topologies.rebuild(values) }))
+                        }
+                    />
+                    <AxisSelect
+                        label={AXIS_LABELS.workloads}
+                        help={AXIS_HELP.workloads}
+                        choices={workloads.choices}
+                        value={workloads.selected}
+                        onChange={(values) => edit((current) => ({ ...current, workloads: workloads.rebuild(values) }))}
+                    />
+                    <AxisSelect
+                        label={AXIS_LABELS.allocationPolicies}
+                        help={AXIS_HELP.allocationPolicies}
+                        choices={allocation.choices}
+                        value={allocation.selected}
+                        onChange={(values) =>
+                            edit((current) => ({ ...current, allocationPolicies: allocation.rebuild(values) }))
+                        }
+                    />
+                    <AxisSelect
+                        label={AXIS_LABELS.failureModels}
+                        help={AXIS_HELP.failureModels}
+                        choices={failures.choices}
+                        value={failures.selected}
+                        onChange={(values) =>
+                            edit((current) => ({ ...current, failureModels: failures.rebuild(values) }))
+                        }
+                    />
 
-                <FailureBudgetAxis
-                    entries={axes.maxNumFailures}
-                    // An axis left empty expands to no scenarios at all, so an empty field drops the
-                    // key instead and the model's own default stands.
-                    onChange={(next) =>
-                        edit((current) => ({ ...current, maxNumFailures: next.length === 0 ? undefined : next }))
-                    }
-                />
+                    <FailureBudgetAxis
+                        entries={axes.maxNumFailures}
+                        // An axis left empty expands to no scenarios at all, so an empty field drops the
+                        // key instead and the model's own default stands.
+                        onChange={(next) =>
+                            edit((current) => ({ ...current, maxNumFailures: next.length === 0 ? undefined : next }))
+                        }
+                    />
 
-                <ExportAxis
-                    entries={axes.exportModels}
-                    onChange={(next) =>
-                        edit((current) => ({ ...current, exportModels: next.length === 0 ? undefined : next }))
-                    }
-                />
+                    <ExportAxis
+                        entries={axes.exportModels}
+                        onChange={(next) =>
+                            edit((current) => ({ ...current, exportModels: next.length === 0 ? undefined : next }))
+                        }
+                    />
 
-                <NumberInput
-                    label={<FieldLabel label={RUNS_LABEL} help={RUNS_HELP} />}
-                    min={1}
-                    max={32}
-                    value={experimentRuns(spec)}
-                    onChange={(value) =>
-                        edit((current) => ({ ...current, runs: typeof value === "number" ? value : DEFAULT_RUNS }))
-                    }
-                />
+                    <NumberInput
+                        label={<FieldLabel label={RUNS_LABEL} help={RUNS_HELP} />}
+                        min={1}
+                        max={32}
+                        value={experimentRuns(spec)}
+                        onChange={(value) =>
+                            edit((current) => ({ ...current, runs: typeof value === "number" ? value : DEFAULT_RUNS }))
+                        }
+                    />
 
-                {/* The only setting here with more than one field to it, so the only one worth
+                    {/* The only setting here with more than one field to it, so the only one worth
                     folding away. Its control carries what the axis holds, to keep that readable
                     while it is shut. */}
-                <Accordion variant="contained" chevronPosition="left">
-                    <Accordion.Item value="checkpointModels">
-                        <Accordion.Control>
-                            <Group justify="space-between" wrap="nowrap" gap="sm">
-                                <Text size="sm">{AXIS_LABELS.checkpointModels}</Text>
-                                <Text size="xs" c="dimmed" lineClamp={1}>
-                                    {axisEntryLabels(axes, "checkpointModels").join(", ")}
-                                </Text>
-                            </Group>
-                        </Accordion.Control>
-                        <Accordion.Panel>
-                            <CheckpointAxis
-                                entries={axes.checkpointModels}
-                                onChange={(next) => edit((current) => ({ ...current, checkpointModels: next }))}
-                            />
-                        </Accordion.Panel>
-                    </Accordion.Item>
-                </Accordion>
+                    <Accordion variant="contained" chevronPosition="left">
+                        <Accordion.Item value="checkpointModels">
+                            <Accordion.Control>
+                                <Group justify="space-between" wrap="nowrap" gap="sm">
+                                    <Text size="sm">{AXIS_LABELS.checkpointModels}</Text>
+                                    <Text size="xs" c="dimmed" lineClamp={1}>
+                                        {axisEntryLabels(axes, "checkpointModels").join(", ")}
+                                    </Text>
+                                </Group>
+                            </Accordion.Control>
+                            <Accordion.Panel>
+                                <CheckpointAxis
+                                    entries={axes.checkpointModels}
+                                    onChange={(next) => edit((current) => ({ ...current, checkpointModels: next }))}
+                                />
+                            </Accordion.Panel>
+                        </Accordion.Item>
+                    </Accordion>
 
-                <Divider my={4} />
+                    <Divider my={4} />
 
-                <Group justify="space-between" wrap="nowrap" gap="sm">
-                    <Text size="sm" c="dimmed">
-                        {formatCount(scenarioCount(spec))} scenarios, about{" "}
-                        {formatSimulationBudget(experiment.estimate.estimatedBudgetSeconds)}
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                        {save.isPending ? "Saving" : "Saved"}
-                    </Text>
-                </Group>
-            </Stack>
+                    <Group justify="space-between" wrap="nowrap" gap="sm">
+                        <Text size="sm" c="dimmed">
+                            {formatCount(scenarioCount(spec))} scenarios, about{" "}
+                            {formatSimulationBudget(experiment.estimate.estimatedBudgetSeconds)}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                            {save.isPending ? "Saving" : "Saved"}
+                        </Text>
+                    </Group>
+                </Stack>
+            </Fieldset>
         </Paper>
     )
 }
