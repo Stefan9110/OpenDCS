@@ -23,6 +23,7 @@
 package org.opendc.web.launcher
 
 import kotlinx.serialization.json.Json
+import mu.KotlinLogging
 import org.opendc.sdk.model.serialization.SdkJson
 import java.net.URI
 import java.net.http.HttpClient
@@ -82,12 +83,16 @@ class TelemetryPoster(
                     .build()
             val response = client.send(request, HttpResponse.BodyHandlers.discarding())
             if (response.statusCode() !in 200..299) {
-                System.err.println("Telemetry was refused with ${response.statusCode()}")
+                logger.warn { "Telemetry was refused with ${response.statusCode()}" }
             }
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
         } catch (e: Exception) {
-            System.err.println("Telemetry could not be sent: ${e.message}")
+            logger.warn { "Telemetry could not be sent: ${e.message}" }
         }
+    }
+
+    private companion object {
+        val logger = KotlinLogging.logger {}
     }
 }

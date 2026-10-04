@@ -22,6 +22,7 @@
 
 package org.opendc.web.launcher
 
+import mu.KotlinLogging
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.resource.ProvisionedResource
 import org.opendc.sdk.model.resource.ResourceProvisioner
@@ -51,6 +52,8 @@ private const val MANIFEST_URL = "MANIFEST_URL"
 /** What the output tree under the working directory is called. It never leaves this process. */
 private const val RUN = "run"
 
+private val logger = KotlinLogging.logger {}
+
 /** A failure the launcher recognises well enough to give the dispatcher a code for. */
 class LaunchFailure(
     val exitCode: Int,
@@ -66,7 +69,7 @@ private fun launch(): Int {
         run(readManifest(workDir), workDir)
         EXIT_OK
     } catch (e: Exception) {
-        e.printStackTrace()
+        logger.error(e) { "The launch failed" }
         exitCodeOf(e)
     } finally {
         workDir.toFile().deleteRecursively()
