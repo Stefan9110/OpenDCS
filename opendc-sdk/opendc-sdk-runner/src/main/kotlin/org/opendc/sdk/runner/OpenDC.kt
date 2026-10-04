@@ -27,8 +27,8 @@ import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.experiment.expand
 import org.opendc.sdk.model.resource.ResourceProvisioner
 import org.opendc.sdk.runner.executor.runScenario
-import org.opendc.sdk.runner.sink.OutputSink
-import org.opendc.sdk.runner.sink.ParquetSink
+import org.opendc.sdk.runner.telemetry.sink.OutputSink
+import org.opendc.sdk.runner.telemetry.sink.ParquetSink
 import java.nio.file.Path
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutionException
@@ -116,7 +116,13 @@ public class OpenDC private constructor(
         public fun provisioner(provisioner: ResourceProvisioner): Builder = apply { this.provisioner = provisioner }
 
         /** Adds a [ParquetSink] writing per-run parquet files under [root]. */
-        public fun output(root: Path): Builder = apply { sinks += ParquetSink(root) }
+        public fun output(root: Path): Builder =
+            apply {
+                sinks +=
+                    ParquetSink(
+                        root,
+                    )
+            }
 
         /** Adds an output [sink]; sinks compose and all observe every run. */
         public fun sink(sink: OutputSink): Builder = apply { sinks += sink }

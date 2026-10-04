@@ -27,20 +27,13 @@ import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.DynamicTest.dynamicTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestFactory
-import org.opendc.sdk.model.checkpoint.CheckpointSpec
+import org.opendc.sdk.model.checkpoint.CheckpointModelSpec
 import org.opendc.sdk.model.dsl.experiment
 import org.opendc.sdk.model.dsl.filterScheduler
 import org.opendc.sdk.model.dsl.minutes
 import org.opendc.sdk.model.dsl.prefabScheduler
 import org.opendc.sdk.model.dsl.scenario
-import org.opendc.sdk.model.dsl.timeShiftScheduler
 import org.opendc.sdk.model.dsl.traceWorkload
-import org.opendc.sdk.model.export.AllColumns
-import org.opendc.sdk.model.export.ColumnSelection
-import org.opendc.sdk.model.export.ExportColumnsSpec
-import org.opendc.sdk.model.export.ExportSpec
-import org.opendc.sdk.model.export.OnlyColumns
-import org.opendc.sdk.model.export.OutputFileSpec
 import org.opendc.sdk.model.failure.ConstantDistributionSpec
 import org.opendc.sdk.model.failure.CustomFailureSpec
 import org.opendc.sdk.model.failure.DistributionSpec
@@ -73,29 +66,35 @@ import org.opendc.sdk.model.scheduler.PrefabAllocationPolicySpec
 import org.opendc.sdk.model.scheduler.RamFilterSpec
 import org.opendc.sdk.model.scheduler.RamWeigherSpec
 import org.opendc.sdk.model.scheduler.SameHostFilterSpec
-import org.opendc.sdk.model.scheduler.SchedulerNameSpec
+import org.opendc.sdk.model.scheduler.SchedulerPrefabSpec
 import org.opendc.sdk.model.scheduler.TaskStopperSpec
-import org.opendc.sdk.model.scheduler.TimeShiftAllocationPolicySpec
+import org.opendc.sdk.model.scheduler.TimeshiftSpec
 import org.opendc.sdk.model.scheduler.VCpuCapacityFilterSpec
 import org.opendc.sdk.model.scheduler.VCpuCapacityWeigherSpec
 import org.opendc.sdk.model.scheduler.VCpuFilterSpec
 import org.opendc.sdk.model.scheduler.VCpuWeigherSpec
-import org.opendc.sdk.model.topology.BatteryPolicy
-import org.opendc.sdk.model.topology.BestEffort
+import org.opendc.sdk.model.telemetry.AllColumns
+import org.opendc.sdk.model.telemetry.ColumnSelection
+import org.opendc.sdk.model.telemetry.ExportColumnsSpec
+import org.opendc.sdk.model.telemetry.ExportSpec
+import org.opendc.sdk.model.telemetry.OnlyColumns
+import org.opendc.sdk.model.telemetry.OutputFileSpec
+import org.opendc.sdk.model.topology.BatteryPolicySpec
+import org.opendc.sdk.model.topology.BestEffortPolicySpec
 import org.opendc.sdk.model.topology.ConstantVirtualizationOverheadSpec
-import org.opendc.sdk.model.topology.DistributionPolicy
-import org.opendc.sdk.model.topology.DoubleThresholdPolicy
-import org.opendc.sdk.model.topology.EqualShare
-import org.opendc.sdk.model.topology.FirstFit
-import org.opendc.sdk.model.topology.FixedShare
-import org.opendc.sdk.model.topology.MaxMinFairness
+import org.opendc.sdk.model.topology.DistributionPolicySpec
+import org.opendc.sdk.model.topology.DoubleBatteryPolicySpec
+import org.opendc.sdk.model.topology.EqualSharePolicySpec
+import org.opendc.sdk.model.topology.FirstFitPolicySpec
+import org.opendc.sdk.model.topology.FixedSharePolicySpec
+import org.opendc.sdk.model.topology.MaxMinFairnessPolicySpec
 import org.opendc.sdk.model.topology.NoVirtualizationOverheadSpec
-import org.opendc.sdk.model.topology.RunningMeanPlusPolicy
-import org.opendc.sdk.model.topology.RunningMeanPolicy
-import org.opendc.sdk.model.topology.RunningMedianPolicy
-import org.opendc.sdk.model.topology.RunningQuartilesPolicy
+import org.opendc.sdk.model.topology.RunningMeanPlusPolicySpec
+import org.opendc.sdk.model.topology.RunningMeanPolicySpec
+import org.opendc.sdk.model.topology.RunningMedianPolicySpec
+import org.opendc.sdk.model.topology.RunningQuartilesPolicySpec
 import org.opendc.sdk.model.topology.ShareBasedVirtualizationOverheadSpec
-import org.opendc.sdk.model.topology.SingleThresholdPolicy
+import org.opendc.sdk.model.topology.SingleBatteryPolicySpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.topology.VirtualizationOverheadSpec
 import org.opendc.sdk.model.workload.ScalingPolicySpec
@@ -131,10 +130,9 @@ class RoundTripTest {
                     ),
                 )
                 workload(sampleWorkload)
-                allocationPolicy(prefabScheduler(SchedulerNameSpec.CoreMem))
+                allocationPolicy(prefabScheduler(SchedulerPrefabSpec.CoreMem))
                 allocationPolicy(
                     filterScheduler {
-                        subsetSize = 2
                         filter(ComputeHostFilterSpec)
                         filter(RamFilterSpec(1.5))
                         weigher(RamWeigherSpec(2.0))
@@ -143,7 +141,7 @@ class RoundTripTest {
                 failureModel(PrefabFailureSpec(FailurePrefabSpec.G5k06Exp))
                 failureModel(NoFailureSpec)
                 exportModel(ExportSpec())
-                checkpointModel(CheckpointSpec())
+                checkpointModel(CheckpointModelSpec())
                 checkpointModel(null)
                 maxNumFailures(5)
                 maxNumFailures(10)
@@ -165,18 +163,18 @@ class RoundTripTest {
                 topology(sampleTopology)
                 workload(sampleWorkload)
                 allocationPolicy(
-                    timeShiftScheduler {
-                        windowSize = 200
-                        subsetSize = 3
-                        forecast = false
-                        shortForecastThreshold = 0.25
-                        longForecastThreshold = 0.4
-                        forecastSize = 12
-                        memorize = false
-                        taskStopper = TaskStopperSpec(windowSize = 100, forecast = false, forecastThreshold = 0.5, forecastSize = 6)
+                    filterScheduler {
                         filter(ComputeHostFilterSpec)
                         filter(VCpuFilterSpec(2.0))
                         weigher(CoreRamWeigherSpec(1.5))
+                        timeshift {
+                            windowSize = 200
+                            forecast = false
+                            shortForecastThreshold = 0.25
+                            longForecastThreshold = 0.4
+                            forecastSize = 12
+                            taskStopper = TaskStopperSpec(windowSize = 100, forecast = false, forecastThreshold = 0.5, forecastSize = 6)
+                        }
                     },
                 )
                 exportModel =
@@ -192,7 +190,7 @@ class RoundTripTest {
                         duration = ConstantDistributionSpec(value = 300.0),
                         hostFraction = UniformDistributionSpec(upper = 0.5, lower = 0.1),
                     )
-                checkpointModel = CheckpointSpec()
+                checkpointModel = CheckpointModelSpec()
             }
 
         val text = SdkJson.encodeToString(builtScenario)
@@ -203,16 +201,15 @@ class RoundTripTest {
     fun `allocation policies round-trip`(): List<DynamicTest> {
         val policies: List<AllocationPolicySpec> =
             listOf(
-                PrefabAllocationPolicySpec(SchedulerNameSpec.Random),
+                PrefabAllocationPolicySpec(SchedulerPrefabSpec.ActiveServers),
                 FilterAllocationPolicySpec(
                     filters = listOf(ComputeHostFilterSpec, RamFilterSpec(1.5)),
                     weighers = listOf(RamWeigherSpec(1.0), CoreRamWeigherSpec(2.0)),
-                    subsetSize = 3,
                 ),
-                TimeShiftAllocationPolicySpec(
+                FilterAllocationPolicySpec(
                     filters = listOf(ComputeHostFilterSpec),
                     weighers = listOf(VCpuWeigherSpec(1.0)),
-                    taskStopper = TaskStopperSpec(),
+                    timeshift = TimeshiftSpec(taskStopper = TaskStopperSpec()),
                 ),
             )
         return policies.map { policy ->
@@ -304,32 +301,32 @@ class RoundTripTest {
 
     @TestFactory
     fun `battery policies round-trip`(): List<DynamicTest> {
-        val policies: List<BatteryPolicy> =
+        val policies: List<BatteryPolicySpec> =
             listOf(
-                SingleThresholdPolicy(carbonThreshold = 150.0),
-                DoubleThresholdPolicy(lowerThreshold = 100.0, upperThreshold = 300.0),
-                RunningMeanPolicy(startingThreshold = 200.0, windowSize = 24),
-                RunningMeanPlusPolicy(startingThreshold = 200.0, windowSize = 24),
-                RunningMedianPolicy(startingThreshold = 200.0, windowSize = 24),
-                RunningQuartilesPolicy(startingThreshold = 200.0, windowSize = 24),
+                SingleBatteryPolicySpec(carbonThreshold = 150.0),
+                DoubleBatteryPolicySpec(lowerThreshold = 100.0, upperThreshold = 300.0),
+                RunningMeanPolicySpec(startingThreshold = 200.0, windowSize = 24),
+                RunningMeanPlusPolicySpec(startingThreshold = 200.0, windowSize = 24),
+                RunningMedianPolicySpec(startingThreshold = 200.0, windowSize = 24),
+                RunningQuartilesPolicySpec(startingThreshold = 200.0, windowSize = 24),
             )
         return policies.map { policy ->
-            dynamicTest(policy.toString()) { assertEquals(policy, roundTrip<BatteryPolicy>(policy)) }
+            dynamicTest(policy.toString()) { assertEquals(policy, roundTrip<BatteryPolicySpec>(policy)) }
         }
     }
 
     @TestFactory
     fun `distribution policies round-trip`(): List<DynamicTest> {
-        val policies: List<DistributionPolicy> =
+        val policies: List<DistributionPolicySpec> =
             listOf(
-                MaxMinFairness,
-                BestEffort(updateIntervalMs = 2000),
-                EqualShare,
-                FirstFit,
-                FixedShare(shareRatio = 0.5),
+                MaxMinFairnessPolicySpec,
+                BestEffortPolicySpec(updateInterval = 2000L),
+                EqualSharePolicySpec,
+                FirstFitPolicySpec,
+                FixedSharePolicySpec(shareRatio = 0.5),
             )
         return policies.map { policy ->
-            dynamicTest(policy.toString()) { assertEquals(policy, roundTrip<DistributionPolicy>(policy)) }
+            dynamicTest(policy.toString()) { assertEquals(policy, roundTrip<DistributionPolicySpec>(policy)) }
         }
     }
 
@@ -374,8 +371,8 @@ class RoundTripTest {
         assertTrue(encode<FailureModelSpec>(NoFailureSpec).contains("\"type\": \"none\""))
         assertTrue(encode<DistributionSpec>(LogNormalDistributionSpec(1.0, 2.0)).contains("\"type\": \"log-normal\""))
         assertTrue(encode<WorkloadSpec>(TraceWorkloadSpec(NamedReference("t"))).contains("\"type\": \"trace\""))
-        assertTrue(encode<DistributionPolicy>(MaxMinFairness).contains("\"type\": \"maxMinFairness\""))
-        assertTrue(encode<BatteryPolicy>(SingleThresholdPolicy(100.0)).contains("\"type\": \"single\""))
+        assertTrue(encode<DistributionPolicySpec>(MaxMinFairnessPolicySpec).contains("\"type\": \"maxMinFairness\""))
+        assertTrue(encode<BatteryPolicySpec>(SingleBatteryPolicySpec(100.0)).contains("\"type\": \"single\""))
         assertTrue(encode<VirtualizationOverheadSpec>(ShareBasedVirtualizationOverheadSpec).contains("\"type\": \"shareBased\""))
         assertTrue(encode<ColumnSelection>(AllColumns).contains("\"type\": \"all\""))
     }

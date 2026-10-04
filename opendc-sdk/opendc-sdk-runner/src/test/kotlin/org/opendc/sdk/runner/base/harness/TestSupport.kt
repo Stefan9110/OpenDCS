@@ -25,10 +25,8 @@ package org.opendc.sdk.runner.base.harness
 import org.opendc.common.units.DataSize
 import org.opendc.common.units.Frequency
 import org.opendc.common.units.TimeDelta
-import org.opendc.compute.topology.specs.ClusterSpec
-import org.opendc.sdk.model.checkpoint.CheckpointSpec
+import org.opendc.sdk.model.checkpoint.CheckpointModelSpec
 import org.opendc.sdk.model.experiment.ScenarioSpec
-import org.opendc.sdk.model.export.ExportSpec
 import org.opendc.sdk.model.failure.FailureModelSpec
 import org.opendc.sdk.model.failure.NoFailureSpec
 import org.opendc.sdk.model.scheduler.AllocationPolicySpec
@@ -38,15 +36,15 @@ import org.opendc.sdk.model.scheduler.FilterAllocationPolicySpec
 import org.opendc.sdk.model.scheduler.RamFilterSpec
 import org.opendc.sdk.model.scheduler.VCpuFilterSpec
 import org.opendc.sdk.model.serialization.SdkJson
+import org.opendc.sdk.model.telemetry.ExportSpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.workload.InlineWorkloadSpec
 import org.opendc.sdk.model.workload.ScalingPolicySpec
 import org.opendc.sdk.model.workload.TaskFragmentSpec
 import org.opendc.sdk.model.workload.TaskSpec
 import org.opendc.sdk.runner.executor.runScenario
-import org.opendc.sdk.runner.factory.toClusterSpecs
 import org.opendc.sdk.runner.provision.FileSystemResourceProvisioner
-import org.opendc.sdk.runner.sink.MonitorSink
+import org.opendc.sdk.runner.telemetry.sink.MonitorSink
 import java.nio.file.Path
 import java.time.LocalDateTime
 import java.time.ZoneOffset
@@ -69,9 +67,6 @@ internal fun createTopology(name: String): TopologySpec {
     return SdkJson.json.decodeFromString(text)
 }
 
-/** Converts a [TopologySpec] to engine [ClusterSpec]s for topology-parsing assertions. */
-internal fun TopologySpec.toClusters(): List<ClusterSpec> = toClusterSpecs { provisioner.provision(it).path }
-
 /** Builds an SDK [TaskFragmentSpec] with durations in milliseconds and usages in MHz. */
 internal fun fragment(
     duration: Long,
@@ -82,10 +77,10 @@ internal fun fragment(
 /**
  * Builds an SDK [TaskSpec] reproducing the legacy `createTestTask`: per-core capacity is the peak
  * fragment usage, submission is parsed as a UTC instant, and memory is in MiB.
+ * TODO: rewrite this to use the dsl
  */
 internal fun createTestTask(
     id: Int,
-    name: String = "",
     memCapacity: Long = 0L,
     submissionTime: String = "1970-01-01T00:00",
     duration: Long = 0L,
@@ -98,26 +93,24 @@ internal fun createTestTask(
     val submitMs = LocalDateTime.parse(submissionTime).toInstant(ZoneOffset.UTC).toEpochMilli()
     return TaskSpec(
         id = id,
-        name = name,
         submissionTime = TimeDelta.ofMillis(submitMs),
         duration = TimeDelta.ofMillis(duration),
-        cpuCoreCount = cpuCoreCount,
+        cpuCoreCount = cpuCoreCount.toShort(),
         cpuCapacity = Frequency.ofMHz(fragments.maxOf { it.cpuUsage.toMHz() }),
         memory = DataSize.ofMiB(memCapacity),
         fragments = fragments,
-        gpuCoreCount = gpuCoreCount,
+        gpuCoreCount = gpuCoreCount.toShort(),
         gpuCapacity = Frequency.ofMHz(fragments.maxOfOrNull { it.gpuUsage.toMHz() } ?: 0.0),
         gpuMemory = DataSize.ofBytes(0),
         deferrable = false,
-        deadline = null,
-        parents = parents,
-        children = children,
+        parents = parents.toIntArray(),
+        children = children.toIntArray(),
     )
 }
 
 /**
  * Runs [workload] against [topology] on a fresh simulated clock with a one-minute export interval
- * and seed 0, returning the [TestComputeMonitor] that captured the run — the SDK-runner analogue of
+ * and seed 0, returning the [TestMetricExporter] that captured the run — the SDK-runner analogue of
  * the legacy `runTest`.
  */
 internal fun runTest(
@@ -125,19 +118,22 @@ internal fun runTest(
     workload: List<TaskSpec>,
     failureModel: FailureModelSpec = NoFailureSpec,
     allocationPolicy: AllocationPolicySpec = defaultPolicy,
-    checkpointModel: CheckpointSpec? = null,
+    checkpointModel: CheckpointModelSpec? = null,
     scalingPolicy: ScalingPolicySpec = ScalingPolicySpec.NoDelay,
-): TestComputeMonitor {
-    val monitor = TestComputeMonitor()
+    exportInterval: TimeDelta = TimeDelta.ofMin(1),
+): TestMetricExporter {
+    val monitor = TestMetricExporter()
+//    val monitorSink = ParquetSink(Path.of("output"))
     val scenario =
         ScenarioSpec(
             topology = topology,
             workload = InlineWorkloadSpec(workload, scalingPolicy),
             allocationPolicy = allocationPolicy,
-            exportModel = ExportSpec(exportInterval = TimeDelta.ofMin(1), printFrequency = null),
+            exportModel = ExportSpec(exportInterval = exportInterval, printFrequency = null),
             failureModel = failureModel,
             checkpointModel = checkpointModel,
         )
     runScenario(scenario, "", 0, 0L, listOf(MonitorSink(monitor)), provisioner)
+//    runScenario(scenario, "", 0, 0L, listOf(monitorSink), provisioner)
     return monitor
 }

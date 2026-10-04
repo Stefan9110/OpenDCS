@@ -23,35 +23,45 @@
 package org.opendc.web.runner
 
 import mu.KotlinLogging
-import org.opendc.compute.failure.prefab.FailurePrefab
-import org.opendc.compute.failure.prefab.createFailureModelPrefab
-import org.opendc.compute.simulator.provisioner.Provisioner
-import org.opendc.compute.simulator.provisioner.registerComputeMonitor
-import org.opendc.compute.simulator.provisioner.setupComputeService
-import org.opendc.compute.simulator.provisioner.setupHosts
-import org.opendc.compute.simulator.scheduler.createPrefabComputeScheduler
-import org.opendc.compute.simulator.service.ComputeService
-import org.opendc.compute.topology.specs.ClusterSpec
-import org.opendc.compute.topology.specs.HostSpec
-import org.opendc.compute.topology.specs.PowerSourceSpec
-import org.opendc.compute.workload.ComputeWorkloadLoader
-import org.opendc.experiments.base.runner.replay
+import org.opendc.common.units.DataSize
+import org.opendc.common.units.Frequency
+import org.opendc.common.units.Power
+import org.opendc.sdk.model.scheduler.SchedulerPrefabSpec
+import org.opendc.sdk.model.topology.ClusterSpec
+import org.opendc.sdk.model.topology.CpuSpec
+import org.opendc.sdk.model.topology.HostSpec
+import org.opendc.sdk.model.topology.MemorySpec
+import org.opendc.sdk.model.topology.PowerModelSpec
+import org.opendc.sdk.model.topology.PowerModelType
+import org.opendc.sdk.model.topology.PowerSourceSpec
+import org.opendc.sdk.model.workload.loader.ComputeWorkloadLoader
+import org.opendc.sdk.runner.executor.ResourceScope
+import org.opendc.sdk.runner.executor.replay
+import org.opendc.sdk.runner.factory.toScheduler
+import org.opendc.sdk.runner.provision.FileSystemResourceProvisioner
+import org.opendc.sdk.runner.provision.Provisioner
+import org.opendc.sdk.runner.provision.registerComputeMonitor
+import org.opendc.sdk.runner.provision.setupComputeService
+import org.opendc.sdk.runner.provision.setupHosts
 import org.opendc.simulator.compute.models.CpuModel
-import org.opendc.simulator.compute.models.MachineModel
 import org.opendc.simulator.compute.models.MemoryUnit
 import org.opendc.simulator.compute.power.PowerModels
+import org.opendc.simulator.compute.service.ComputeService
 import org.opendc.simulator.kotlin.runSimulation
 import org.opendc.web.proto.runner.Job
 import org.opendc.web.proto.runner.Report
 import org.opendc.web.proto.runner.Scenario
 import org.opendc.web.proto.runner.Topology
+import org.opendc.web.proto.topology.Rack
 import org.opendc.web.runner.internal.ReportCollector
-import org.opendc.web.runner.internal.WebComputeMonitor
+import org.opendc.web.runner.internal.WebMetricExporter
 import java.io.File
 import java.io.IOException
+import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.ArrayDeque
 import java.util.Random
 import java.util.concurrent.Executors
 import java.util.concurrent.ForkJoinPool
@@ -61,6 +71,7 @@ import java.util.concurrent.RecursiveAction
 import java.util.concurrent.RecursiveTask
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import org.opendc.sdk.model.topology.TopologySpec as SDKTopologySpec
 
 /**
  * Class to execute the pending jobs via the OpenDC web API.
@@ -184,7 +195,6 @@ public class OpenDCRunner(
 
             try {
                 val topology = convertTopology(scenario.topology)
-                require(topology.isNotEmpty()) { "Topology '${scenario.topology.name}' has no hosts configured" }
                 val jobs =
                     (0 until scenario.portfolio.targets.repeats).map { repeat ->
                         SimulationTask(
@@ -279,15 +289,15 @@ public class OpenDCRunner(
      *
      * @param scenario The scenario to simulate.
      * @param repeat The repeat number used to seed the simulation.
-     * @param topologyHosts The topology to simulate.
+     * @param topologySpec The topology to simulate.
      */
     private inner class SimulationTask(
         private val scenario: Scenario,
         private val repeat: Int,
-        private val topologyHosts: List<HostSpec>,
-    ) : RecursiveTask<WebComputeMonitor.Results>() {
-        override fun compute(): WebComputeMonitor.Results {
-            val monitor = WebComputeMonitor()
+        private val topologySpec: SDKTopologySpec,
+    ) : RecursiveTask<WebMetricExporter.Results>() {
+        override fun compute(): WebMetricExporter.Results {
+            val monitor = WebMetricExporter()
 
             // Schedule task that interrupts the simulation if it runs for too long.
             val currentThread = Thread.currentThread()
@@ -306,7 +316,7 @@ public class OpenDCRunner(
         /**
          * Run a single simulation of the scenario.
          */
-        private fun runSimulation(monitor: WebComputeMonitor) =
+        private fun runSimulation(monitor: WebMetricExporter) =
             runSimulation {
                 val serviceDomain = "compute.opendc.org"
                 val seed = repeat.toLong()
@@ -315,9 +325,10 @@ public class OpenDCRunner(
 
                 val powerSourceSpec =
                     PowerSourceSpec(
-                        totalPower = Long.MAX_VALUE,
+                        maxPower = Power.ofWatts(Long.MAX_VALUE),
                     )
-                val topology = listOf(ClusterSpec("cluster", topologyHosts, powerSourceSpec))
+//                val topology =
+//                    TopologySpec(clusters = listOf(ClusterSpec("cluster", 1, topologyHosts, powerSourceSpec)))
 
                 Provisioner(dispatcher, seed).use { provisioner ->
                     // Create a trace-specific workload loader
@@ -333,33 +344,36 @@ public class OpenDCRunner(
                     provisioner.runSteps(
                         setupComputeService(
                             serviceDomain,
-                            { createPrefabComputeScheduler(scenario.schedulerName, Random(it.seeder.nextLong()), timeSource) },
+                            {
+                                schedulerPrefab(scenario.schedulerName)
+                                    .policy
+                                    .toScheduler(Random(it.seeder.nextLong()), timeSource, numHosts = 1000)
+                            },
                         ),
                         registerComputeMonitor(serviceDomain, monitor),
-                        setupHosts(serviceDomain, topology, startTime),
+                        setupHosts(
+                            serviceDomain,
+                            topologySpec,
+                            startTime,
+                            ResourceScope(FileSystemResourceProvisioner(Path.of("")))::resolve,
+                        ),
                     )
 
                     val service = provisioner.registry.resolve(serviceDomain, ComputeService::class.java)!!
 
-                    val phenomena = scenario.phenomena
-                    val failureModel =
-                        if (phenomena.failures) {
-                            createFailureModelPrefab(coroutineContext, timeSource, service, Random(seed), FailurePrefab.G5k06Exp)
-                        } else {
-                            null
-                        }
+                    val vmsQueue = ArrayDeque(vms)
 
                     // Run workload trace
-                    service.replay(timeSource, vms, seed = seed)
+                    service.replay(timeSource, vmsQueue, seed = seed)
 
-                    val serviceMetrics = service.getSchedulerStats()
-                    logger.debug {
-                        "Scheduler " +
-                            "Success=${serviceMetrics.attemptsSuccess} " +
-                            "Failure=${serviceMetrics.attemptsFailure} " +
-                            "Pending=${serviceMetrics.tasksPending} " +
-                            "Active=${serviceMetrics.tasksActive}"
-                    }
+//                    val serviceMetrics = service.getSchedulerStats()
+//                    logger.debug {
+//                        "Scheduler " +
+//                            "Success=${serviceMetrics.attemptsSuccess} " +
+//                            "Failure=${serviceMetrics.attemptsFailure} " +
+//                            "Pending=${serviceMetrics.tasksPending} " +
+//                            "Active=${serviceMetrics.tasksActive}"
+//                    }
                 }
             }
     }
@@ -367,62 +381,88 @@ public class OpenDCRunner(
     /**
      * Convert the specified [topology] into an [Topology] understood by OpenDC.
      */
-    private fun convertTopology(topology: Topology): List<HostSpec> {
+    private fun convertTopology(topology: Topology): SDKTopologySpec {
         val res = mutableListOf<HostSpec>()
         val random = Random(0)
 
-        val machines =
-            topology.rooms.asSequence()
+        val racks: List<Rack> =
+            topology.rooms
                 .flatMap { room ->
-                    room.tiles.flatMap { tile ->
-                        val rack = tile.rack
-                        rack?.machines?.map { machine -> rack to machine } ?: emptyList()
+                    room.tiles.map { tile ->
+                        tile.rack
                     }
                 }
 
-        for ((rack, machine) in machines) {
+        val clusters: MutableList<ClusterSpec> = mutableListOf()
+
+        for (rack in racks) {
             val clusterId = rack.id
-            val position = machine.position
+            val hosts: MutableList<HostSpec> = mutableListOf()
 
-            val processors =
-                machine.cpus.map { cpu ->
-                    CpuModel(
-                        0,
-                        cpu.numberOfCores,
-                        cpu.clockRateMhz,
-                        "Intel",
-                        "amd64",
-                        cpu.name,
+            for (machine in rack.machines) {
+                val position = machine.position
+
+                val processors =
+                    machine.cpus.map { cpu ->
+                        CpuModel(
+                            0,
+                            cpu.numberOfCores,
+                            cpu.clockRateMhz,
+                            "Intel",
+                            "amd64",
+                            cpu.name,
+                        )
+                    }
+
+                val cpuSpec =
+                    CpuSpec(
+                        machine.cpus[0].numberOfCores,
+                        Frequency.ofMHz(machine.cpus[0].clockRateMhz),
+                        machine.cpus.size,
                     )
-                }
 
-            val memoryUnits =
-                machine.memory.map { memory ->
-                    MemoryUnit(
-                        "Samsung",
-                        memory.name,
-                        memory.speedMbPerS,
-                        memory.sizeMb.toLong(),
+                val memoryUnits =
+                    machine.memory.map { memory ->
+                        MemoryUnit(
+                            "Samsung",
+                            memory.name,
+                            memory.speedMbPerS,
+                            memory.sizeMb.toLong(),
+                        )
+                    }
+
+                val memorySpec =
+                    MemorySpec(
+                        DataSize.ofMB(machine.memory[0].sizeMb.toLong()),
+                        Frequency.ofMHz(machine.memory[0].speedMbPerS),
                     )
-                }
 
-            val energyConsumptionW = machine.cpus.sumOf { it.energyConsumptionW }
-            val cpuPowerModel = PowerModels.linear(2 * energyConsumptionW, energyConsumptionW * 0.5)
+                val energyConsumptionW = machine.cpus.sumOf { it.energyConsumptionW }
+                val cpuPowerModel = PowerModels.linear(2 * energyConsumptionW, energyConsumptionW * 0.5)
+                val cpuPowerSpec =
+                    PowerModelSpec(
+                        PowerModelType.LINEAR,
+                        maxPower = Power.ofWatts(2 * energyConsumptionW),
+                        idlePower = Power.ofWatts(energyConsumptionW * 0.5),
+                    )
 
-            val spec =
-                HostSpec(
-                    "node-$clusterId-$position",
-                    "node-$clusterId",
-                    clusterId,
-                    MachineModel(processors, memoryUnits[0]),
-                    cpuPowerModel,
-                    null,
-                )
+                val hostSpec =
+                    HostSpec(
+                        "node-$clusterId-$position",
+                        1,
+                        cpuSpec,
+                        memorySpec,
+                        cpuPowerModel = cpuPowerSpec,
+                    )
 
-            res += spec
+                hosts.add(hostSpec)
+            }
+
+            val clusterSpec = ClusterSpec(hosts = hosts)
+            clusters.add(clusterSpec)
         }
 
-        return res
+        return SDKTopologySpec(clusters = clusters)
     }
 
     /**
@@ -437,3 +477,11 @@ public class OpenDCRunner(
             }
     }
 }
+
+/** Looks up the [SchedulerPrefabSpec] named [name], ignoring case and surrounding whitespace. */
+private fun schedulerPrefab(name: String): SchedulerPrefabSpec =
+    SchedulerPrefabSpec.entries.find { it.name.equals(name.trim(), ignoreCase = true) }
+        ?: throw IllegalArgumentException(
+            "Invalid scheduler name: '$name'. Valid scheduler names are: " +
+                "${SchedulerPrefabSpec.entries.joinToString()} (case-insensitive)",
+        )

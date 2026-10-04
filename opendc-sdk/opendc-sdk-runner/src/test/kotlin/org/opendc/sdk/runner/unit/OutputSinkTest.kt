@@ -34,35 +34,37 @@ import org.opendc.sdk.model.dsl.minutes
 import org.opendc.sdk.model.dsl.ms
 import org.opendc.sdk.model.dsl.topology
 import org.opendc.sdk.model.dsl.watts
-import org.opendc.sdk.model.export.ExportSpec
-import org.opendc.sdk.model.export.OutputFileSpec
+import org.opendc.sdk.model.telemetry.ExportSpec
+import org.opendc.sdk.model.telemetry.OutputFileSpec
 import org.opendc.sdk.model.topology.PowerModelType
 import org.opendc.sdk.model.workload.InlineWorkloadSpec
 import org.opendc.sdk.model.workload.TaskFragmentSpec
 import org.opendc.sdk.model.workload.TaskSpec
 import org.opendc.sdk.runner.OpenDC
 import org.opendc.sdk.runner.provision.FileSystemResourceProvisioner
-import org.opendc.sdk.runner.sink.CallbackSink
-import org.opendc.sdk.runner.sink.InMemorySink
+import org.opendc.sdk.runner.telemetry.sink.CallbackSink
+import org.opendc.sdk.runner.telemetry.sink.InMemorySink
 import java.nio.file.Files
 
 /**
  * Validates the composable output-sink pattern: multiple sinks observe the same run (fan-out) and
- * an [InMemorySink] captures exactly the tables it was configured for (granular selection).
+ * an [org.opendc.sdk.telemetry.sink.InMemorySink] captures exactly the tables it was configured for (granular selection).
  */
 class OutputSinkTest {
     @Test
     fun `sinks compose and honour granular table selection`() {
         val datacenter =
             topology {
-                cluster(name = "C01") {
-                    host(name = "H01") {
-                        cpu(coreCount = 1, coreSpeed = 2000.mhz)
-                        memory(size = 1.gib)
-                        power {
-                            type = PowerModelType.LINEAR
-                            maxPower = 200.watts
-                            idlePower = 100.watts
+                datacenter {
+                    cluster(name = "C01") {
+                        host(name = "H01") {
+                            cpu(coreCount = 1, coreSpeed = 2000.mhz)
+                            memory(size = 1.gib)
+                            power {
+                                type = PowerModelType.LINEAR
+                                maxPower = 200.watts
+                                idlePower = 100.watts
+                            }
                         }
                     }
                 }
@@ -70,7 +72,6 @@ class OutputSinkTest {
         val task =
             TaskSpec(
                 id = 0,
-                name = "t0",
                 submissionTime = 0.ms,
                 duration = (10 * 60 * 1000).ms,
                 cpuCoreCount = 1,

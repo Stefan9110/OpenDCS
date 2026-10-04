@@ -30,7 +30,6 @@ import org.opendc.sdk.model.failure.ExponentialDistributionSpec
 import org.opendc.sdk.model.failure.LogNormalDistributionSpec
 import org.opendc.sdk.model.failure.UniformDistributionSpec
 import org.opendc.sdk.model.scheduler.FilterAllocationPolicySpec
-import org.opendc.sdk.model.scheduler.TimeShiftAllocationPolicySpec
 import org.opendc.sdk.model.workload.InlineWorkloadSpec
 import org.opendc.sdk.model.workload.TraceWorkloadSpec
 import java.io.InputStream
@@ -49,7 +48,7 @@ class JsonFixtureTest {
     fun `inline-topology trace-workload scenario decodes and validates`() {
         val scenario = decodeScenario("/scenarios/inline-topology-trace-workload.json")
 
-        assertTrue(scenario.topology.clusters.isNotEmpty(), "expected an inline topology with clusters")
+        assertTrue(scenario.topology.datacenters!!.isNotEmpty(), "expected an inline topology with clusters")
         assertIs<TraceWorkloadSpec>(scenario.workload)
         assertEquals(emptyList(), scenario.validate())
     }
@@ -58,7 +57,7 @@ class JsonFixtureTest {
     fun `inline-workload scenario decodes and validates`() {
         val scenario = decodeScenario("/scenarios/inline-workload.json")
 
-        assertTrue(scenario.topology.clusters.isNotEmpty(), "expected an inline topology with clusters")
+        assertTrue(scenario.topology.datacenters!!.isNotEmpty(), "expected an inline topology with clusters")
         val workload = assertIs<InlineWorkloadSpec>(scenario.workload)
         assertEquals(2, workload.tasks.size)
         assertIs<FilterAllocationPolicySpec>(scenario.allocationPolicy)
@@ -69,8 +68,8 @@ class JsonFixtureTest {
     fun `timeshift taskstopper experiment decodes and validates`() {
         val experiment = decodeExperiment("/experiments/timeshift-taskstopper.json")
 
-        val policy = assertIs<TimeShiftAllocationPolicySpec>(experiment.allocationPolicies.single())
-        assertNotNull(policy.taskStopper, "expected an embedded task stopper")
+        val policy = assertIs<FilterAllocationPolicySpec>(experiment.allocationPolicies.single())
+        assertNotNull(policy.timeshift?.taskStopper, "expected an embedded task stopper")
         assertTrue(experiment.validate().isEmpty(), "expected no validation issues")
     }
 

@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-description = "Library for simulating computing workloads"
+description = "Library for simulating computing workloads, hosts, and the compute service"
 
 plugins {
     `kotlin-library-conventions`
@@ -30,6 +30,5 @@ plugins {
 dependencies {
     api(projects.opendcSimulator.opendcSimulatorFlow)
     implementation(projects.opendcSimulator.opendcSimulatorCore)
-
-    testImplementation(libs.slf4j.simple)
+    implementation(libs.kotlin.logging)
 }

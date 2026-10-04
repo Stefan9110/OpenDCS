@@ -54,11 +54,13 @@ dependencies {
     implementation(projects.opendcTrace.opendcTraceApi)
 
     implementation(libs.kotlin.logging)
-    implementation(project(mapOf("path" to ":opendc-compute:opendc-compute-workload")))
-    implementation(project(mapOf("path" to ":opendc-compute:opendc-compute-carbon")))
-    implementation(project(mapOf("path" to ":opendc-experiments:opendc-experiments-base")))
-    implementation(project(mapOf("path" to ":opendc-compute:opendc-compute-topology")))
-    implementation(project(mapOf("path" to ":opendc-compute:opendc-compute-failure")))
+    // ReportCollector attaches a Log4j appender to capture simulation warnings
+    implementation(libs.log4j.core)
+
+    implementation(project(mapOf("path" to ":opendc-sdk:opendc-sdk-runner")))
+    implementation(project(mapOf("path" to ":opendc-sdk:opendc-sdk-model")))
+
+    api(project(":opendc-simulator:opendc-simulator-compute"))
 
     cliImplementation(libs.clikt)
 

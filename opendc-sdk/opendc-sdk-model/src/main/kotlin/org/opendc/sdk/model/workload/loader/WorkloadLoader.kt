@@ -1,0 +1,106 @@
+/*
+ * Copyright (c) 2025 AtLarge Research
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+package org.opendc.sdk.model.workload.loader
+import mu.KotlinLogging
+import org.opendc.simulator.compute.task.SimTask
+import org.opendc.simulator.compute.workload.trace.TraceWorkload
+import java.time.LocalDateTime
+import java.time.ZoneOffset
+import kotlin.random.Random
+
+public abstract class WorkloadLoader(private val submissionTime: String? = null) {
+    private val logger = KotlinLogging.logger {}
+
+    public fun reScheduleTasks(workload: List<SimTask>) {
+        if (submissionTime == null) {
+            return
+        }
+
+        val workloadSubmissionTime = workload.minOf({ it.submittedAt })
+        val submissionTimeLong = LocalDateTime.parse(submissionTime).toInstant(ZoneOffset.UTC).toEpochMilli()
+
+        val timeShift = submissionTimeLong - workloadSubmissionTime
+
+        for (task in workload) {
+            task.submittedAt += timeShift
+            task.deadline = if (task.deadline == -1L) -1L else task.deadline + timeShift
+        }
+    }
+
+    public abstract fun load(): List<SimTask>
+
+    /**
+     * Load the workload at sample tasks until a fraction of the workload is loaded
+     */
+    public fun sampleByLoad(fraction: Double): List<SimTask> {
+        val workload = this.load()
+
+        reScheduleTasks(workload)
+
+        if (fraction >= 1.0) {
+            return workload
+        }
+
+        if (fraction <= 0.0) {
+            throw Error("The fraction of tasks to load cannot be 0.0 or lower")
+        }
+
+        val res = mutableListOf<SimTask>()
+
+        val loads = DoubleArray(workload.size) { workload[it].totalCpuLoad() }
+
+        val desiredLoad = loads.sum() * fraction
+        var currentLoad = 0.0
+
+        while (currentLoad < desiredLoad) {
+            val index = Random.nextInt(workload.size)
+            res += workload[index]
+
+            currentLoad += loads[index]
+        }
+
+        logger.info { "Sampled ${workload.size} VMs (fraction $fraction) into subset of ${res.size} VMs" }
+
+        return res.sortedBy { it.submittedAt }
+    }
+}
+
+/**
+ * The total CPU and GPU work of a task, in MFLOPs.
+ *
+ * This is derived from the workload fragments instead of being stored on the [SimTask], because
+ * sampling is the only thing that ever needs it and it runs once, here, before the simulation starts.
+ * Keeping it as a field would cost 8 bytes on every task for the entire run. The accumulation mirrors
+ * the one in ComputeWorkloadLoader's fragment builder, over the same fragments in the same order.
+ */
+private fun SimTask.totalCpuLoad(): Double {
+    val workload = this.workload as? TraceWorkload ?: return 0.0
+
+    var total = 0.0
+    for (i in 0..workload.length - 1) {
+        val fragment = workload.getFragment(i)
+        total += ((fragment.cpuUsage() * fragment.duration()) + (fragment.gpuUsage() * fragment.duration())) / 1000
+    }
+
+    return total
+}

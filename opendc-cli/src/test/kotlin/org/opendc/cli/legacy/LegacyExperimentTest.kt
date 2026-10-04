@@ -22,16 +22,19 @@
 
 package org.opendc.cli.legacy
 
+import com.github.ajalt.clikt.core.subcommands
+import com.github.ajalt.clikt.testing.test
+import org.opendc.cli.OpendcCommand
+import org.opendc.cli.RunCommand
+import org.opendc.cli.ShowCommand
+import org.opendc.cli.ValidateCommand
 import org.opendc.common.units.DataRate
 import org.opendc.common.units.DataSize
 import org.opendc.common.units.Frequency
 import org.opendc.common.units.Power
 import org.opendc.common.units.TimeDelta
-import org.opendc.sdk.model.checkpoint.CheckpointSpec
+import org.opendc.sdk.model.checkpoint.CheckpointModelSpec
 import org.opendc.sdk.model.experiment.ExperimentSpec
-import org.opendc.sdk.model.export.AllColumns
-import org.opendc.sdk.model.export.OnlyColumns
-import org.opendc.sdk.model.export.OutputFileSpec
 import org.opendc.sdk.model.failure.CustomFailureSpec
 import org.opendc.sdk.model.failure.ExponentialDistributionSpec
 import org.opendc.sdk.model.failure.FailurePrefabSpec
@@ -45,21 +48,25 @@ import org.opendc.sdk.model.scheduler.ComputeHostFilterSpec
 import org.opendc.sdk.model.scheduler.CoreRamWeigherSpec
 import org.opendc.sdk.model.scheduler.FilterAllocationPolicySpec
 import org.opendc.sdk.model.scheduler.InstanceCountFilterSpec
+import org.opendc.sdk.model.scheduler.InstanceCountWeigherSpec
 import org.opendc.sdk.model.scheduler.PrefabAllocationPolicySpec
 import org.opendc.sdk.model.scheduler.RamFilterSpec
 import org.opendc.sdk.model.scheduler.RamWeigherSpec
-import org.opendc.sdk.model.scheduler.SchedulerNameSpec
+import org.opendc.sdk.model.scheduler.SchedulerPrefabSpec
 import org.opendc.sdk.model.scheduler.TaskStopperSpec
-import org.opendc.sdk.model.scheduler.TimeShiftAllocationPolicySpec
+import org.opendc.sdk.model.scheduler.TimeshiftSpec
 import org.opendc.sdk.model.scheduler.VCpuCapacityWeigherSpec
 import org.opendc.sdk.model.scheduler.VCpuFilterSpec
-import org.opendc.sdk.model.topology.BestEffort
+import org.opendc.sdk.model.telemetry.AllColumns
+import org.opendc.sdk.model.telemetry.OnlyColumns
+import org.opendc.sdk.model.telemetry.OutputFileSpec
+import org.opendc.sdk.model.topology.BestEffortPolicySpec
 import org.opendc.sdk.model.topology.ConstantVirtualizationOverheadSpec
-import org.opendc.sdk.model.topology.EqualShare
-import org.opendc.sdk.model.topology.FixedShare
-import org.opendc.sdk.model.topology.MaxMinFairness
+import org.opendc.sdk.model.topology.EqualSharePolicySpec
+import org.opendc.sdk.model.topology.FixedSharePolicySpec
+import org.opendc.sdk.model.topology.MaxMinFairnessPolicySpec
 import org.opendc.sdk.model.topology.PowerModelType
-import org.opendc.sdk.model.topology.RunningMeanPolicy
+import org.opendc.sdk.model.topology.RunningMeanPolicySpec
 import org.opendc.sdk.model.topology.ShareBasedVirtualizationOverheadSpec
 import org.opendc.sdk.model.workload.ScalingPolicySpec
 import org.opendc.sdk.model.workload.TraceWorkloadSpec
@@ -85,6 +92,14 @@ import kotlin.test.assertTrue
  * `opendc-sdk`.
  */
 class LegacyExperimentTest {
+    private fun opendc() = OpendcCommand().subcommands(RunCommand(), ValidateCommand(), ShowCommand())
+
+    // TODO: This one does not work I think
+    @Test
+    fun testCli() {
+        opendc().test(arrayOf("run", "--legacy", "legacy/experiments/1.first_experiment_answers/simple_experiment.json"))
+    }
+
     /**
      * Demo 1 — the plainest old experiment there is. It is also the sharpest test of the units,
      * because every magnitude in it is a bare number: `2100` must still mean 2100 MHz, `100000` must
@@ -95,7 +110,8 @@ class LegacyExperimentTest {
         val experiment = load("experiments/1.first_experiment_answers/simple_experiment.json")
 
         assertEquals("1.first_experiment", experiment.name)
-        val cluster = experiment.topologies.single().clusters.single()
+        val datacenter = experiment.topologies.single().datacenters!!.single()
+        val cluster = datacenter.clusters.single()
         val host = cluster.hosts.single()
 
         assertEquals(279, host.count)
@@ -105,7 +121,7 @@ class LegacyExperimentTest {
         assertEquals(PowerModelType.LINEAR, host.cpuPowerModel.type)
         assertEquals(Power.ofWatts(180), host.cpuPowerModel.maxPower, "a bare maxPower still counts Watts")
         assertEquals(Power.ofWatts(32), host.cpuPowerModel.idlePower)
-        assertEquals(NamedReference("carbon_traces/NL_2021-2024.parquet"), cluster.powerSource.carbon)
+        assertEquals(NamedReference("carbon_traces/NL_2021-2024.parquet"), datacenter.powerSource.carbon)
 
         val workload = experiment.workloads.single()
         assertEquals(TraceWorkloadSpec(source = NamedReference("workload_traces/surf_week")), workload)
@@ -129,13 +145,15 @@ class LegacyExperimentTest {
         val experiment = load("experiments/2.datacenter_location_answers/location_experiment.json")
 
         assertEquals(4, experiment.topologies.size)
-        val carbon = experiment.topologies.map { it.clusters.single().powerSource.carbon }
+        val carbon = experiment.topologies.map { it.datacenters!!.single().powerSource.carbon }
         assertEquals(
             listOf("AT", "AU", "BE", "NL").map { NamedReference("carbon_traces/${it}_2021-2024.parquet") }.toSet(),
             carbon.toSet(),
         )
         assertTrue(
-            experiment.topologies.all { it.clusters.single().hosts.single().cpuPowerModel.type == PowerModelType.SQRT },
+            experiment.topologies.all {
+                it.datacenters!!.single().clusters.single().hosts.single().cpuPowerModel.type == PowerModelType.SQRT
+            },
             "every location uses the sqrt power model",
         )
     }
@@ -147,7 +165,7 @@ class LegacyExperimentTest {
 
         assertEquals(
             setOf(100, 150, 200, 279),
-            experiment.topologies.map { it.clusters.single().hosts.single().count }.toSet(),
+            experiment.topologies.map { it.datacenters!!.single().clusters.single().hosts.single().count }.toSet(),
         )
     }
 
@@ -204,7 +222,7 @@ class LegacyExperimentTest {
     fun `prefab, filter and timeshift allocation policies carry over`() {
         val policies = load(FEATURES).allocationPolicies
 
-        assertContains(policies, PrefabAllocationPolicySpec(SchedulerNameSpec.CoreMem))
+        assertContains(policies, PrefabAllocationPolicySpec(SchedulerPrefabSpec.CoreMem))
         assertContains(
             policies,
             FilterAllocationPolicySpec(
@@ -216,16 +234,34 @@ class LegacyExperimentTest {
                         InstanceCountFilterSpec(limit = 8),
                     ),
                 weighers = listOf(CoreRamWeigherSpec(multiplier = 1.0), VCpuCapacityWeigherSpec(multiplier = -1.0)),
-                subsetSize = 2,
             ),
         )
         assertContains(
             policies,
-            TimeShiftAllocationPolicySpec(
+            FilterAllocationPolicySpec(
                 filters = listOf(ComputeHostFilterSpec),
                 weighers = listOf(RamWeigherSpec(multiplier = 1.0)),
-                memorize = false,
-                taskStopper = TaskStopperSpec(windowSize = 168, forecast = true, forecastThreshold = 0.6, forecastSize = 24),
+                timeshift =
+                    TimeshiftSpec(
+                        taskStopper = TaskStopperSpec(windowSize = 168, forecast = true, forecastThreshold = 0.6, forecastSize = 24),
+                    ),
+            ),
+        )
+
+        // Memorizing policies placed each task on the host running the fewest tasks; timeshift policies did so by default
+        assertContains(
+            policies,
+            FilterAllocationPolicySpec(
+                filters = listOf(RamFilterSpec(allocationRatio = 1.0)),
+                weighers = listOf(InstanceCountWeigherSpec(multiplier = -1.0)),
+            ),
+        )
+        assertContains(
+            policies,
+            FilterAllocationPolicySpec(
+                filters = listOf(VCpuFilterSpec(allocationRatio = 1.0)),
+                weighers = listOf(InstanceCountWeigherSpec(multiplier = -1.0)),
+                timeshift = TimeshiftSpec(),
             ),
         )
     }
@@ -262,7 +298,7 @@ class LegacyExperimentTest {
         assertContains(checkpoints, null)
         assertContains(
             checkpoints,
-            CheckpointSpec(interval = TimeDelta.ofHours(1), duration = TimeDelta.ofMin(5), intervalScaling = 1.5),
+            CheckpointModelSpec(interval = TimeDelta.ofHours(1), duration = TimeDelta.ofMin(5), intervalScaling = 1.5),
         )
     }
 
@@ -278,20 +314,23 @@ class LegacyExperimentTest {
 
     @Test
     fun `a GPU host carries over its accelerator, overhead and distribution policy`() {
-        val hosts = load(FEATURES).topologies.first { it.clusters.single().name == "GpuCluster" }.clusters.single().hosts
+        val hosts =
+            load(FEATURES).topologies.first {
+                it.datacenters!!.single().clusters.single().name == "GpuCluster"
+            }.datacenters!!.single().clusters.single().hosts
         val (constant, shareBased, unset) = hosts
 
         val gpu = checkNotNull(constant.gpu)
         assertEquals(4, gpu.count)
         assertEquals(5120, gpu.coreCount)
         assertEquals(Frequency.ofMHz(5000), gpu.coreSpeed)
-        assertEquals(DataSize.ofMiB(30517578125), gpu.memory, "a bare GPU memorySize still counts MiB")
+        assertEquals(DataSize.ofGB(32), gpu.memory, "a bare GPU memorySize still counts MiB")
         assertEquals(DataRate.ofGBps(900), gpu.memoryBandwidth, "a spelled-out bandwidth is honoured as written")
         assertEquals("Volta", gpu.architecture)
         assertEquals(ConstantVirtualizationOverheadSpec(percentageOverhead = 0.05), gpu.virtualizationOverhead)
         assertEquals(PowerModelType.SQRT, constant.gpuPowerModel.type)
-        assertEquals(MaxMinFairness, constant.cpuDistribution)
-        assertEquals(BestEffort(updateIntervalMs = 60000), constant.gpuDistribution)
+        assertEquals(MaxMinFairnessPolicySpec, constant.cpuDistribution)
+        assertEquals(BestEffortPolicySpec(updateInterval = 1000), constant.gpuDistribution)
 
         // The CPU and memory keep the fields the two formats spell differently.
         assertEquals(2, constant.cpu.count)
@@ -300,26 +339,30 @@ class LegacyExperimentTest {
         assertEquals(Frequency.ofMHz(3200), constant.memory.speed)
 
         assertEquals(ShareBasedVirtualizationOverheadSpec, checkNotNull(shareBased.gpu).virtualizationOverhead)
-        assertEquals(FixedShare(shareRatio = 0.5), shareBased.gpuDistribution)
+        assertEquals(FixedSharePolicySpec(shareRatio = 0.5), shareBased.gpuDistribution)
 
         val unsetOverhead = checkNotNull(unset.gpu).virtualizationOverhead as ConstantVirtualizationOverheadSpec
         assertNull(unsetOverhead.percentageOverhead, "the legacy -1.0 sentinel meant 'unset'")
-        assertEquals(EqualShare, unset.gpuDistribution)
+        assertEquals(EqualSharePolicySpec, unset.gpuDistribution)
     }
 
     @Test
     fun `a battery cluster carries over its power source, battery and power models`() {
-        val cluster = load(FEATURES).topologies.first { it.clusters.single().name == "BatteryCluster" }.clusters.single()
+        val datacenter =
+            load(FEATURES).topologies.first {
+                it.datacenters!!.single().clusters.single().name == "BatteryCluster"
+            }.datacenters!!.single()
+        val cluster = datacenter.clusters.single()
 
-        assertEquals("grid", cluster.powerSource.name)
-        assertEquals(Power.ofWatts(50000), cluster.powerSource.maxPower)
-        assertEquals(NamedReference("carbon_traces/NL_2021-2024.parquet"), cluster.powerSource.carbon)
+        assertEquals("grid", datacenter.powerSource.name)
+        assertEquals(Power.ofWatts(50000), datacenter.powerSource.maxPower)
+        assertEquals(NamedReference("carbon_traces/NL_2021-2024.parquet"), datacenter.powerSource.carbon)
 
         val battery = checkNotNull(cluster.battery)
         assertEquals(0.1, battery.capacity)
         assertEquals(1000.0, battery.chargingSpeed)
         assertEquals(0.05, battery.initialCharge)
-        assertEquals(RunningMeanPolicy(startingThreshold = 150.0, windowSize = 24), battery.policy)
+        assertEquals(RunningMeanPolicySpec(startingThreshold = 150.0, windowSize = 24), battery.policy)
         assertEquals(1200.0, battery.embodiedCarbon)
         assertEquals(10.0, battery.expectedLifetime)
 
@@ -340,7 +383,7 @@ class LegacyExperimentTest {
             readLegacyExperiment(File(legacyRoot, "experiments/1.first_experiment_answers/simple_experiment.json"), legacyRoot)
 
         // The experiment lives two directories below the root, yet its "topologies/..." path resolved.
-        assertEquals(1, experiment.topologies.single().clusters.size)
+        assertEquals(1, experiment.topologies.single().datacenters!!.single().clusters.size)
     }
 
     @Test

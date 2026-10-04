@@ -22,31 +22,36 @@
 
 package org.opendc.sdk.runner.executor
 
-import org.opendc.compute.simulator.provisioner.Provisioner
-import org.opendc.compute.simulator.provisioner.ProvisioningContext
-import org.opendc.compute.simulator.provisioner.registerComputeMonitor
-import org.opendc.compute.simulator.provisioner.setupComputeService
-import org.opendc.compute.simulator.provisioner.setupHosts
-import org.opendc.compute.simulator.scheduler.ComputeScheduler
-import org.opendc.compute.simulator.service.ComputeService
-import org.opendc.compute.simulator.telemetry.OutputFiles
-import org.opendc.compute.topology.specs.ClusterSpec
 import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.resource.ResourceProvisioner
-import org.opendc.sdk.model.scheduler.TimeShiftAllocationPolicySpec
+import org.opendc.sdk.model.resource.ResourceReference
+import org.opendc.sdk.model.scheduler.AllocationPolicySpec
+import org.opendc.sdk.model.scheduler.FilterAllocationPolicySpec
+import org.opendc.sdk.model.scheduler.PrefabAllocationPolicySpec
+import org.opendc.sdk.model.scheduler.TimeshiftSpec
+import org.opendc.sdk.model.telemetry.OutputFileSpec
+import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.runner.RunResult
-import org.opendc.sdk.runner.factory.toClusterSpecs
 import org.opendc.sdk.runner.factory.toEngine
 import org.opendc.sdk.runner.factory.toExportSettings
 import org.opendc.sdk.runner.factory.toScheduler
-import org.opendc.sdk.runner.factory.toServiceTasks
-import org.opendc.sdk.runner.sink.OutputSink
-import org.opendc.sdk.runner.sink.RunContext
-import org.opendc.sdk.runner.sink.SinkSession
-import org.opendc.simulator.compute.power.CarbonModel
-import org.opendc.simulator.compute.power.CarbonReceiver
+import org.opendc.sdk.runner.factory.toSimTasks
+import org.opendc.sdk.runner.provision.Provisioner
+import org.opendc.sdk.runner.provision.ProvisioningContext
+import org.opendc.sdk.runner.provision.registerComputeMonitor
+import org.opendc.sdk.runner.provision.setupComputeService
+import org.opendc.sdk.runner.provision.setupHosts
+import org.opendc.sdk.runner.telemetry.sink.OutputSink
+import org.opendc.sdk.runner.telemetry.sink.RunContext
+import org.opendc.sdk.runner.telemetry.sink.SinkSession
+import org.opendc.simulator.compute.carbon.CarbonNode
+import org.opendc.simulator.compute.carbon.CarbonReceiver
+import org.opendc.simulator.compute.scheduler.ComputeScheduler
+import org.opendc.simulator.compute.scheduler.FilterScheduler
+import org.opendc.simulator.compute.service.ComputeService
 import org.opendc.simulator.kotlin.SimulationCoroutineScope
 import org.opendc.simulator.kotlin.runSimulation
+import java.nio.file.Path
 import java.time.Duration
 import java.time.InstantSource
 import java.util.Random
@@ -96,30 +101,34 @@ private class ScenarioRun(
     private val service: ComputeService get() = engine.resolve(ComputeService::class.java)
 
     suspend fun execute(): RunResult {
-        val workload = scenario.workload.toServiceTasks(scenario.checkpointModel, resources::resolve)
-        val startTime = workload.minOf { it.submittedAt }
-        val clusters = scenario.topology.toClusterSpecs(resources::resolve)
+        val workload = scenario.workload.toSimTasks(scenario.checkpointModel, resources::resolve)
 
-        provisionDatacenter(clusters, startTime)
-        val sessions = attachSinks(clusters.gpuCount(), startTime, workload.size)
-        connectCarbonModel()
+        // TODO: Link this properly
+        val numHosts = scenario.topology.datacenters!!.flatMap { dc -> dc.clusters.flatMap { it.hosts } }.sumOf { it.count }
+        val startTime = workload.minOf { it.submittedAt }
+        createService(scenario.topology, numHosts, startTime, resources::resolve)
+
+        // TODO: Why is GPUCount here referenced?
+        val sessions = attachSinks(scenario.topology.gpuCount(), startTime, workload.size)
+        connectCarbonNode()
 
         service.replay(clock, workload, scenario.failureModel, seed, resources::resolve)
         return RunResult(seed, sessions.mapNotNull { it.result() })
     }
 
-    private fun provisionDatacenter(
-        clusters: List<ClusterSpec>,
+    private fun createService(
+        topology: TopologySpec,
+        numHosts: Int,
         startTime: Long,
+        resolve: (ResourceReference) -> Path,
     ) {
-        val numHosts = clusters.sumOf { it.hostSpecs.size }
         engine.runSteps(
             setupComputeService(
                 SERVICE_DOMAIN,
                 { it.createScheduler(numHosts) },
                 maxNumFailures = scenario.maxNumFailures,
             ),
-            setupHosts(SERVICE_DOMAIN, clusters, startTime),
+            setupHosts(SERVICE_DOMAIN, topology, startTime, resolve),
         )
     }
 
@@ -135,7 +144,16 @@ private class ScenarioRun(
         taskCount: Int,
     ): List<SinkSession> {
         val export = scenario.exportModel.toExportSettings(gpuCount)
-        val context = RunContext(scenario, experimentName, scenarioId, seed, gpuCount, taskCount, export)
+        val context =
+            RunContext(
+                scenario,
+                experimentName,
+                scenarioId,
+                seed,
+                gpuCount,
+                taskCount,
+                export,
+            )
         val sessions = sinks.map { it.open(context) }
 
         sessions.forEach { session ->
@@ -146,37 +164,42 @@ private class ScenarioRun(
                     session.monitor,
                     currentExport.exportInterval,
                     Duration.ofMillis(startTime),
-                    OutputFiles.entries.associateWith { it in session.tables },
+                    OutputFileSpec.entries.associateWith { it in session.tables },
                     currentExport.printFrequency,
                 ),
             )
         }
 
-        service.setTasksExpected(taskCount)
-        service.addMetricReader(engine.getMonitors())
         return sessions
     }
 
     /** Connects a carbon-intensity trace, if the topology declares one, to every carbon-aware component. */
-    private suspend fun connectCarbonModel() {
-        val carbon = engine.resolveOrNull(CarbonModel::class.java) ?: return
-        val scheduler = engine.resolve(ComputeScheduler::class.java)
-        if (scheduler is CarbonReceiver) {
-            carbon.addReceiver(scheduler)
+    private suspend fun connectCarbonNode() {
+        val carbon = engine.resolveOrNull(CarbonNode::class.java) ?: return
+        val timeshifter = (engine.resolve(ComputeScheduler::class.java) as? FilterScheduler)?.timeshifter
+        if (timeshifter is CarbonReceiver) {
+            carbon.addReceiver(timeshifter)
+            // A change in carbon intensity can release delayed tasks, so it starts a scheduling cycle
             carbon.addReceiver(service)
         }
         connectTaskStopper(carbon)
     }
 
-    private suspend fun connectTaskStopper(carbon: CarbonModel) {
-        val policy = scenario.allocationPolicy as? TimeShiftAllocationPolicySpec ?: return
-        val taskStopper = policy.taskStopper.toEngine(coroutineContext, clock) ?: return
+    private suspend fun connectTaskStopper(carbon: CarbonNode) {
+        val taskStopper = scenario.allocationPolicy.timeshift()?.taskStopper.toEngine(coroutineContext, clock) ?: return
         taskStopper.setService(service)
         carbon.addReceiver(taskStopper)
     }
 }
 
-private fun List<ClusterSpec>.gpuCount(): Int = flatMap { it.hostSpecs }.maxOfOrNull { it.model.gpuModels.size } ?: 0
+/** The timeshift settings of this policy, looking through prefabs. */
+private fun AllocationPolicySpec.timeshift(): TimeshiftSpec? =
+    when (this) {
+        is PrefabAllocationPolicySpec -> prefabName.policy.timeshift()
+        is FilterAllocationPolicySpec -> timeshift
+    }
+
+private fun TopologySpec.gpuCount(): Int = datacenters!!.flatMap { dc -> dc.clusters.flatMap { it.hosts } }.maxOf { it.gpu?.count ?: 0 }
 
 private fun <T : Any> Provisioner.resolve(type: Class<T>): T = registry.resolve(SERVICE_DOMAIN, type)!!
 

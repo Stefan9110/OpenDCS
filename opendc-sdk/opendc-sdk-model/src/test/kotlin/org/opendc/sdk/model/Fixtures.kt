@@ -22,7 +22,7 @@
 
 package org.opendc.sdk.model
 
-import org.opendc.sdk.model.checkpoint.CheckpointSpec
+import org.opendc.sdk.model.checkpoint.CheckpointModelSpec
 import org.opendc.sdk.model.dsl.ghz
 import org.opendc.sdk.model.dsl.gib
 import org.opendc.sdk.model.dsl.kwatts
@@ -30,22 +30,23 @@ import org.opendc.sdk.model.dsl.minutes
 import org.opendc.sdk.model.dsl.watts
 import org.opendc.sdk.model.experiment.ExperimentSpec
 import org.opendc.sdk.model.experiment.ScenarioSpec
-import org.opendc.sdk.model.export.ExportSpec
 import org.opendc.sdk.model.failure.NoFailureSpec
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.scheduler.PrefabAllocationPolicySpec
-import org.opendc.sdk.model.scheduler.SchedulerNameSpec
+import org.opendc.sdk.model.scheduler.SchedulerPrefabSpec
+import org.opendc.sdk.model.telemetry.ExportSpec
 import org.opendc.sdk.model.topology.BatterySpec
 import org.opendc.sdk.model.topology.ClusterSpec
 import org.opendc.sdk.model.topology.CpuSpec
-import org.opendc.sdk.model.topology.DoubleThresholdPolicy
-import org.opendc.sdk.model.topology.EqualShare
-import org.opendc.sdk.model.topology.FixedShare
+import org.opendc.sdk.model.topology.DataCenterSpec
+import org.opendc.sdk.model.topology.DoubleBatteryPolicySpec
+import org.opendc.sdk.model.topology.EqualSharePolicySpec
+import org.opendc.sdk.model.topology.FixedSharePolicySpec
 import org.opendc.sdk.model.topology.HostSpec
 import org.opendc.sdk.model.topology.MemorySpec
+import org.opendc.sdk.model.topology.PowerModelSpec
 import org.opendc.sdk.model.topology.PowerModelType
 import org.opendc.sdk.model.topology.PowerSourceSpec
-import org.opendc.sdk.model.topology.PowerSpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.workload.InlineWorkloadSpec
 import org.opendc.sdk.model.workload.ScalingPolicySpec
@@ -64,12 +65,20 @@ public val validCpu: CpuSpec = CpuSpec(coreCount = 8, coreSpeed = 3.ghz)
 
 public val validHost: HostSpec = HostSpec(cpu = validCpu, memory = validMemory)
 
-public val validTopology: TopologySpec = TopologySpec(listOf(ClusterSpec(hosts = listOf(validHost))))
+public val validTopology: TopologySpec =
+    TopologySpec(
+        listOf(
+            DataCenterSpec(
+                listOf(
+                    ClusterSpec(hosts = listOf(validHost)),
+                ),
+            ),
+        ),
+    )
 
 public val validTask: TaskSpec =
     TaskSpec(
         id = 0,
-        name = "task",
         submissionTime = 0.minutes,
         duration = 10.minutes,
         cpuCoreCount = 1,
@@ -88,9 +97,9 @@ public val sampleHost: HostSpec =
         count = 4,
         cpu = CpuSpec(coreCount = 8, coreSpeed = 3.ghz, count = 2, vendor = "AMD", modelName = "EPYC", architecture = "Zen4"),
         memory = MemorySpec(size = 32.gib, speed = 3.ghz, vendor = "Samsung"),
-        cpuPowerModel = PowerSpec(PowerModelType.SQUARE, 500.watts, 100.watts, 350.watts),
-        cpuDistribution = FixedShare(0.5),
-        gpuDistribution = EqualShare,
+        cpuPowerModel = PowerModelSpec(PowerModelType.SQUARE, 500.watts, 100.watts, 350.watts),
+        cpuDistribution = FixedSharePolicySpec(0.5),
+        gpuDistribution = EqualSharePolicySpec,
     )
 
 public val sampleCluster: ClusterSpec =
@@ -98,6 +107,12 @@ public val sampleCluster: ClusterSpec =
         name = "cluster-a",
         count = 2,
         hosts = listOf(sampleHost),
+    )
+
+public val sampleDataCenter: DataCenterSpec =
+    DataCenterSpec(
+        name = "DC-a",
+        clusters = listOf(sampleCluster),
         powerSource = PowerSourceSpec(name = "grid", maxPower = 50.kwatts, carbon = NamedReference("carbon-trace")),
         battery =
             BatterySpec(
@@ -105,18 +120,17 @@ public val sampleCluster: ClusterSpec =
                 capacity = 100.0,
                 chargingSpeed = 1000.0,
                 initialCharge = 20.0,
-                policy = DoubleThresholdPolicy(lowerThreshold = 100.0, upperThreshold = 300.0),
+                policy = DoubleBatteryPolicySpec(lowerThreshold = 100.0, upperThreshold = 300.0),
                 embodiedCarbon = 50.0,
                 expectedLifetime = 10.0,
             ),
     )
 
-public val sampleTopology: TopologySpec = TopologySpec(listOf(sampleCluster))
+public val sampleTopology: TopologySpec = TopologySpec(listOf(sampleDataCenter))
 
 public val sampleRootTask: TaskSpec =
     TaskSpec(
         id = 0,
-        name = "t0",
         submissionTime = 0.minutes,
         duration = 10.minutes,
         cpuCoreCount = 4,
@@ -132,7 +146,6 @@ public val sampleRootTask: TaskSpec =
 public val sampleLeafTask: TaskSpec =
     TaskSpec(
         id = 1,
-        name = "t1",
         submissionTime = 2.minutes,
         duration = 20.minutes,
         cpuCoreCount = 8,
@@ -141,7 +154,7 @@ public val sampleLeafTask: TaskSpec =
         fragments = listOf(TaskFragmentSpec(duration = 20.minutes, cpuUsage = 3.ghz)),
         deferrable = true,
         deadline = 60.minutes,
-        parents = setOf(0),
+        parents = intArrayOf(0),
     )
 
 public val sampleWorkload: InlineWorkloadSpec = InlineWorkloadSpec(listOf(sampleRootTask, sampleLeafTask), ScalingPolicySpec.Perfect)
@@ -150,10 +163,10 @@ public val sampleScenario: ScenarioSpec =
     ScenarioSpec(
         topology = sampleTopology,
         workload = sampleWorkload,
-        allocationPolicy = PrefabAllocationPolicySpec(SchedulerNameSpec.CoreMem),
+        allocationPolicy = PrefabAllocationPolicySpec(SchedulerPrefabSpec.CoreMem),
         exportModel = ExportSpec(exportInterval = 10.minutes),
         failureModel = NoFailureSpec,
-        checkpointModel = CheckpointSpec(),
+        checkpointModel = CheckpointModelSpec(),
         maxNumFailures = 5,
         runs = 3,
         initialSeed = 42,
@@ -167,8 +180,8 @@ public val sampleExperiment: ExperimentSpec =
         workloads = setOf(sampleWorkload),
         allocationPolicies =
             setOf(
-                PrefabAllocationPolicySpec(SchedulerNameSpec.Mem),
-                PrefabAllocationPolicySpec(SchedulerNameSpec.CoreMem),
+                PrefabAllocationPolicySpec(SchedulerPrefabSpec.Mem),
+                PrefabAllocationPolicySpec(SchedulerPrefabSpec.CoreMem),
             ),
         failureModels = setOf(NoFailureSpec),
         maxNumFailures = setOf(5, 10),

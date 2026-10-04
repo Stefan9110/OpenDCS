@@ -26,13 +26,11 @@ import org.apache.commons.math3.distribution.ConstantRealDistribution
 import org.apache.commons.math3.distribution.RealDistribution
 import org.apache.commons.math3.distribution.UniformRealDistribution
 import org.apache.commons.math3.random.Well19937c
-import org.opendc.compute.failure.models.SampleBasedFailureModel
-import org.opendc.compute.failure.models.TraceBasedFailureModel
-import org.opendc.compute.failure.prefab.createFailureModelPrefab
-import org.opendc.compute.simulator.service.ComputeService
 import org.opendc.sdk.model.failure.ConstantDistributionSpec
 import org.opendc.sdk.model.failure.CustomFailureSpec
 import org.opendc.sdk.model.failure.DistributionSpec
+import org.opendc.sdk.model.failure.ExponentialDistributionSpec
+import org.opendc.sdk.model.failure.FailureModelSpec
 import org.opendc.sdk.model.failure.GammaDistributionSpec
 import org.opendc.sdk.model.failure.LogNormalDistributionSpec
 import org.opendc.sdk.model.failure.NoFailureSpec
@@ -42,7 +40,11 @@ import org.opendc.sdk.model.failure.PrefabFailureSpec
 import org.opendc.sdk.model.failure.TraceBasedFailureSpec
 import org.opendc.sdk.model.failure.UniformDistributionSpec
 import org.opendc.sdk.model.failure.WeibullDistributionSpec
+import org.opendc.sdk.model.failure.loader.FailureTraceLoader
 import org.opendc.sdk.model.resource.ResourceReference
+import org.opendc.simulator.compute.service.ComputeService
+import org.opendc.simulator.failure.models.SampleBasedFailureModel
+import org.opendc.simulator.failure.models.TraceBasedFailureModel
 import java.nio.file.Path
 import java.time.InstantSource
 import java.util.random.RandomGenerator
@@ -53,16 +55,14 @@ import org.apache.commons.math3.distribution.LogNormalDistribution as CmLogNorma
 import org.apache.commons.math3.distribution.NormalDistribution as CmNormalDistribution
 import org.apache.commons.math3.distribution.ParetoDistribution as CmParetoDistribution
 import org.apache.commons.math3.distribution.WeibullDistribution as CmWeibullDistribution
-import org.opendc.compute.failure.models.FailureModel as EngineFailureModel
-import org.opendc.compute.failure.prefab.FailurePrefab as EngineFailurePrefab
-import org.opendc.sdk.model.failure.ExponentialDistributionSpec as SdkExponentialDistribution
-import org.opendc.sdk.model.failure.FailureModelSpec as SdkFailureModel
+import org.opendc.simulator.failure.models.FailureModel as EngineFailureModel
 
 /**
- * Converts an SDK [SdkFailureModel] into the engine failure model injected during replay, or null
- * when no failures are configured. Trace references are materialized through [resolve].
+ * Converts an SDK [FailureModelSpec] into the engine failure model injected during replay, or null
+ * when no failures are configured. Trace references are materialized through [resolve] and loaded
+ * with [FailureTraceLoader].
  */
-internal fun SdkFailureModel.toEngine(
+internal fun FailureModelSpec.toEngine(
     context: CoroutineContext,
     clock: InstantSource,
     service: ComputeService,
@@ -71,26 +71,36 @@ internal fun SdkFailureModel.toEngine(
 ): EngineFailureModel? =
     when (this) {
         NoFailureSpec -> null
-        is TraceBasedFailureSpec -> TraceBasedFailureModel(context, clock, service, random, resolve(source).toString(), startPoint, repeat)
-        is PrefabFailureSpec -> createFailureModelPrefab(context, clock, service, random, EngineFailurePrefab.valueOf(prefabName.name))
-        is CustomFailureSpec -> {
-            val rng = Well19937c(random.nextLong())
-            SampleBasedFailureModel(
-                context,
-                clock,
-                service,
-                random,
-                interArrival.toSampler(rng),
-                duration.toSampler(rng),
-                hostFraction.toSampler(rng),
-            )
+        is TraceBasedFailureSpec -> {
+            val failures = FailureTraceLoader(resolve(source).toFile()).load(startPoint)
+            TraceBasedFailureModel(context, clock, service, random, failures, repeat)
         }
+        is PrefabFailureSpec -> prefabName.toCustomSpec().toSampleBasedModel(context, clock, service, random)
+        is CustomFailureSpec -> toSampleBasedModel(context, clock, service, random)
     }
+
+private fun CustomFailureSpec.toSampleBasedModel(
+    context: CoroutineContext,
+    clock: InstantSource,
+    service: ComputeService,
+    random: RandomGenerator,
+): SampleBasedFailureModel {
+    val rng = Well19937c(random.nextLong())
+    return SampleBasedFailureModel(
+        context,
+        clock,
+        service,
+        random,
+        interArrival.toSampler(rng),
+        duration.toSampler(rng),
+        hostFraction.toSampler(rng),
+    )
+}
 
 private fun DistributionSpec.toSampler(rng: org.apache.commons.math3.random.RandomGenerator): RealDistribution =
     when (this) {
         is ConstantDistributionSpec -> ConstantRealDistribution(value)
-        is SdkExponentialDistribution -> CmExponentialDistribution(rng, mean)
+        is ExponentialDistributionSpec -> CmExponentialDistribution(rng, mean)
         is GammaDistributionSpec -> CmGammaDistribution(rng, shape, scale)
         is LogNormalDistributionSpec -> CmLogNormalDistribution(rng, scale, shape)
         is NormalDistributionSpec -> CmNormalDistribution(rng, mean, std)

@@ -23,12 +23,12 @@
 package org.opendc.sdk.model.experiment
 
 import kotlinx.serialization.Serializable
-import org.opendc.sdk.model.checkpoint.CheckpointSpec
-import org.opendc.sdk.model.export.ExportSpec
+import org.opendc.sdk.model.checkpoint.CheckpointModelSpec
 import org.opendc.sdk.model.failure.FailureModelSpec
 import org.opendc.sdk.model.failure.NoFailureSpec
 import org.opendc.sdk.model.scheduler.AllocationPolicySpec
 import org.opendc.sdk.model.scheduler.PrefabAllocationPolicySpec
+import org.opendc.sdk.model.telemetry.ExportSpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.validation.Validatable
 import org.opendc.sdk.model.validation.ValidationIssue
@@ -56,7 +56,7 @@ public data class ExperimentSpec(
     public val allocationPolicies: Set<AllocationPolicySpec> = setOf(PrefabAllocationPolicySpec()),
     public val failureModels: Set<FailureModelSpec> = setOf(NoFailureSpec),
     public val maxNumFailures: Set<Int> = setOf(10),
-    public val checkpointModels: Set<CheckpointSpec?> = setOf(null),
+    public val checkpointModels: Set<CheckpointModelSpec?> = setOf(null),
     public val exportModels: Set<ExportSpec> = setOf(ExportSpec()),
     public val runs: Int = 1,
     public val initialSeed: Int = 0,

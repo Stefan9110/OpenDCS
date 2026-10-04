@@ -22,27 +22,27 @@
 
 package org.opendc.sdk.runner.factory
 
-import org.opendc.compute.simulator.telemetry.OutputFiles
-import org.opendc.compute.simulator.telemetry.parquet.ComputeExportConfig
-import org.opendc.compute.simulator.telemetry.parquet.withGpuColumns
-import org.opendc.compute.simulator.telemetry.table.battery.BatteryTableReader
-import org.opendc.compute.simulator.telemetry.table.host.HostTableReader
-import org.opendc.compute.simulator.telemetry.table.powerSource.PowerSourceTableReader
-import org.opendc.compute.simulator.telemetry.table.service.ServiceTableReader
-import org.opendc.compute.simulator.telemetry.table.task.TaskTableReader
-import org.opendc.sdk.model.export.AllColumns
-import org.opendc.sdk.model.export.ColumnSelection
-import org.opendc.sdk.model.export.ExportSpec
-import org.opendc.sdk.model.export.OnlyColumns
-import org.opendc.sdk.model.export.OutputFileSpec
-import org.opendc.trace.util.parquet.exporter.ExportColumn
-import org.opendc.trace.util.parquet.exporter.Exportable
+import org.opendc.sdk.model.telemetry.AllColumns
+import org.opendc.sdk.model.telemetry.ColumnSelection
+import org.opendc.sdk.model.telemetry.ExportSpec
+import org.opendc.sdk.model.telemetry.OnlyColumns
+import org.opendc.sdk.model.telemetry.OutputFileSpec
+import org.opendc.sdk.runner.telemetry.parquet.ComputeExportConfig
+import org.opendc.sdk.runner.telemetry.parquet.withGpuColumns
+import org.opendc.sdk.runner.telemetry.table.battery.BatterySample
+import org.opendc.sdk.runner.telemetry.table.cluster.ClusterSample
+import org.opendc.sdk.runner.telemetry.table.datacenter.DataCenterSample
+import org.opendc.sdk.runner.telemetry.table.host.HostSample
+import org.opendc.sdk.runner.telemetry.table.powerSource.PowerSourceSample
+import org.opendc.sdk.runner.telemetry.table.service.ServiceSample
+import org.opendc.sdk.runner.telemetry.table.task.TaskSample
+import org.opendc.trace.parquet.exporter.ExportColumn
+import org.opendc.trace.parquet.exporter.Exportable
 import java.time.Duration
 
-/** The engine export settings derived from an SDK [ExportSpec]. */
-internal data class ExportSettings(
+public data class ExportSettings(
     val config: ComputeExportConfig,
-    val filesToExport: Map<OutputFiles, Boolean>,
+    val filesToExport: Map<OutputFileSpec, Boolean>,
     val exportInterval: Duration,
     val printFrequency: Int?,
 )
@@ -59,11 +59,13 @@ internal fun ExportSpec.toExportSettings(gpuCount: Int): ExportSettings =
 private fun ExportSpec.toComputeExportConfig(gpuCount: Int): ComputeExportConfig {
     ComputeExportConfig.loadDfltColumns()
     return ComputeExportConfig(
-        columns.host.resolve<HostTableReader>(),
-        columns.task.resolve<TaskTableReader>(),
-        columns.powerSource.resolve<PowerSourceTableReader>(),
-        columns.battery.resolve<BatteryTableReader>(),
-        columns.service.resolve<ServiceTableReader>(),
+        columns.battery.resolve<BatterySample>(),
+        columns.cluster.resolve<ClusterSample>(),
+        columns.dataCenter.resolve<DataCenterSample>(),
+        columns.host.resolve<HostSample>(),
+        columns.powerSource.resolve<PowerSourceSample>(),
+        columns.service.resolve<ServiceSample>(),
+        columns.task.resolve<TaskSample>(),
     ).withGpuColumns(gpuCount)
 }
 
@@ -75,16 +77,7 @@ private inline fun <reified T : Exportable> ColumnSelection.resolve(): List<Expo
     }
 }
 
-private fun ExportSpec.toFilesToExport(): Map<OutputFiles, Boolean> {
-    val enabled = filesToExport.map { it.toEngineOutputFiles() }.toSet()
-    return OutputFiles.entries.associateWith { it in enabled }
+private fun ExportSpec.toFilesToExport(): Map<OutputFileSpec, Boolean> {
+    val enabled = filesToExport.toSet()
+    return OutputFileSpec.entries.associateWith { it in enabled }
 }
-
-internal fun OutputFileSpec.toEngineOutputFiles(): OutputFiles =
-    when (this) {
-        OutputFileSpec.HOST -> OutputFiles.HOST
-        OutputFileSpec.TASK -> OutputFiles.TASK
-        OutputFileSpec.POWER_SOURCE -> OutputFiles.POWER_SOURCE
-        OutputFileSpec.BATTERY -> OutputFiles.BATTERY
-        OutputFileSpec.SERVICE -> OutputFiles.SERVICE
-    }

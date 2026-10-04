@@ -41,15 +41,15 @@ trace on a power source.
 ## Modelling output: the sink pattern
 
 Output is modelled as composable **sinks**. A sink is a factory that opens a per-run session yielding
-a `ComputeMonitor`; the runner fans every metric record out to all sinks, so they compose freely —
+a `MetricExporter`; the runner fans every metric record out to all sinks, so they compose freely —
 parquet, in-memory capture, and streaming can all observe the same run.
 
 | Sink | Purpose |
 |------|---------|
 | `ParquetSink` | Writes the canonical layout `<root>/<experiment>/raw-output/<id>/seed=<seed>/{host,task,powerSource,battery,service}.parquet`. Added by `builder().output(root)`. |
-| `InMemorySink` | Captures selected tables as strongly-typed `HostSample`/`TaskSample`/`ServiceSample`/`PowerSourceSample`/`BatterySample`, available on `RunResult.metrics`. |
+| `InMemorySink` | Captures selected tables as strongly-typed `ClusterSample`/`TaskSample`/`ClusterSample`/`PowerSourceSample`/`ClusterSample`, available on `RunResult.metrics`. |
 | `CallbackSink` | Streams each snapshot to per-table callbacks without retaining it — for progress or large sweeps. |
-| `MonitorSink` | Feeds a caller-supplied `ComputeMonitor` — the full-control escape hatch. |
+| `MonitorSink` | Feeds a caller-supplied `MetricExporter` — the full-control escape hatch. |
 
 `RunResult` exposes convenience accessors: `outputPath` (the parquet directory) and `metrics` (the
 in-memory `CollectedMetrics`), alongside the raw `results: List<SinkResult>`.
@@ -61,7 +61,7 @@ The runner owns the entire SDK-model → engine translation and never depends on
 
 - **Topology** → `List<ClusterSpec>` (CPU/GPU/memory models, power models, distribution policies,
   virtualization overhead, power source, battery), fed to the reused `setupHosts` provisioning step.
-- **Workload** → `List<ServiceTask>` (trace workloads via `ComputeWorkloadLoader`; inline workloads
+- **Workload** → `List<SimTask>` (trace workloads via `ComputeWorkloadLoader`; inline workloads
   built directly).
 - **AllocationPolicy** → `ComputeScheduler` (prefab, filter, or time-shift, with filters/weighers).
 - **FailureModel** → the engine failure model injected during replay.

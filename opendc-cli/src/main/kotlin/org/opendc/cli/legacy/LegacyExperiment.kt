@@ -28,10 +28,12 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import org.opendc.sdk.model.experiment.ExperimentSpec
 import org.opendc.sdk.model.serialization.SdkJson
 import java.io.File
+import java.nio.file.Path
 
 /**
  * Reads an experiment written in the deprecated `opendc-experiments-base` JSON format, the format the
@@ -60,7 +62,7 @@ import java.io.File
  */
 internal fun readLegacyExperiment(
     file: File,
-    baseDir: File,
+    baseDir: File = Path.of("").toAbsolutePath().toFile(),
     strict: Boolean = false,
 ): ExperimentSpec {
     val document = SdkJson.json.parseToJsonElement(file.readText()).asObject("the experiment")
@@ -137,7 +139,10 @@ private val HOST_WEIGHERS =
  * Scheduler names, the task stopper and the timeshift thresholds are spelled identically in both
  * formats; only the policy's own key for the prefab name and the filter and weigher discriminators
  * differ. A prefab policy without a `policyName` keeps falling back to the default scheduler, exactly
- * as it did before.
+ * as it did before. A timeshift policy becomes a filter policy with timeshift settings. A memorizing
+ * policy placed each task on a host running the fewest tasks, ignoring its weighers, so it gets an
+ * instance-count weigher instead; timeshift policies memorized unless they said otherwise. Subsets no
+ * longer exist, so `subsetSize` is dropped.
  */
 private fun JsonObject.toSdkAllocationPolicy(): JsonObject =
     when (val type = tag("an allocation policy")) {
@@ -146,22 +151,52 @@ private fun JsonObject.toSdkAllocationPolicy(): JsonObject =
                 put("type", JsonPrimitive("prefab"))
                 rename(this@toSdkAllocationPolicy, from = "policyName", to = "prefabName")
             }
-        "filter", "timeshift" ->
+        "filter" ->
             buildJsonObject {
-                put("type", JsonPrimitive(type))
-                keep(
-                    this@toSdkAllocationPolicy,
-                    "subsetSize", "windowSize", "forecast", "shortForecastThreshold",
-                    "longForecastThreshold", "forecastSize", "taskStopper", "memorize",
-                )
+                put("type", JsonPrimitive("filter"))
                 optionalArrayAt("filters")?.let { put("filters", it.toSdkHostFilters()) }
-                optionalArrayAt("weighers")?.let { put("weighers", it.toSdkHostWeighers()) }
+                toSdkWeighers(memorizes(default = false))?.let { put("weighers", it) }
+            }
+        "timeshift" ->
+            buildJsonObject {
+                put("type", JsonPrimitive("filter"))
+                optionalArrayAt("filters")?.let { put("filters", it.toSdkHostFilters()) }
+                toSdkWeighers(memorizes(default = true))?.let { put("weighers", it) }
+                put(
+                    "timeshift",
+                    buildJsonObject {
+                        keep(
+                            this@toSdkAllocationPolicy,
+                            "windowSize",
+                            "forecast",
+                            "shortForecastThreshold",
+                            "longForecastThreshold",
+                            "forecastSize",
+                            "taskStopper",
+                        )
+                    },
+                )
             }
         else ->
             throw LegacyFormatException(
                 "unknown legacy allocation policy '$type' (expected one of prefab, filter, timeshift)",
             )
     }
+
+/** Whether this legacy policy memorized, which it did by [default] when it did not say. */
+private fun JsonObject.memorizes(default: Boolean): Boolean = (this["memorize"] as? JsonPrimitive)?.booleanOrNull ?: default
+
+/** The SDK weighers of this legacy policy; a memorizing one prefers the host running the fewest tasks. */
+private fun JsonObject.toSdkWeighers(memorize: Boolean): JsonArray? {
+    if (!memorize) return optionalArrayAt("weighers")?.toSdkHostWeighers()
+
+    val fewestTasks =
+        buildJsonObject {
+            put("type", JsonPrimitive("instanceCount"))
+            put("multiplier", JsonPrimitive(-1.0))
+        }
+    return JsonArray(listOf(fewestTasks))
+}
 
 private fun JsonArray.toSdkHostFilters(): JsonArray =
     JsonArray(
@@ -196,7 +231,7 @@ private fun JsonElement.toSdkFailureModel(): JsonObject {
         "no" -> NO_FAILURE
         "trace-based" ->
             buildJsonObject {
-                put("type", JsonPrimitive("traceBased"))
+                put("type", JsonPrimitive("trace"))
                 val path =
                     legacy.stringAt("pathToFile")
                         ?: throw LegacyFormatException("a trace-based failure model is missing its 'pathToFile'")

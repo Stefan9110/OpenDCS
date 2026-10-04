@@ -27,51 +27,56 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.yield
-import org.opendc.compute.api.TaskState
-import org.opendc.compute.simulator.TaskWatcher
-import org.opendc.compute.simulator.service.ComputeService
-import org.opendc.compute.simulator.service.ServiceTask
+import org.opendc.sdk.model.failure.FailureModelSpec
 import org.opendc.sdk.model.resource.ResourceReference
 import org.opendc.sdk.runner.factory.toEngine
+import org.opendc.simulator.compute.TaskWatcher
+import org.opendc.simulator.compute.service.ComputeService
+import org.opendc.simulator.compute.task.SimTask
+import org.opendc.simulator.compute.task.TaskState
 import java.nio.file.Path
 import java.time.InstantSource
+import java.util.Queue
 import java.util.Random
 import kotlin.coroutines.coroutineContext
 import kotlin.math.max
-import org.opendc.sdk.model.failure.FailureModelSpec as SdkFailureModel
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Submits [trace] to this [ComputeService] on the simulated [clock], honouring each task's
  * submission time, and injecting the failures described by [failureModel]. Blocks (in virtual time)
  * until every task reaches [TaskState.DELETED].
  *
+ * [trace] must already be ordered by submission time; tasks are [Queue.poll]ed off one at a time and
+ * dropped as they are submitted, so a large trace does not stay fully resident for the whole run.
+ *
  * A decoupled fork of the experiments-base replayer that sources failures from the SDK model
  * instead of experiment specs.
  */
-internal suspend fun ComputeService.replay(
+public suspend fun ComputeService.replay(
     clock: InstantSource,
-    trace: List<ServiceTask>,
-    failureModel: SdkFailureModel,
+    trace: Queue<SimTask>,
+    failureModel: FailureModelSpec? = null,
     seed: Long,
-    resolve: (ResourceReference) -> Path,
+    resolve: ((ResourceReference) -> Path)? = null,
     submitImmediately: Boolean = false,
 ) {
-    val client = newClient()
-    val engineFailure = failureModel.toEngine(coroutineContext, clock, this, Random(seed), resolve)
+    println("Starting replay")
+    val engineFailure = failureModel?.toEngine(coroutineContext, clock, this, Random(seed), resolve!!)
     try {
         coroutineScope {
             engineFailure?.start()
             var simulationOffset = Long.MIN_VALUE
-            for (task in trace.sortedBy { it.submittedAt }) {
+            for (task in generateSequence(trace::poll)) {
                 val now = clock.millis()
                 val start = task.submittedAt
                 if (simulationOffset == Long.MIN_VALUE) simulationOffset = start - now
                 if (!submitImmediately) {
-                    delay(max(0, start - now - simulationOffset))
+                    delay(max(0, start - now - simulationOffset).milliseconds)
                     task.deadline -= simulationOffset
                 }
                 launch {
-                    val submitted = client.newTask(task)
+                    val submitted = submitTask(task)
                     val watcher = RunningTaskWatcher()
                     watcher.lock()
                     submitted.watch(watcher)
@@ -82,7 +87,6 @@ internal suspend fun ComputeService.replay(
         yield()
     } finally {
         engineFailure?.close()
-        client.close()
     }
 }
 
@@ -100,9 +104,11 @@ internal class RunningTaskWatcher : TaskWatcher {
     }
 
     override fun onStateChanged(
-        task: ServiceTask,
+        task: SimTask,
         newState: TaskState,
     ) {
-        if (unlockStates.contains(newState)) mutex.unlock()
+        if (unlockStates.contains(newState)) {
+            mutex.unlock()
+        }
     }
 }

@@ -12,4 +12,9 @@ dependencies {
     testImplementation(kotlin("test"))
     testImplementation(libs.jackson.databind)
     testImplementation(libs.jackson.module.kotlin)
+    testImplementation(project(":opendc-trace:opendc-trace-parquet"))
+
+    implementation(project(mapOf("path" to ":opendc-trace:opendc-trace-api")))
+    implementation(project(mapOf("path" to ":opendc-simulator:opendc-simulator-compute")))
+    implementation(project(mapOf("path" to ":opendc-simulator:opendc-simulator-failure")))
 }

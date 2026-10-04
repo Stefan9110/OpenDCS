@@ -29,17 +29,17 @@ import org.junit.jupiter.api.assertAll
 import org.opendc.sdk.model.dsl.experiment
 import org.opendc.sdk.model.dsl.hours
 import org.opendc.sdk.model.experiment.ExperimentSpec
-import org.opendc.sdk.model.export.ExportSpec
 import org.opendc.sdk.model.failure.NoFailureSpec
 import org.opendc.sdk.model.failure.TraceBasedFailureSpec
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.serialization.SdkJson
+import org.opendc.sdk.model.telemetry.ExportSpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.workload.TraceWorkloadSpec
 import org.opendc.sdk.runner.OpenDC
 import org.opendc.sdk.runner.provision.FileSystemResourceProvisioner
-import org.opendc.sdk.runner.sink.CollectedMetrics
-import org.opendc.sdk.runner.sink.InMemorySink
+import org.opendc.sdk.runner.telemetry.sink.CollectedMetrics
+import org.opendc.sdk.runner.telemetry.sink.InMemorySink
 import java.nio.file.Path
 import kotlin.math.abs
 
@@ -195,8 +195,8 @@ class DemoExperimentsTest {
 
     /** The demo-relevant aggregates of one scenario's captured metrics. */
     private class ScenarioSummary(metrics: CollectedMetrics) {
-        val energy = metrics.powerSource.sumOf { it.energyUsage }
-        val carbon = metrics.powerSource.sumOf { it.carbonEmission }
+        val energy = metrics.powerSource.last().energyUsage
+        val carbon = metrics.powerSource.last().carbonEmission
         val tasksTotal = metrics.service.maxOf { it.tasksTotal }
         val tasksCompleted = metrics.service.maxOf { it.tasksCompleted }
         val tasksTerminated = metrics.service.maxOf { it.tasksTerminated }

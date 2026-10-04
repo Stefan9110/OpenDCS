@@ -23,10 +23,12 @@
 package org.opendc.cli
 
 import com.github.ajalt.clikt.core.Context
+import com.github.ajalt.clikt.core.ProgramResult
 import com.github.ajalt.clikt.core.terminal
 import org.opendc.cli.config.CliConfig
 import org.opendc.cli.render.TopologyView
 import org.opendc.cli.render.renderTopologies
+import org.opendc.cli.render.renderValidation
 
 /** `opendc show` — print every topology declared in an experiment file. */
 internal class ShowCommand(config: CliConfig = CliConfig.DEFAULTS) : ExperimentCommand("show", config) {
@@ -34,6 +36,11 @@ internal class ShowCommand(config: CliConfig = CliConfig.DEFAULTS) : ExperimentC
 
     override fun run() {
         val experiment = loadExperiment()
+
+        if (!renderValidation(terminal, experimentFile.name, experiment.validate(), config, showSuccess = false)) {
+            throw ProgramResult(1)
+        }
+
         renderTopologies(terminal, TopologyView.from(experiment, config), config)
     }
 }

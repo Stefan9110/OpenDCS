@@ -21,22 +21,35 @@
  */
 
 package org.opendc.sdk.runner.base
+import org.apache.hadoop.conf.Configuration
+import org.apache.parquet.hadoop.api.WriteSupport
+import org.apache.parquet.io.api.RecordConsumer
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertAll
+import org.junit.jupiter.api.io.TempDir
 import org.opendc.common.units.TimeDelta
-import org.opendc.sdk.model.checkpoint.CheckpointSpec
+import org.opendc.sdk.model.checkpoint.CheckpointModelSpec
+import org.opendc.sdk.model.failure.ConstantDistributionSpec
+import org.opendc.sdk.model.failure.CustomFailureSpec
 import org.opendc.sdk.model.failure.TraceBasedFailureSpec
 import org.opendc.sdk.model.resource.NamedReference
+import org.opendc.sdk.model.resource.UriReference
 import org.opendc.sdk.runner.base.harness.createTestTask
 import org.opendc.sdk.runner.base.harness.createTopology
 import org.opendc.sdk.runner.base.harness.fragment
 import org.opendc.sdk.runner.base.harness.runTest
+import org.opendc.trace.formats.failure.parquet.FAILURE_SCHEMA
+import org.opendc.trace.parquet.LocalParquetWriter
+import java.nio.file.Path
 
 /**
  * An integration test suite for the Scenario experiments.
  */
 class FailuresAndCheckpointingTest {
+    @TempDir
+    lateinit var tempDir: Path
+
     /**
      * Failure test 1: Single Task, Single Failure
      * In this test, a single task is scheduled that is interrupted by a failure after 5 min.
@@ -74,12 +87,12 @@ class FailuresAndCheckpointingTest {
 
         assertAll(
             { assertEquals(20 * 60 * 1000, monitor.maxTimestamp) { "Total runtime incorrect" } },
-            { assertEquals(((15 * 30000) + (5 * 60000)).toLong(), monitor.hostCpuIdleTimes["H01"]?.sum()) { "Idle time incorrect" } },
-            { assertEquals((15 * 30000).toLong(), monitor.hostCpuActiveTimes["H01"]?.sum()) { "Active time incorrect" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(0)) { "Incorrect energy usage" } },
-            { assertEquals(6000.0, monitor.hostEnergyUsages["H01"]?.get(5)) { "Incorrect energy usage" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(10)) { "Incorrect energy usage" } },
-            { assertEquals((15 * 60 * 150.0) + (5 * 60 * 100.0), monitor.hostEnergyUsages["H01"]?.sum()) { "Incorrect energy usage" } },
+            { assertEquals(((15 * 30000) + (5 * 60000)).toLong(), monitor.hostCpuIdleTimes["H01"]?.last()) { "Idle time incorrect" } },
+            { assertEquals((15 * 30000).toLong(), monitor.hostCpuActiveTimes["H01"]?.last()) { "Active time incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(0)) { "Incorrect energy usage" } },
+            { assertEquals(100.0, monitor.hostPowerDraws["H01"]?.get(5)) { "Incorrect energy usage" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(10)) { "Incorrect energy usage" } },
+            { assertEquals((15 * 60 * 150.0) + (5 * 60 * 100.0), monitor.hostEnergyUsages["H01"]?.last()) { "Incorrect energy usage" } },
         )
     }
 
@@ -115,10 +128,10 @@ class FailuresAndCheckpointingTest {
 
         assertAll(
             { assertEquals(10 * 60 * 1000, monitor.maxTimestamp) { "Total runtime incorrect" } },
-            { assertEquals((10 * 30000).toLong(), monitor.hostCpuIdleTimes["H01"]?.sum()) { "Idle time incorrect" } },
-            { assertEquals((10 * 30000).toLong(), monitor.hostCpuActiveTimes["H01"]?.sum()) { "Active time incorrect" } },
+            { assertEquals((10 * 30000).toLong(), monitor.hostCpuIdleTimes["H01"]?.last()) { "Idle time incorrect" } },
+            { assertEquals((10 * 30000).toLong(), monitor.hostCpuActiveTimes["H01"]?.last()) { "Active time incorrect" } },
             { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(0)) { "Incorrect energy usage" } },
-            { assertEquals((600 * 150.0), monitor.hostEnergyUsages["H01"]?.sum()) { "Incorrect energy usage" } },
+            { assertEquals((600 * 150.0), monitor.hostEnergyUsages["H01"]?.last()) { "Incorrect energy usage" } },
         )
     }
 
@@ -159,12 +172,12 @@ class FailuresAndCheckpointingTest {
 
         assertAll(
             { assertEquals(37 * 60 * 1000, monitor.maxTimestamp) { "Total runtime incorrect" } },
-            { assertEquals(((22 * 30000) + (15 * 60000)).toLong(), monitor.hostCpuIdleTimes["H01"]?.sum()) { "Idle time incorrect" } },
-            { assertEquals((22 * 30000).toLong(), monitor.hostCpuActiveTimes["H01"]?.sum()) { "Active time incorrect" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(0)) { "Incorrect energy usage" } },
-            { assertEquals(6000.0, monitor.hostEnergyUsages["H01"]?.get(5)) { "Incorrect energy usage" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(10)) { "Incorrect energy usage" } },
-            { assertEquals((22 * 60 * 150.0) + (15 * 60 * 100.0), monitor.hostEnergyUsages["H01"]?.sum()) { "Incorrect energy usage" } },
+            { assertEquals(((22 * 30000) + (15 * 60000)).toLong(), monitor.hostCpuIdleTimes["H01"]?.last()) { "Idle time incorrect" } },
+            { assertEquals((22 * 30000).toLong(), monitor.hostCpuActiveTimes["H01"]?.last()) { "Active time incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(0)) { "Incorrect energy usage" } },
+            { assertEquals(100.0, monitor.hostPowerDraws["H01"]?.get(5)) { "Incorrect energy usage" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(10)) { "Incorrect energy usage" } },
+            { assertEquals((22 * 60 * 150.0) + (15 * 60 * 100.0), monitor.hostEnergyUsages["H01"]?.last()) { "Incorrect energy usage" } },
         )
     }
 
@@ -205,30 +218,136 @@ class FailuresAndCheckpointingTest {
 
         assertAll(
             { assertEquals(95 * 60000, monitor.maxTimestamp) { "Total runtime incorrect" } },
-            { assertEquals(((50 * 60000) + (20 * 60000)).toLong(), monitor.hostCpuIdleTimes["H01"]?.sum()) { "Idle time incorrect" } },
-            { assertEquals((25 * 60000).toLong(), monitor.hostCpuActiveTimes["H01"]?.sum()) { "Active time incorrect" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(0)) { "Incorrect energy usage" } },
-            { assertEquals(6000.0, monitor.hostEnergyUsages["H01"]?.get(5)) { "Incorrect energy usage" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(10)) { "Incorrect energy usage" } },
-            { assertEquals(6000.0, monitor.hostEnergyUsages["H01"]?.get(15)) { "Incorrect energy usage" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(20)) { "Incorrect energy usage" } },
-            { assertEquals(6000.0, monitor.hostEnergyUsages["H01"]?.get(25)) { "Incorrect energy usage" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(30)) { "Incorrect energy usage" } },
-            { assertEquals(6000.0, monitor.hostEnergyUsages["H01"]?.get(35)) { "Incorrect energy usage" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(40)) { "Incorrect energy usage" } },
-            { assertEquals(6000.0, monitor.hostEnergyUsages["H01"]?.get(45)) { "Incorrect energy usage" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(50)) { "Incorrect energy usage" } },
-            { assertEquals(6000.0, monitor.hostEnergyUsages["H01"]?.get(55)) { "Incorrect energy usage" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(60)) { "Incorrect energy usage" } },
-            { assertEquals(6000.0, monitor.hostEnergyUsages["H01"]?.get(65)) { "Incorrect energy usage" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(70)) { "Incorrect energy usage" } },
-            { assertEquals(6000.0, monitor.hostEnergyUsages["H01"]?.get(75)) { "Incorrect energy usage" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(80)) { "Incorrect energy usage" } },
-            { assertEquals(6000.0, monitor.hostEnergyUsages["H01"]?.get(85)) { "Incorrect energy usage" } },
-            { assertEquals(9000.0, monitor.hostEnergyUsages["H01"]?.get(90)) { "Incorrect energy usage" } },
-            { assertEquals(0.0, monitor.hostEnergyUsages["H01"]?.get(95)) { "Incorrect energy usage" } },
-            { assertEquals((10 * 300 * 150.0) + (9 * 300 * 100.0), monitor.hostEnergyUsages["H01"]?.sum()) { "Incorrect energy usage" } },
+            { assertEquals(((50 * 60000) + (20 * 60000)).toLong(), monitor.hostCpuIdleTimes["H01"]?.last()) { "Idle time incorrect" } },
+            { assertEquals((25 * 60000).toLong(), monitor.hostCpuActiveTimes["H01"]?.last()) { "Active time incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(0)) { "Energy usage of H01 at t=0 is incorrect" } },
+            { assertEquals(100.0, monitor.hostPowerDraws["H01"]?.get(5)) { "Energy usage of H01 at t=5 is incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(10)) { "Energy usage of H01 at t=10 is incorrect" } },
+            { assertEquals(100.0, monitor.hostPowerDraws["H01"]?.get(15)) { "Energy usage of H01 at t=15 is incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(20)) { "Energy usage of H01 at t=20 is incorrect" } },
+            { assertEquals(100.0, monitor.hostPowerDraws["H01"]?.get(25)) { "Energy usage of H01 at t=25 is incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(30)) { "Energy usage of H01 at t=30 is incorrect" } },
+            { assertEquals(100.0, monitor.hostPowerDraws["H01"]?.get(35)) { "Energy usage of H01 at t=35 is incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(40)) { "Energy usage of H01 at t=40 is incorrect" } },
+            { assertEquals(100.0, monitor.hostPowerDraws["H01"]?.get(45)) { "Energy usage of H01 at t=45 is incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(50)) { "Energy usage of H01 at t=50 is incorrect" } },
+            { assertEquals(100.0, monitor.hostPowerDraws["H01"]?.get(55)) { "Energy usage of H01 at t=55 is incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(60)) { "Energy usage of H01 at t=60 is incorrect" } },
+            { assertEquals(100.0, monitor.hostPowerDraws["H01"]?.get(65)) { "Energy usage of H01 at t=65 is incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(70)) { "Energy usage of H01 at t=70 is incorrect" } },
+            { assertEquals(100.0, monitor.hostPowerDraws["H01"]?.get(75)) { "Energy usage of H01 at t=75 is incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(80)) { "Energy usage of H01 at t=80 is incorrect" } },
+            { assertEquals(100.0, monitor.hostPowerDraws["H01"]?.get(85)) { "Energy usage of H01 at t=85 is incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(90)) { "Energy usage of H01 at t=90 is incorrect" } },
+            { assertEquals(150.0, monitor.hostPowerDraws["H01"]?.get(94)) { "Energy usage of H01 at t=94 is incorrect" } },
+            {
+                assertEquals((10 * 300 * 150.0) + (9 * 300 * 100.0), monitor.hostEnergyUsages["H01"]?.last()) {
+                    "Total Energy usage of H01 is incorrect"
+                }
+            },
         )
+    }
+
+    /**
+     * Failure test 5: Sample based failures keep being injected
+     * In this test, a failure of 7.5 min is injected every 15 min, so failures occur at 15-22.5 min and 37.5-45 min.
+     * The first task finishes at 10 min, before the first failure.
+     * The second task is submitted at 30 min and is interrupted by the second failure after 7.5 min.
+     * Because there is no checkpointing, the full task has to be rerun after the host recovers at 45 min.
+     *
+     * This means the final runtime is 55 minutes, of which 27.5 minutes are spent running a task.
+     */
+    @Test
+    fun testFailures5() {
+        val workload =
+            listOf(
+                createTestTask(
+                    id = 0,
+                    fragments =
+                        listOf(
+                            fragment(10 * 60 * 1000, 1000.0),
+                        ),
+                    cpuCoreCount = 1,
+                ),
+                createTestTask(
+                    id = 1,
+                    submissionTime = "1970-01-01T00:30",
+                    fragments =
+                        listOf(
+                            fragment(10 * 60 * 1000, 1000.0),
+                        ),
+                    cpuCoreCount = 1,
+                ),
+            )
+
+        // Distributions are sampled in hours
+        val failureModel =
+            CustomFailureSpec(
+                interArrival = ConstantDistributionSpec(0.25),
+                duration = ConstantDistributionSpec(0.125),
+                hostFraction = ConstantDistributionSpec(1.0),
+            )
+
+        val topology = createTopology("single_1_2000.json")
+
+        val monitor = runTest(topology, workload, failureModel)
+
+        assertAll(
+            { assertEquals(55 * 60 * 1000, monitor.maxTimestamp) { "Total runtime incorrect" } },
+            { assertEquals((55 * 60000 - 55 * 15000).toLong(), monitor.hostCpuIdleTimes["H01"]?.last()) { "Idle time incorrect" } },
+            { assertEquals((55 * 15000).toLong(), monitor.hostCpuActiveTimes["H01"]?.last()) { "Active time incorrect" } },
+        )
+    }
+
+    /**
+     * Failure test 6: Empty repeated failure trace
+     * In this test, a single task is scheduled with a failure trace that contains no failures and is repeated.
+     * Replaying the empty trace should not inject any failures, nor stop the simulation from progressing.
+     */
+    @Test
+    fun testFailures6() {
+        val workload =
+            listOf(
+                createTestTask(
+                    id = 0,
+                    fragments =
+                        listOf(
+                            fragment(10 * 60 * 1000, 1000.0),
+                        ),
+                    cpuCoreCount = 1,
+                ),
+            )
+
+        val emptyTrace = tempDir.resolve("no_failures.parquet")
+        LocalParquetWriter.builder(emptyTrace, EmptyFailureTraceWriteSupport()).build().close()
+
+        val failureModel =
+            TraceBasedFailureSpec(
+                source = UriReference(emptyTrace.toUri().toString()),
+                repeat = true,
+            )
+
+        val topology = createTopology("single_1_2000.json")
+
+        val monitor = runTest(topology, workload, failureModel)
+
+        assertAll(
+            { assertEquals(10 * 60 * 1000, monitor.maxTimestamp) { "Total runtime incorrect" } },
+            { assertEquals((10 * 30000).toLong(), monitor.hostCpuActiveTimes["H01"]?.last()) { "Active time incorrect" } },
+        )
+    }
+
+    /**
+     * Writes a failure trace without any entries.
+     */
+    private class EmptyFailureTraceWriteSupport : WriteSupport<Unit>() {
+        override fun init(configuration: Configuration): WriteContext = WriteContext(FAILURE_SCHEMA, emptyMap())
+
+        override fun prepareForWrite(recordConsumer: RecordConsumer) {}
+
+        override fun write(record: Unit) {
+            error("An empty failure trace has no records")
+        }
     }
 
     /**
@@ -267,7 +386,7 @@ class FailuresAndCheckpointingTest {
                 workload,
                 failureModel,
                 checkpointModel =
-                    CheckpointSpec(
+                    CheckpointModelSpec(
                         interval = TimeDelta.ofMillis(60 * 1000L),
                         duration = TimeDelta.ofMillis(1000L),
                     ),
@@ -284,7 +403,7 @@ class FailuresAndCheckpointingTest {
             {
                 assertEquals(
                     (10 * 60 * 150.0) + (5 * 60 * 100.0) + (9 * 150.0) + (56 * 150.0),
-                    monitor.hostEnergyUsages["H01"]?.sum(),
+                    monitor.hostEnergyUsages["H01"]?.last(),
                 ) { "Incorrect energy usage" }
             },
         )
@@ -330,7 +449,7 @@ class FailuresAndCheckpointingTest {
                 workload,
                 failureModel,
                 checkpointModel =
-                    CheckpointSpec(
+                    CheckpointModelSpec(
                         interval = TimeDelta.ofMillis(60 * 1000L),
                         duration = TimeDelta.ofMillis(1000L),
                     ),
@@ -346,7 +465,7 @@ class FailuresAndCheckpointingTest {
             {
                 assertEquals(
                     (10 * 60 * 200.0) + (10 * 60 * 150.0) + (5 * 60 * 100.0) + (19 * 200.0) + (56 * 200.0),
-                    monitor.hostEnergyUsages["H01"]?.sum(),
+                    monitor.hostEnergyUsages["H01"]?.last(),
                 ) { "Incorrect energy usage" }
             },
         )
@@ -392,7 +511,7 @@ class FailuresAndCheckpointingTest {
                 workload,
                 failureModel,
                 checkpointModel =
-                    CheckpointSpec(
+                    CheckpointModelSpec(
                         interval = TimeDelta.ofMillis(60 * 1000L),
                         duration = TimeDelta.ofMillis(1000L),
                     ),
@@ -408,7 +527,7 @@ class FailuresAndCheckpointingTest {
             {
                 assertEquals(
                     (10 * 60 * 200.0) + (10 * 60 * 150.0) + (5 * 60 * 100.0) + (19 * 200.0) + (56 * 150.0),
-                    monitor.hostEnergyUsages["H01"]?.sum(),
+                    monitor.hostEnergyUsages["H01"]?.last(),
                 ) { "Incorrect energy usage" }
             },
         )
@@ -449,7 +568,7 @@ class FailuresAndCheckpointingTest {
                 workload,
                 failureModel,
                 checkpointModel =
-                    CheckpointSpec(
+                    CheckpointModelSpec(
                         interval = TimeDelta.ofMillis(60 * 1000L),
                         duration = TimeDelta.ofMillis(1000L),
                         intervalScaling = 1.5,
@@ -459,7 +578,7 @@ class FailuresAndCheckpointingTest {
         assertAll(
             { assertEquals((10 * 60000) + (5 * 60 * 1000) + (4 * 1000) + (14 * 1000), monitor.maxTimestamp) { "Total runtime incorrect" } },
             {
-                assertEquals((10 * 60 * 150.0) + (5 * 60 * 100.0) + (4 * 150.0) + (14 * 150.0), monitor.hostEnergyUsages["H01"]?.sum()) {
+                assertEquals((10 * 60 * 150.0) + (5 * 60 * 100.0) + (4 * 150.0) + (14 * 150.0), monitor.hostEnergyUsages["H01"]?.last()) {
                     "Incorrect energy usage"
                 }
             },
@@ -500,7 +619,7 @@ class FailuresAndCheckpointingTest {
                 workload,
                 failureModel,
                 checkpointModel =
-                    CheckpointSpec(
+                    CheckpointModelSpec(
                         interval = TimeDelta.ofMillis(60 * 1000L),
                         duration = TimeDelta.ofMillis(1000L),
                     ),
@@ -511,7 +630,7 @@ class FailuresAndCheckpointingTest {
             {
                 assertEquals(
                     (665 * 150.0) + (300 * 100.0),
-                    monitor.hostEnergyUsages["H01"]?.sum(),
+                    monitor.hostEnergyUsages["H01"]?.last(),
                 ) { "Incorrect energy usage" }
             },
         )
@@ -551,7 +670,7 @@ class FailuresAndCheckpointingTest {
                 workload,
                 failureModel,
                 checkpointModel =
-                    CheckpointSpec(
+                    CheckpointModelSpec(
                         interval = TimeDelta.ofMillis(60 * 1000L),
                         duration = TimeDelta.ofMillis(1000L),
                     ),
@@ -562,7 +681,7 @@ class FailuresAndCheckpointingTest {
             {
                 assertEquals(
                     (300 * 150.0) + (300 * 100.0) + (300 * 150.0) + (300 * 100.0) + (121 * 150.0),
-                    monitor.hostEnergyUsages["H01"]?.sum(),
+                    monitor.hostEnergyUsages["H01"]?.last(),
                 ) { "Incorrect energy usage" }
             },
         )

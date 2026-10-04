@@ -27,18 +27,18 @@ import org.junit.jupiter.api.assertDoesNotThrow
 import org.opendc.common.units.Frequency
 import org.opendc.common.units.Power
 import org.opendc.common.units.TimeDelta
-import org.opendc.sdk.model.checkpoint.CheckpointSpec
+import org.opendc.sdk.model.checkpoint.CheckpointModelSpec
 import org.opendc.sdk.model.experiment.ExperimentSpec
 import org.opendc.sdk.model.failure.UniformDistributionSpec
 import org.opendc.sdk.model.failure.WeibullDistributionSpec
 import org.opendc.sdk.model.resource.NamedReference
-import org.opendc.sdk.model.scheduler.FilterAllocationPolicySpec
 import org.opendc.sdk.model.scheduler.InstanceCountFilterSpec
 import org.opendc.sdk.model.scheduler.TaskStopperSpec
 import org.opendc.sdk.model.topology.ClusterSpec
 import org.opendc.sdk.model.topology.CpuSpec
+import org.opendc.sdk.model.topology.DataCenterSpec
 import org.opendc.sdk.model.topology.HostSpec
-import org.opendc.sdk.model.topology.PowerSpec
+import org.opendc.sdk.model.topology.PowerModelSpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.validExperiment
 import org.opendc.sdk.model.validMemory
@@ -63,15 +63,6 @@ class ValidationTest {
     }
 
     @Test
-    fun `filter allocation policy with zero subsetSize reports subsetSize`() {
-        val policy = FilterAllocationPolicySpec(subsetSize = 0)
-
-        val issues = assertDoesNotThrow { policy.validate() }
-
-        assertContains(issues.paths(), "subsetSize")
-    }
-
-    @Test
     fun `task stopper with out-of-range forecastThreshold reports forecastThreshold`() {
         val stopper = TaskStopperSpec(forecastThreshold = 2.0)
 
@@ -91,7 +82,7 @@ class ValidationTest {
 
     @Test
     fun `power model with maxPower below idlePower reports maxPower`() {
-        val model = PowerSpec(maxPower = Power.ofWatts(100), idlePower = Power.ofWatts(200))
+        val model = PowerModelSpec(maxPower = Power.ofWatts(100), idlePower = Power.ofWatts(200))
 
         val issues = assertDoesNotThrow { model.validate() }
 
@@ -129,7 +120,7 @@ class ValidationTest {
 
     @Test
     fun `checkpoint model with non-positive interval reports interval`() {
-        val model = CheckpointSpec(interval = TimeDelta.zero)
+        val model = CheckpointModelSpec(interval = TimeDelta.zero)
 
         val issues = assertDoesNotThrow { model.validate() }
 
@@ -157,16 +148,23 @@ class ValidationTest {
         val topology =
             TopologySpec(
                 listOf(
-                    ClusterSpec(
-                        hosts = listOf(HostSpec(cpu = CpuSpec(coreCount = 0, coreSpeed = Frequency.ofGHz(3.0)), memory = validMemory)),
+                    DataCenterSpec(
+                        listOf(
+                            ClusterSpec(
+                                hosts =
+                                    listOf(
+                                        HostSpec(cpu = CpuSpec(coreCount = 0, coreSpeed = Frequency.ofGHz(3.0)), memory = validMemory),
+                                    ),
+                            ),
+                        ),
                     ),
                 ),
             )
 
         val issues = assertDoesNotThrow { topology.validate() }
 
-        assertContains(issues.paths(), "clusters[0].hosts[0].cpu.coreCount")
-        assertTrue(issues.any { it.path.contains("clusters[0].hosts[0].cpu") })
+        assertContains(issues.paths(), "datacenters[0].clusters[0].hosts[0].cpu.coreCount")
+        assertTrue(issues.any { it.path.contains("datacenters[0].clusters[0].hosts[0].cpu") })
     }
 
     private fun List<ValidationIssue>.paths(): List<String> = map { it.path }

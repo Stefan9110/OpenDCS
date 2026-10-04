@@ -25,6 +25,7 @@ package org.opendc.cli
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.CliktError
 import com.github.ajalt.clikt.core.Context
+import com.github.ajalt.clikt.core.PrintHelpMessage
 import com.github.ajalt.clikt.core.context
 import com.github.ajalt.clikt.core.main
 import com.github.ajalt.clikt.core.obj
@@ -34,6 +35,7 @@ import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.file
+import com.github.ajalt.clikt.parameters.types.path
 import com.github.ajalt.mordant.terminal.Terminal
 import org.opendc.cli.config.CliConfig
 import org.opendc.cli.config.toMordantTheme
@@ -58,6 +60,11 @@ fun main(args: Array<String>) {
  * read, publishing that choice on the context every subcommand inherits.
  */
 internal class OpendcCommand : CliktCommand(name = "opendc") {
+    // Normally Clikt auto-prints the help overview and exits before `run()` is even called
+    // when no subcommand is given. We need `run()` to execute in that case too, so we can
+    // detect the deprecated `--experiment-path` invocation and report it specifically.
+    override val invokeWithoutSubcommand: Boolean = true
+
     private val legacy by option(
         "--legacy",
         help = "Read experiment files written in the deprecated opendc-experiments JSON format.",
@@ -68,10 +75,36 @@ internal class OpendcCommand : CliktCommand(name = "opendc") {
         help = "Reject experiment files that contain unknown keys instead of ignoring them.",
     ).flag()
 
+    private val inputRoot by option(
+        "--input-root",
+        help =
+            "Root for resolving named/relative topology, workload and trace references " +
+                "(default: the experiment file's directory, or the working directory under --legacy).",
+    ).path(canBeFile = false, mustExist = false)
+
+    private val legacyExperimentPath by option(
+        "--experiment-path",
+        help = "Deprecated. Use 'opendc run <path>' instead.",
+    ).path(canBeFile = true, mustExist = false)
+
     override fun help(context: Context): String = "Run, validate and inspect OpenDC datacenter simulations."
 
     override fun run() {
-        currentContext.obj = ExperimentReadOptions(legacy = legacy, strict = strict)
+        if (legacyExperimentPath != null) {
+            throw CliktError(
+                "It seems like you are using OpenDC2 input syntax.\n" +
+                    "To execute older experiments in OpenDC3 see [TBD].\n" +
+                    "To use OpenDC2, download it at https://github.com/atlarge-research/opendc/tree/OpenDC2-maintenance.",
+            )
+        }
+
+        // We only reach here without a subcommand because `invokeWithoutSubcommand` is set above;
+        // fall back to Clikt's normal "no subcommand given" behaviour of showing the overview.
+        if (currentContext.invokedSubcommand == null) {
+            throw PrintHelpMessage(currentContext, error = true)
+        }
+
+        currentContext.obj = ExperimentReadOptions(legacy = legacy, strict = strict, inputRoot = inputRoot)
     }
 }
 
@@ -82,6 +115,7 @@ internal class OpendcCommand : CliktCommand(name = "opendc") {
 internal data class ExperimentReadOptions(
     val legacy: Boolean,
     val strict: Boolean,
+    val inputRoot: Path?,
 )
 
 /**
@@ -105,15 +139,19 @@ internal abstract class ExperimentCommand(
     protected val isStrict: Boolean
         get() = currentContext.findObject<ExperimentReadOptions>()?.strict == true
 
+    /** Whether the root command was asked to reject experiments that carry unknown keys. */
+    protected val inputRoot: Path?
+        get() = currentContext.findObject<ExperimentReadOptions>()?.inputRoot
+
     /**
      * The directory the experiment should be resolved at
      */
     protected val experimentBaseDirectory: Path
         get() =
-            if (isLegacy) {
-                Path.of("").toAbsolutePath()
+            if (inputRoot != null) {
+                inputRoot!!
             } else {
-                experimentFile.absoluteFile.parentFile.toPath()
+                Path.of("").toAbsolutePath()
             }
 
     /**
@@ -123,12 +161,12 @@ internal abstract class ExperimentCommand(
      * [root]; otherwise it is SDK-model JSON, which composes the files it names with `importFrom`
      * relative to itself and so needs no root.
      */
-    protected fun loadExperiment(): ExperimentSpec =
+    protected fun loadExperiment(rootPath: Path = experimentBaseDirectory): ExperimentSpec =
         try {
             if (isLegacy) {
-                readLegacyExperiment(experimentFile, experimentBaseDirectory.toFile(), isStrict)
+                readLegacyExperiment(experimentFile, rootPath.toFile(), isStrict)
             } else {
-                readExperiment(experimentFile, isStrict)
+                readExperiment(experimentFile, rootPath.toFile(), isStrict)
             }
         } catch (e: Exception) {
             throw CliktError(

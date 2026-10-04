@@ -22,66 +22,122 @@
 
 package org.opendc.sdk.runner.factory
 
-import org.opendc.common.ResourceType
-import org.opendc.compute.simulator.service.ServiceTask
-import org.opendc.compute.workload.ComputeWorkloadLoader
-import org.opendc.sdk.model.checkpoint.CheckpointSpec
+import org.opendc.sdk.model.checkpoint.CheckpointModelSpec
 import org.opendc.sdk.model.resource.ResourceReference
+import org.opendc.sdk.model.workload.EfficientTraceWorkloadSpec
 import org.opendc.sdk.model.workload.InlineWorkloadSpec
 import org.opendc.sdk.model.workload.ScalingPolicySpec
 import org.opendc.sdk.model.workload.TaskSpec
 import org.opendc.sdk.model.workload.TraceWorkloadSpec
 import org.opendc.sdk.model.workload.WorkloadSpec
+import org.opendc.sdk.model.workload.loader.ComputeWorkloadLoader
+import org.opendc.sdk.model.workload.loader.EfficientWorkloadLoader
+import org.opendc.simulator.compute.task.SimTask
 import org.opendc.simulator.compute.workload.trace.TraceFragment
 import org.opendc.simulator.compute.workload.trace.scaling.NoDelayScaling
 import org.opendc.simulator.compute.workload.trace.scaling.PerfectScaling
+import org.opendc.simulator.core.ResourceType
 import java.nio.file.Path
+import java.util.ArrayDeque
+import java.util.Queue
 import org.opendc.simulator.compute.workload.trace.TraceWorkload as EngineTraceWorkload
 import org.opendc.simulator.compute.workload.trace.scaling.ScalingPolicy as EngineScalingPolicy
 
 /**
- * Materializes an SDK [WorkloadSpec] into the engine's list of [ServiceTask]s. Trace workloads are
- * loaded from the resource resolved by [resolve]; inline workloads are built in memory.
+ * Materializes an SDK [WorkloadSpec] into a submission-order queue of [SimTask]s. Trace workloads
+ * are loaded from the resource resolved by [resolve]; inline workloads are built in memory. Tasks are
+ * meant to be [Queue.poll]ed off as they are submitted, so the replayer never holds onto tasks it has
+ * already handed off.
  */
-internal fun WorkloadSpec.toServiceTasks(
-    checkpoint: CheckpointSpec?,
+public fun WorkloadSpec.toSimTasks(
+    checkpoint: CheckpointModelSpec?,
     resolve: (ResourceReference) -> Path,
-): List<ServiceTask> =
+): Queue<SimTask> =
     when (this) {
         is TraceWorkloadSpec -> loadTrace(resolve(source), checkpoint)
-        is InlineWorkloadSpec -> tasks.map { it.toServiceTask(scalingPolicy.toEngine(), checkpoint) }
+        is EfficientTraceWorkloadSpec -> loadTrace(resolve(source), checkpoint)
+        is InlineWorkloadSpec ->
+            ArrayDeque(
+                tasks
+                    .sortedBy { it.submissionTime.toMsLong() }
+                    .map { it.toSimTask(scalingPolicy.toEngine(), checkpoint) },
+            )
     }
 
-private fun TraceWorkloadSpec.loadTrace(
+public fun TraceWorkloadSpec.loadTrace(
     path: Path,
-    checkpoint: CheckpointSpec?,
-): List<ServiceTask> =
-    ComputeWorkloadLoader(
-        path.toFile(),
-        submissionTime,
-        checkpoint.intervalMs(),
-        checkpoint.durationMs(),
-        checkpoint.scaling(),
-        scalingPolicy.toEngine(),
-        deferAll,
-    ).sampleByLoad(sampleFraction)
+    checkpoint: CheckpointModelSpec?,
+): Queue<SimTask> =
+    ArrayDeque(
+        ComputeWorkloadLoader(
+            path.toFile(),
+            submissionTime,
+            checkpoint.intervalMs(),
+            checkpoint.durationMs(),
+            checkpoint.scaling(),
+            scalingPolicy.toEngine(),
+            deferAll,
+        ).sampleByLoad(sampleFraction),
+    )
 
-private fun TaskSpec.toServiceTask(
+public fun EfficientTraceWorkloadSpec.loadTrace(
+    path: Path,
+    checkpoint: CheckpointModelSpec?,
+): Queue<SimTask> =
+    ArrayDeque(
+        EfficientWorkloadLoader(
+            path.toFile(),
+            submissionTime,
+            checkpoint.intervalMs(),
+            checkpoint.durationMs(),
+            checkpoint.scaling(),
+            scalingPolicy.toEngine(),
+            deferAll,
+        ).sampleByLoad(sampleFraction),
+    )
+
+public fun TaskSpec.toSimTask(
     scaling: EngineScalingPolicy,
-    checkpoint: CheckpointSpec?,
-): ServiceTask {
+    checkpoint: CheckpointModelSpec?,
+): SimTask {
     val engineFragments =
         ArrayList(
             fragments.map { TraceFragment(it.duration.toMsLong(), it.cpuUsage.toMHz(), it.gpuUsage.toMHz(), it.gpuMemory.toMiB().toInt()) },
         )
-    val usedResources =
-        buildList {
-            if (fragments.any { it.cpuUsage.toMHz() > 0.0 }) add(ResourceType.CPU)
-            if (fragments.any { it.gpuUsage.toMHz() > 0.0 }) add(ResourceType.GPU)
-        }.toTypedArray()
+    val durationsArray = LongArray(fragments.size)
+    val cpuUsagesArray = DoubleArray(fragments.size)
+    val gpuUsagesArray = DoubleArray(fragments.size)
+    val gpuMemoryUsagesArray = IntArray(fragments.size)
+
+    var maxCpuUsage = 0.0
+    var maxGpuUsage = 0.0
+
+    val usedResources = BooleanArray(ResourceType.values().size)
+    usedResources[ResourceType.CPU.ordinal] = true
+
+    for ((i, fragment) in fragments.withIndex()) {
+        durationsArray[i] = fragment.duration.toMsLong()
+        cpuUsagesArray[i] = fragment.cpuUsage.toMHz()
+        gpuUsagesArray[i] = fragment.gpuUsage.toMHz()
+        gpuMemoryUsagesArray[i] = fragment.gpuMemory.toMiB().toInt()
+
+        if (fragment.cpuUsage.toMHz() > maxCpuUsage) {
+            maxCpuUsage = fragment.cpuUsage.toMHz()
+        }
+        if (fragment.gpuUsage.toMHz() > maxGpuUsage) {
+            usedResources[ResourceType.GPU.ordinal] = true
+            maxGpuUsage = fragment.gpuUsage.toMHz()
+        }
+    }
+
     val workload =
         EngineTraceWorkload(
-            engineFragments,
+            durationsArray,
+            cpuUsagesArray,
+            gpuUsagesArray,
+            gpuMemoryUsagesArray,
+            maxCpuUsage,
+            maxGpuUsage,
             checkpoint.intervalMs(),
             checkpoint.durationMs(),
             checkpoint.scaling(),
@@ -89,27 +145,23 @@ private fun TaskSpec.toServiceTask(
             id,
             usedResources,
         )
-    return ServiceTask(
+    return SimTask(
         id,
-        name,
         submissionTime.toMsLong(),
         duration.toMsLong(),
-        cpuCoreCount,
+        cpuCoreCount.toInt(),
         cpuCapacity.toMHz(),
-        totalLoad(),
-        memory.toMiB().toLong(),
-        gpuCoreCount,
+        memory.toMiB().toInt(),
+        gpuCoreCount.toInt(),
         gpuCapacity.toMHz(),
-        gpuMemory.toMiB().toLong(),
+        gpuMemory.toMiB().toInt(),
         workload,
         deferrable,
-        deadline?.toMsLong() ?: -1L,
-        ArrayList(parents),
-        children,
+        deadline.toMsLong(),
+        if (parents.isEmpty()) null else parents,
+        if (children.isEmpty()) null else children,
     )
 }
-
-private fun TaskSpec.totalLoad(): Double = fragments.sumOf { it.cpuUsage.toMHz() * it.duration.toHours() }
 
 private fun ScalingPolicySpec.toEngine(): EngineScalingPolicy =
     when (this) {
@@ -117,8 +169,8 @@ private fun ScalingPolicySpec.toEngine(): EngineScalingPolicy =
         ScalingPolicySpec.Perfect -> PerfectScaling()
     }
 
-private fun CheckpointSpec?.intervalMs(): Long = this?.interval?.toMsLong() ?: 0L
+private fun CheckpointModelSpec?.intervalMs(): Long = this?.interval?.toMsLong() ?: 0L
 
-private fun CheckpointSpec?.durationMs(): Long = this?.duration?.toMsLong() ?: 0L
+private fun CheckpointModelSpec?.durationMs(): Long = this?.duration?.toMsLong() ?: 0L
 
-private fun CheckpointSpec?.scaling(): Double = this?.intervalScaling ?: 1.0
+private fun CheckpointModelSpec?.scaling(): Double = this?.intervalScaling ?: 1.0
