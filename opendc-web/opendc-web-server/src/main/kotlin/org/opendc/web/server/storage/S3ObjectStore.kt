@@ -25,12 +25,16 @@ package org.opendc.web.server.storage
 import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.model.CompletedMultipartUpload
 import software.amazon.awssdk.services.s3.model.CompletedPart
+import software.amazon.awssdk.services.s3.model.Delete
+import software.amazon.awssdk.services.s3.model.GetObjectRequest
 import software.amazon.awssdk.services.s3.model.MultipartUpload
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException
+import software.amazon.awssdk.services.s3.model.ObjectIdentifier
 import software.amazon.awssdk.services.s3.model.Part
 import software.amazon.awssdk.services.s3.model.PutObjectRequest
 import software.amazon.awssdk.services.s3.model.UploadPartRequest
 import software.amazon.awssdk.services.s3.presigner.S3Presigner
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest
 import software.amazon.awssdk.services.s3.presigner.model.UploadPartPresignRequest
 import java.io.InputStream
@@ -49,6 +53,9 @@ private const val TARGET_PART_SIZE = 32L * 1024 * 1024
 
 /** All S3 will accept in one upload. A file too large for that many gets larger parts instead. */
 private const val MAXIMUM_PARTS = 10_000L
+
+/** The most keys one delete request may name. */
+private const val DELETE_BATCH = 1000
 
 /**
  * The stretches a file of [sizeBytes] is cut into, in order and covering all of it.
@@ -175,12 +182,48 @@ class S3ObjectStore(
         )
     }
 
-    /**
-     * A launcher reaching a bucket needs credentials of its own, which is what a Kubernetes secret
-     * or a SLURM job's environment is for. Signing is not an alternative here: a signature covers
-     * one object, and what is named is a directory of them.
-     */
-    override fun locationOf(prefix: String): String = "s3://$bucket/$prefix"
+    override fun readUrl(
+        key: String,
+        lifetime: Duration,
+    ): String =
+        presigner
+            .presignGetObject(
+                GetObjectPresignRequest
+                    .builder()
+                    .signatureDuration(lifetime)
+                    .getObjectRequest(GetObjectRequest.builder().bucket(bucket).key(key).build())
+                    .build(),
+            ).url()
+            .toString()
+
+    override fun writeUrl(
+        key: String,
+        lifetime: Duration,
+    ): String =
+        presigner
+            .presignPutObject(
+                PutObjectPresignRequest
+                    .builder()
+                    .signatureDuration(lifetime)
+                    .putObjectRequest(PutObjectRequest.builder().bucket(bucket).key(key).build())
+                    .build(),
+            ).url()
+            .toString()
+
+    /** Deleted a thousand keys at a time, which is as many as one request may name. */
+    override fun deletePrefix(prefix: String) {
+        for (batch in list("$prefix/").chunked(DELETE_BATCH)) {
+            client.deleteObjects { request ->
+                request.bucket(bucket).delete(
+                    Delete
+                        .builder()
+                        .objects(batch.map { ObjectIdentifier.builder().key(it).build() })
+                        .quiet(true)
+                        .build(),
+                )
+            }
+        }
+    }
 
     override fun completeUpload(key: String): Boolean {
         val uploadId = uploadsOf(key).maxByOrNull { it.initiated() }?.uploadId() ?: return exists(key)

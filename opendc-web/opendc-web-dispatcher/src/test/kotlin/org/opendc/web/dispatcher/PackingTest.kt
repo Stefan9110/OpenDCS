@@ -33,10 +33,12 @@ import org.junit.jupiter.api.Test
  * dropping work, and never giving a bag less time than the work inside it needs.
  */
 class PackingTest {
-    private val slot = ExecutionSlot(cores = 4, memoryMb = 4096.0)
+    private val slot = ExecutionSlot(cores = 4, memoryMb = 4096.0, timeCap = TimeCap.Unlimited)
     private val policy =
         DispatchPolicy(
             jvmBaselineMb = JVM_BASELINE_MB,
+            offHeapPerUnitMb = 0.0,
+            heapHeadroom = 1.0,
             startupSeconds = STARTUP_SECONDS,
             timeSafetyFactor = TIME_SAFETY_FACTOR,
             maxAttempts = 3,
@@ -83,11 +85,22 @@ class PackingTest {
         for (bag in bags(units)) {
             val slowest = bag.units.maxOf { it.cpuSeconds }
             assertTrue(
-                bag.timeLimitSeconds >= slowest,
-                "bag was given ${bag.timeLimitSeconds}s for a unit needing ${slowest}s",
+                bag.grant.timeLimitSeconds >= slowest,
+                "bag was given ${bag.grant.timeLimitSeconds}s for a unit needing ${slowest}s",
             )
             assertEquals(slowest, bag.makespanSeconds)
         }
+    }
+
+    // A SLURM partition kills anything past its walltime however long it was asked to run, so a
+    // limit past the cap only promises time the platform will not give.
+    @Test
+    fun `never gives a bag more time than the platform allows`() {
+        val capped = slot.copy(timeCap = TimeCap.Limited(900))
+
+        val bag = planBags(listOf(unit(0, cpuSeconds = 10_000.0)), capped, policy).single()
+
+        assertEquals(900, bag.grant.timeLimitSeconds)
     }
 
     @Test
@@ -95,7 +108,7 @@ class PackingTest {
         val units = (0 until 30).map { unit(scenarioIndex = it, peakMemoryMb = 100.0 + it * 100.0) }
 
         for (bag in bags(units)) {
-            assertEquals(bag.units.size, bag.parallelism)
+            assertEquals(bag.units.size, bag.grant.parallelism)
         }
     }
 
@@ -109,8 +122,8 @@ class PackingTest {
             // request rather than being silently dropped or split.
             if (JVM_BASELINE_MB + largest <= slot.memoryMb) {
                 assertTrue(
-                    bag.memoryRequestMb <= slot.memoryMb,
-                    "bag asked for ${bag.memoryRequestMb} MB against a ${slot.memoryMb} MB slot",
+                    bag.grant.memoryRequestMb <= slot.memoryMb,
+                    "bag asked for ${bag.grant.memoryRequestMb} MB against a ${slot.memoryMb} MB slot",
                 )
             }
         }
@@ -120,16 +133,16 @@ class PackingTest {
     fun `sizes a bag from its hungriest unit, not its average`() {
         val first = bags(listOf(unit(0, peakMemoryMb = 3000.0), unit(1, peakMemoryMb = 100.0))).first()
 
-        assertEquals(1, first.parallelism, "3000 MB leaves no room for a second concurrent unit")
-        assertEquals(JVM_BASELINE_MB + 3000.0, first.memoryRequestMb)
-        assertEquals(3000.0, first.heapMb)
+        assertEquals(1, first.grant.parallelism, "3000 MB leaves no room for a second concurrent unit")
+        assertEquals((JVM_BASELINE_MB + 3000.0).toInt(), first.grant.memoryRequestMb)
+        assertEquals(3000, first.grant.heapMb)
     }
 
     @Test
     fun `runs small units concurrently up to the core count, not beyond it`() {
         val units = (0 until 8).map { unit(scenarioIndex = it, peakMemoryMb = 64.0) }
 
-        val parallelism = bags(units).first().parallelism
+        val parallelism = bags(units).first().grant.parallelism
 
         assertEquals(slot.cores, parallelism, "64 MB units fit far more than 4, but a slot has 4 cores")
     }
@@ -139,7 +152,7 @@ class PackingTest {
         val oversized = bags(listOf(unit(0, peakMemoryMb = 10_000.0)))
 
         assertEquals(1, oversized.size)
-        assertEquals(1, oversized.first().parallelism)
+        assertEquals(1, oversized.first().grant.parallelism)
         assertEquals(1, oversized.first().units.size)
     }
 
@@ -163,8 +176,8 @@ class PackingTest {
         val bag = bags(listOf(unit(0, cpuSeconds = 1.0))).single()
 
         assertTrue(
-            bag.timeLimitSeconds >= STARTUP_SECONDS,
-            "a one-second bag was given ${bag.timeLimitSeconds}s, less than it takes to start",
+            bag.grant.timeLimitSeconds >= STARTUP_SECONDS,
+            "a one-second bag was given ${bag.grant.timeLimitSeconds}s, less than it takes to start",
         )
     }
 

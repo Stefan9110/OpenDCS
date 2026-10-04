@@ -103,5 +103,15 @@ class Experiment : SpecDocument() {
         fun findByProject(projectId: Long): List<Experiment> = list("project.id = ?1 order by createdAt", projectId)
 
         fun findByPublicId(publicId: UUID): Experiment? = find("publicId = ?1", publicId).firstResult()
+
+        /**
+         * The experiments of one project, by id only. Read without loading them, because a caller
+         * about to delete the project cannot flush rows that still point at it.
+         */
+        fun publicIdsOfProject(projectId: Long): List<UUID> =
+            getEntityManager()
+                .createQuery("SELECT x.publicId FROM Experiment x WHERE x.project.id = ?1", UUID::class.java)
+                .setParameter(1, projectId)
+                .resultList
     }
 }

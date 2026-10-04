@@ -23,6 +23,7 @@
 package org.opendc.web.server.service
 
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.enterprise.event.Event
 import jakarta.transaction.Transactional
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -32,10 +33,12 @@ import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.experiment.expand
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.resource.ResourceReference
-import org.opendc.web.dispatcher.Dispatcher
 import org.opendc.web.dispatcher.estimate.TraceSizeEstimator
 import org.opendc.web.dispatcher.estimate.sampledShare
+import org.opendc.web.server.execution.DiscardRequested
 import org.opendc.web.server.execution.ExecutionConfig
+import org.opendc.web.server.execution.Settlement
+import org.opendc.web.server.execution.StopRequested
 import org.opendc.web.server.execution.toCoefficients
 import org.opendc.web.server.execution.traceExtentOf
 import org.opendc.web.server.model.Execution
@@ -45,6 +48,7 @@ import org.opendc.web.server.model.ExperimentResource
 import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.RunUnit
 import org.opendc.web.server.model.TraceKind
+import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.rest.DocumentIssue
 import org.opendc.web.server.rest.conflict
 import org.opendc.web.server.rest.invalidDocument
@@ -52,6 +56,7 @@ import org.opendc.web.server.rest.notFound
 import org.opendc.web.server.rest.toWire
 import org.opendc.web.server.results.ResultsReader
 import java.time.Instant
+import java.util.UUID
 
 /** What an experiment is expected to cost its owner. Billing is in simulation seconds, never memory. */
 @Serializable
@@ -78,8 +83,10 @@ data class SubmissionPreview(
 class SubmissionPipeline(
     private val codec: SpecCodec,
     private val config: ExecutionConfig,
-    private val dispatcher: Dispatcher,
+    private val settlement: Settlement,
     private val results: ResultsReader,
+    private val stops: Event<StopRequested>,
+    private val discards: Event<DiscardRequested>,
 ) {
     @Transactional
     fun createDraft(
@@ -141,7 +148,7 @@ class SubmissionPipeline(
                 unit.experiment = experiment
                 unit.scenarioIndex = scenario.id
                 unit.seed = (scenario.initialSeed + run).toLong()
-                unit.state = ExecutionState.QUEUED
+                unit.state = UnitState.QUEUED
                 unit.totalTasks = tasks
                 unit.persist()
             }
@@ -151,19 +158,40 @@ class SubmissionPipeline(
         experiment.updatedAt = now
     }
 
+    /**
+     * Stops everything the experiment still has to do, for good.
+     *
+     * Its units are cancelled here and stay cancelled whatever the executions carrying them go on to
+     * report. A queued execution is closed outright; one the platform holds is asked to stop once
+     * this commits, and settles when the platform says it has.
+     */
     @Transactional
     fun cancel(experiment: Experiment) {
         if (experiment.isDraft) {
             throw conflict("A draft experiment is not running")
         }
+        val live =
+            Execution
+                .findByExperiment(experiment.id)
+                .filterNot { it.state.isTerminal }
+                .mapNotNull { Execution.lockByPublicId(it.publicId) }
+        RunUnit.lockQueued(experiment.id)
         val units = RunUnit.findByExperiment(experiment.id)
         if (units.all { it.state.isTerminal }) {
             throw conflict("This experiment has already finished")
         }
-        stopExecutions(experiment)
         for (unit in units.filterNot { it.state.isTerminal }) {
-            unit.state = ExecutionState.CANCELLED
+            unit.state = UnitState.CANCELLED
         }
+        val onPlatform = mutableListOf<UUID>()
+        for (execution in live) {
+            when (execution.state) {
+                ExecutionState.QUEUED -> settlement.withdraw(execution)
+                ExecutionState.SUBMITTED, ExecutionState.RUNNING -> onPlatform += execution.publicId
+                ExecutionState.SUCCEEDED, ExecutionState.FAILED, ExecutionState.CANCELLED -> {}
+            }
+        }
+        stops.fire(StopRequested(onPlatform))
         experiment.updatedAt = Instant.now()
     }
 
@@ -194,7 +222,7 @@ class SubmissionPipeline(
         // still holding it would go on showing a result that no longer has a file behind it.
         results.forget(experiment.publicId, units)
         for (unit in units) {
-            unit.state = ExecutionState.QUEUED
+            unit.state = UnitState.QUEUED
             // A scenario about to be run again has got nowhere yet. Leaving the finished attempt's
             // count would show it as complete until the new one reported over the top of it, which
             // is the one moment a reader is watching the bar rather than the result.
@@ -213,30 +241,31 @@ class SubmissionPipeline(
     /**
      * Removes an experiment whatever state it is in. Submitted experiments are immutable, which
      * governs editing them, not keeping them: an owner may always delete their own work.
-     *
-     * Stopping the scenarios of a live experiment is a dispatcher call, not a database write. The
-     * executions and units are removed by the schema's cascade, so marking them cancelled on the
-     * way out would be wasted work, and worse: it dirties rows that point at an experiment being
-     * deleted in the same transaction, which fails the flush.
      */
     @Transactional
     fun delete(experiment: Experiment) {
-        stopExecutions(experiment)
+        discard(Execution.onPlatformOfExperiment(experiment.id), listOf(experiment.publicId))
         experiment.delete()
     }
 
+    /** Arranges for every experiment of [project], about to be deleted in the caller's transaction, to leave nothing behind. */
+    fun discardAll(project: Project) {
+        discard(Execution.onPlatformOfProject(project.id), Experiment.publicIdsOfProject(project.id))
+    }
+
     /**
-     * Kills whatever this experiment still has running.
+     * Stops what the platform holds of experiments about to be deleted and removes everything they
+     * kept in the store, both once the deletion has committed.
      *
-     * The rows are left as they are: the platform reports each execution ending in its own time,
-     * and settling on that rather than on this call is what keeps one account of what happened.
+     * Everything is addressed by id, never loaded: the rows go with the schema's cascade, and a loaded
+     * row pointing at an experiment being deleted in the same transaction fails the flush.
      */
-    private fun stopExecutions(experiment: Experiment) {
-        for (execution in Execution.findByExperiment(experiment.id).filterNot { it.state.isTerminal }) {
-            if (execution.dispatcher == dispatcher.name) {
-                dispatcher.cancel(execution.publicId)
-            }
-        }
+    private fun discard(
+        executions: List<UUID>,
+        experiments: List<UUID>,
+    ) {
+        stops.fire(StopRequested(executions))
+        discards.fire(DiscardRequested(experiments))
     }
 
     /**

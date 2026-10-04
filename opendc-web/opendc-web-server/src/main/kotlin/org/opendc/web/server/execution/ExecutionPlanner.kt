@@ -42,16 +42,28 @@ import org.opendc.web.dispatcher.estimate.TraceSizeEstimator
 import org.opendc.web.dispatcher.estimate.scaledBy
 import org.opendc.web.dispatcher.planBags
 import org.opendc.web.launcher.LaunchManifest
+import org.opendc.web.launcher.LaunchUnit
+import org.opendc.web.launcher.OutputTarget
+import org.opendc.web.launcher.StagedInput
 import org.opendc.web.launcher.TelemetryTarget
 import org.opendc.web.server.model.Execution
+import org.opendc.web.server.model.ExecutionState
+import org.opendc.web.server.model.ExecutionUnit
 import org.opendc.web.server.model.Experiment
 import org.opendc.web.server.model.RunUnit
 import org.opendc.web.server.model.Trace
 import org.opendc.web.server.model.TracePart
+import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.service.SpecCodec
 import org.opendc.web.server.storage.ObjectStore
-import org.opendc.web.server.storage.resultKey
+import org.opendc.web.server.storage.outcomeKey
+import org.opendc.web.server.storage.runKey
 import org.opendc.web.server.storage.traceKey
+import java.time.Duration
+import java.time.Instant
+
+/** Where a launcher puts the bytes it is handed, relative to its working directory. */
+private const val INPUTS = "inputs"
 
 /**
  * Works out what an experiment's queued units will cost, how they are shaped into executions, and
@@ -66,7 +78,7 @@ class ExecutionPlanner(
     private val codec: SpecCodec,
     private val store: ObjectStore,
 ) {
-    /** The executions [units] would form on [slot], largest first. */
+    /** The executions [units] would form on [slot], largest first, from fresh estimates. */
     fun plan(
         experiment: Experiment,
         units: List<RunUnit>,
@@ -74,48 +86,95 @@ class ExecutionPlanner(
     ): List<PlannedBag> = planBags(estimate(scenariosOf(experiment), units), slot, config.toPolicy())
 
     /**
-     * What a failed [execution] amounted to, as the shape a retry starts from.
-     *
-     * The grant is what the platform gave it, while the units are estimated afresh, so a split
-     * re-reads the same model that packed them in the first place.
+     * What the units [carried] were expected to cost when they last ran, which is where a retry starts.
+     * Kept rather than recomputed, so growth after an out-of-memory kill carries into the next attempt.
      */
-    fun bagOf(execution: Execution): PlannedBag {
-        val units = estimate(scenariosOf(execution.experiment), execution.units)
-        return PlannedBag(
-            units = units,
-            parallelism = execution.parallelism,
-            heapMb = execution.heapMb.toDouble(),
-            memoryRequestMb = execution.memoryRequestMb.toDouble(),
-            timeLimitSeconds = execution.timeLimitSeconds,
-            makespanSeconds = execution.estimatedMakespanSeconds,
-        )
+    fun storedEstimates(carried: List<ExecutionUnit>): List<PlannedUnit> =
+        carried.map { PlannedUnit(it.unit.scenarioIndex, it.unit.seed, it.estimatedSeconds, it.estimatedPeakMemoryMb) }
+
+    /**
+     * Writes down an execution of [units] shaped as [bag]. It is started by the next pass of the
+     * queue, or by this one. Its units are carried from here on and start from nothing.
+     */
+    fun queue(
+        experiment: Experiment,
+        bag: PlannedBag,
+        units: List<RunUnit>,
+        attempt: Int,
+        dispatcher: String,
+    ): Execution {
+        val execution = Execution()
+        execution.experiment = experiment
+        execution.state = ExecutionState.QUEUED
+        execution.attempt = attempt
+        execution.dispatcher = dispatcher
+        execution.parallelism = bag.grant.parallelism
+        execution.heapMb = bag.grant.heapMb
+        execution.memoryRequestMb = bag.grant.memoryRequestMb
+        execution.timeLimitSeconds = bag.grant.timeLimitSeconds
+        execution.estimatedMakespanSeconds = bag.makespanSeconds
+        execution.runtimeMultiplier = config.estimator().runtimeMultiplier()
+        execution.memoryMultiplier = config.estimator().memoryMultiplier()
+        execution.createdAt = Instant.now()
+        execution.persist()
+
+        val byRun = units.associateBy { it.scenarioIndex to it.seed }
+        for (planned in bag.units) {
+            val unit = byRun[planned.scenarioIndex to planned.seed] ?: continue
+            unit.state = UnitState.CARRIED
+            // The attempt starts over from nothing, so what an earlier one got through is no longer
+            // progress towards anything.
+            unit.completedTasks = 0
+            val row = ExecutionUnit()
+            row.execution = execution
+            row.unit = unit
+            row.estimatedSeconds = planned.cpuSeconds
+            row.estimatedPeakMemoryMb = planned.peakMemoryMb
+            row.persist()
+            execution.carried += row
+        }
+        return execution
     }
 
     /**
-     * What one launcher process is handed.
+     * What one launcher process is handed for [execution].
      *
-     * Every reference in the scenarios is resolved to a location here, so the launcher never has to
-     * know what a name means, and the results go to the store beside the traces they came from.
+     * Every trace the units name is staged under the launcher's working directory and every reference
+     * rewritten to where it was staged, so the launcher never has to know what a name means. Each run
+     * publishes each of its files and then its outcome to a URL of its own, signed for [lifetime].
      * [token] is what it reports progress with, and can do nothing else.
      */
     fun manifest(
-        experiment: Experiment,
-        units: List<RunUnit>,
-        parallelism: Int,
+        execution: Execution,
         token: String,
+        lifetime: Duration,
     ): LaunchManifest {
-        val scenarios = scenariosOf(experiment)
+        val experiment = execution.experiment.publicId
+        val scenarios = scenariosOf(execution.experiment)
+        val staging = Staging(store, lifetime)
+        val units =
+            ExecutionUnit.findByExecution(execution.id).mapNotNull { row ->
+                val unit = row.unit
+                val scenario = scenarios[unit.scenarioIndex] ?: return@mapNotNull null
+                LaunchUnit(
+                    scenario =
+                        scenario
+                            .mapReferences { staging.stage(it.reference) }
+                            .copy(runs = 1, initialSeed = unit.seed.toInt(), id = unit.scenarioIndex),
+                    outputs =
+                        scenario.exportModel.filesToExport.distinct().map { file ->
+                            OutputTarget(
+                                file.fileName,
+                                store.writeUrl("${runKey(experiment, unit.scenarioIndex, unit.seed)}/${file.fileName}", lifetime),
+                            )
+                        },
+                    outcome = store.writeUrl(outcomeKey(experiment, execution.publicId, unit.scenarioIndex, unit.seed), lifetime),
+                )
+            }
         return LaunchManifest(
-            scenarios =
-                units.mapNotNull { unit ->
-                    scenarios[unit.scenarioIndex]?.let(::located)?.copy(
-                        runs = 1,
-                        initialSeed = unit.seed.toInt(),
-                        id = unit.scenarioIndex,
-                    )
-                },
-            parallelism = parallelism,
-            results = store.locationOf(resultKey(experiment.publicId)),
+            inputs = staging.inputs,
+            units = units,
+            parallelism = execution.parallelism,
             telemetry = TelemetryTarget.Endpoint(config.telemetryUrl(), token),
         )
     }
@@ -136,24 +195,39 @@ class ExecutionPlanner(
 
     private fun scenariosOf(experiment: Experiment): Map<Int, ScenarioSpec> =
         codec.decodeExperiment(codec.parseStored(experiment.spec)).expand().associateBy { it.id }
+}
 
-    /** The same scenario with every reference in it pointing at where its bytes are. */
-    private fun located(scenario: ScenarioSpec): ScenarioSpec = scenario.mapReferences { located(it.reference) }
+/**
+ * The inputs one manifest stages, gathered as its units' references are rewritten.
+ *
+ * Each trace is staged once however many units name it. A trace of several tables is referred to as
+ * the directory holding them, since that is what a reader opens; one of a single table as the file.
+ * A reference the deployment does not know is left as it is, for the launcher to refuse.
+ */
+private class Staging(
+    private val store: ObjectStore,
+    private val lifetime: Duration,
+) {
+    private val directories = mutableMapOf<Long, String>()
 
-    /**
-     * A name the deployment knows becomes the location of its bytes; anything else is left alone.
-     *
-     * A trace of several tables locates as the directory holding them, since that is what a reader
-     * opens; one that is a single file locates as the file.
-     */
-    private fun located(reference: ResourceReference): ResourceReference {
+    val inputs = mutableListOf<StagedInput>()
+
+    fun stage(reference: ResourceReference): ResourceReference {
         if (reference !is NamedReference) {
             return reference
         }
         val trace = Trace.findBySlug(reference.name) ?: return reference
+        val directory =
+            directories.getOrPut(trace.id) {
+                val path = "$INPUTS/${directories.size}"
+                for (table in trace.kind.tables) {
+                    val key = traceKey(trace.publicId, table)
+                    inputs += StagedInput("$path/$table.parquet", store.readUrl(key, lifetime), key)
+                }
+                path
+            }
         val table = trace.kind.tables.singleOrNull()
-        val key = if (table == null) traceKey(trace.publicId) else traceKey(trace.publicId, table)
-        return UriReference(store.locationOf(key))
+        return UriReference(if (table == null) directory else "$directory/$table.parquet")
     }
 }
 

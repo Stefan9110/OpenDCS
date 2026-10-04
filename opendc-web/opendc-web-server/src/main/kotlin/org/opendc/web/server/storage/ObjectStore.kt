@@ -23,6 +23,7 @@
 package org.opendc.web.server.storage
 
 import java.io.InputStream
+import java.time.Duration
 import java.util.UUID
 
 /** A stretch of a file, and the signed target that takes exactly that stretch. */
@@ -104,14 +105,24 @@ interface ObjectStore : AutoCloseable {
     ): UploadTarget
 
     /**
-     * Where a launcher finds everything under [prefix], as a URI it can read from and write into.
+     * A URL that reads [key] for [lifetime], for a launcher that holds no credentials of its own.
      *
-     * A prefix rather than a key, because a workload trace is a directory of tables and a run's
-     * output is a directory of files. The scheme is what tells a launcher whether those bytes are
-     * beside it or somewhere it has to reach, which is the only difference between running next to
-     * the store and running on another site's cluster.
+     * The scheme is what tells a launcher whether the bytes are beside it or somewhere it has to
+     * reach, which is the only difference between running next to the store and on another site.
      */
-    fun locationOf(prefix: String): String
+    fun readUrl(
+        key: String,
+        lifetime: Duration,
+    ): String
+
+    /** A URL that writes [key] in one PUT for [lifetime]. Nothing about the content is signed. */
+    fun writeUrl(
+        key: String,
+        lifetime: Duration,
+    ): String
+
+    /** Removes every object under [prefix] and the prefix itself. Safe to call twice. */
+    fun deletePrefix(prefix: String)
 
     /**
      * Assembles an upload that was sent in parts, and says whether [key] is now there and whole.
@@ -140,10 +151,47 @@ fun traceKey(
 ): String = "${traceKey(tracePublicId)}/$table.parquet"
 
 /**
- * Where the runs of the experiment identified by [experimentPublicId] write their parquet, as
- * `<prefix>/<scenario>/seed=<seed>/`.
- *
- * A launcher is given this prefix and puts its finished output under it, so results live beside the
- * traces they came from rather than in a directory only one kind of dispatcher can reach.
+ * Everything the experiment identified by [experimentPublicId] keeps in the store, so deleting it is
+ * one prefix to remove.
  */
-fun resultKey(experimentPublicId: UUID): String = "results/$experimentPublicId"
+fun experimentKey(experimentPublicId: UUID): String = "experiments/$experimentPublicId"
+
+/**
+ * Where the runs of an experiment publish their parquet, as `<prefix>/<scenario>/seed=<seed>/`. The
+ * layout under it is what an archive mirrors, so it matches a local run's output tree.
+ */
+fun resultKey(experimentPublicId: UUID): String = "${experimentKey(experimentPublicId)}/results"
+
+/** Where one run publishes its files. */
+fun runKey(
+    experimentPublicId: UUID,
+    scenarioIndex: Int,
+    seed: Long,
+): String = "${resultKey(experimentPublicId)}/$scenarioIndex/seed=$seed"
+
+/** What one execution keeps beside the results: its manifest, its log and its units' outcomes. */
+fun executionKey(
+    experimentPublicId: UUID,
+    executionPublicId: UUID,
+): String = "${experimentKey(experimentPublicId)}/executions/$executionPublicId"
+
+fun manifestKey(
+    experimentPublicId: UUID,
+    executionPublicId: UUID,
+): String = "${executionKey(experimentPublicId, executionPublicId)}/manifest.json"
+
+fun logKey(
+    experimentPublicId: UUID,
+    executionPublicId: UUID,
+): String = "${executionKey(experimentPublicId, executionPublicId)}/launcher.log"
+
+/**
+ * Where one execution's launcher certifies how one unit ended. Kept under the execution rather than
+ * beside the parquet, so an earlier attempt's marker can never be read as this one's.
+ */
+fun outcomeKey(
+    experimentPublicId: UUID,
+    executionPublicId: UUID,
+    scenarioIndex: Int,
+    seed: Long,
+): String = "${executionKey(experimentPublicId, executionPublicId)}/units/$scenarioIndex/seed=$seed.json"

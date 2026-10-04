@@ -35,17 +35,18 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.opendc.trace.parquet.LocalOutputFile
-import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.launcher.ResultMetric
 import org.opendc.web.launcher.TelemetryTarget
+import org.opendc.web.launcher.UnitOutcome
 import org.opendc.web.server.ApiTest
 import org.opendc.web.server.execution.ExecutionLoop
 import org.opendc.web.server.execution.RecordingDispatcher
+import org.opendc.web.server.execution.ended
 import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.Experiment
 import org.opendc.web.server.storage.ObjectStore
-import org.opendc.web.server.storage.resultKey
+import org.opendc.web.server.storage.runKey
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
@@ -192,7 +193,7 @@ class ExperimentResultsTest {
         val experiment = running()
         post(experiment, ResultMetric.HOST_CPU_UTILIZATION, 0.62)
 
-        dispatcher.finish(executionOf(experiment), ExitOutcome(ExitReason.SIMULATION_ERROR, 21, "it failed"))
+        dispatcher.finish(executionOf(experiment), ended(ExitReason.SIMULATION_ERROR, 21, "it failed"))
 
         assertEquals(0.62, valueOf(results(experiment), ResultMetric.HOST_CPU_UTILIZATION))
     }
@@ -212,8 +213,11 @@ class ExperimentResultsTest {
         return publicId
     }
 
+    /** The platform reports the run ended, after its launcher certified it. */
     private fun settle(experiment: String) {
-        dispatcher.finish(executionOf(experiment), ExitOutcome(ExitReason.OK, 0, ""))
+        val execution = executionOf(experiment)
+        dispatcher.certify(execution, 0, UnitOutcome.Succeeded(1.0))
+        dispatcher.finish(execution, ended(ExitReason.OK))
     }
 
     private fun executionOf(experiment: String): UUID =
@@ -236,7 +240,7 @@ class ExperimentResultsTest {
         metric: ResultMetric,
         value: Double,
     ) {
-        val target = dispatcher.launched.single { it.executionId == executionOf(experiment) }.manifest.telemetry
+        val target = dispatcher.manifestOf(executionOf(experiment)).telemetry
         check(target is TelemetryTarget.Endpoint)
         ApiTest
             .requestJson()
@@ -271,7 +275,7 @@ class ExperimentResultsTest {
                 )
             }
         }
-        Files.newInputStream(file).use { store.put("${resultKey(UUID.fromString(experiment))}/0/seed=0/host.parquet", it) }
+        Files.newInputStream(file).use { store.put("${runKey(UUID.fromString(experiment), 0, 0)}/host.parquet", it) }
     }
 
     private data class Row(

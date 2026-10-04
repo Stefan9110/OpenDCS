@@ -27,6 +27,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.io.TempDir
+import java.net.URI
+import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
 import java.util.Optional
@@ -49,24 +51,34 @@ class ObjectStorageTest {
         assertEquals(traceKey(id, "tasks"), traceKey(id, "tasks"))
     }
 
-    // A launcher is pointed at a trace, not at each of its tables, so the location of a trace has
-    // to be the directory its tables lie in.
+    // A launcher beside a local store reads and writes the files where they lie, through the very
+    // URLs a remote one would be handed signed.
     @Test
-    fun `a trace locates as the directory holding its tables`() {
+    fun `hands a launcher URLs that read and write the object itself`() {
         val id = UUID.randomUUID()
         val store = ObjectStorage(config(ObjectStoreKind.LOCAL)).objectStore()
+        val key = traceKey(id, "tasks")
+        store.put(key, "rows".byteInputStream())
 
-        val location = store.locationOf(traceKey(id))
+        val read = store.readUrl(key, Duration.ofHours(1))
 
-        assertTrue(store.locationOf(traceKey(id, "tasks")).startsWith("$location/"), "tables must lie under the trace")
-        assertTrue(location.startsWith("file:"), "a local store is read where it lies")
+        assertTrue(read.startsWith("file:"), "a local store is read where it lies")
+        assertEquals("rows", Files.readString(Path.of(URI.create(read))))
+        assertEquals(read, store.writeUrl(key, Duration.ofHours(1)))
     }
 
+    // Deleting an experiment is one prefix: its results, manifests, logs and outcomes all live under it.
     @Test
-    fun `results are kept beside traces rather than in a directory of their own`() {
+    fun `removes everything an experiment kept with one prefix`() {
         val id = UUID.randomUUID()
+        val store = ObjectStorage(config(ObjectStoreKind.LOCAL)).objectStore()
+        store.put("${runKey(id, 0, 0)}/host.parquet", "a".byteInputStream())
+        store.put(manifestKey(id, UUID.randomUUID()), "b".byteInputStream())
 
-        assertEquals("results/$id", resultKey(id))
+        store.deletePrefix(experimentKey(id))
+
+        assertEquals(emptyList<String>(), store.list(experimentKey(id)))
+        assertTrue(resultKey(id).startsWith("${experimentKey(id)}/"), "results live under their experiment")
     }
 
     @Test

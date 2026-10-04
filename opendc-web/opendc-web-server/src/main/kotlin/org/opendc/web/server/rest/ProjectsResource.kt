@@ -40,12 +40,16 @@ import org.opendc.web.server.auth.Identity
 import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.ProjectRole
+import org.opendc.web.server.service.SubmissionPipeline
 import java.time.Instant
 
 @Path("projects")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
-class ProjectsResource(private val identity: Identity) {
+class ProjectsResource(
+    private val identity: Identity,
+    private val pipeline: SubmissionPipeline,
+) {
     @GET
     fun list(
         @RestQuery filter: String?,
@@ -127,6 +131,9 @@ class ProjectsResource(private val identity: Identity) {
         if (member.role != ProjectRole.OWNER) {
             throw forbidden("Only the project owner can delete it")
         }
+        // What the project's experiments still have on a platform or in the store goes once the
+        // rows are gone; the rows themselves go with the project through the schema's cascades.
+        pipeline.discardAll(member.project)
         // The membership that authorised this is loaded and still points at the project, and
         // Hibernate will not flush a live row referencing one being deleted. Removing it through
         // the session first settles that; every other child goes with the project through the

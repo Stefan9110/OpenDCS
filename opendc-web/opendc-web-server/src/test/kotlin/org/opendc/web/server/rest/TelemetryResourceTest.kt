@@ -28,13 +28,14 @@ import jakarta.inject.Inject
 import org.hamcrest.Matchers.equalTo
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.launcher.ResultMetric
 import org.opendc.web.launcher.TelemetryTarget
+import org.opendc.web.launcher.UnitOutcome
 import org.opendc.web.server.ApiTest
 import org.opendc.web.server.execution.ExecutionLoop
 import org.opendc.web.server.execution.RecordingDispatcher
+import org.opendc.web.server.execution.ended
 import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.Experiment
 import java.util.UUID
@@ -123,7 +124,7 @@ class TelemetryResourceTest {
         val experiment = running()
         report(tokenFor(experiment), completedTasks = 3).then().statusCode(204)
 
-        dispatcher.finish(executionOf(experiment), ExitOutcome(ExitReason.OK, 0, ""))
+        succeeded(experiment)
 
         ApiTest
             .requestJson()
@@ -140,7 +141,7 @@ class TelemetryResourceTest {
     fun `running a scenario again puts its progress back to nothing`() {
         val experiment = running()
         report(tokenFor(experiment), completedTasks = TASK_COUNT).then().statusCode(204)
-        dispatcher.finish(executionOf(experiment), ExitOutcome(ExitReason.OK, 0, ""))
+        succeeded(experiment)
 
         ApiTest.requestJson().post("/api/v1/experiments/$experiment/scenarios/0/retry").then().statusCode(200)
 
@@ -175,7 +176,7 @@ class TelemetryResourceTest {
     fun `refuses a report for an execution that has already finished`() {
         val experiment = running()
         val token = tokenFor(experiment)
-        dispatcher.finish(executionOf(experiment), ExitOutcome(ExitReason.OK, 0, ""))
+        succeeded(experiment)
 
         report(token, completedTasks = 5).then().statusCode(409)
     }
@@ -289,9 +290,16 @@ class TelemetryResourceTest {
      * which is the point of storing only its hash.
      */
     private fun tokenFor(experiment: String): String {
-        val target = dispatcher.launched.single { it.executionId == executionOf(experiment) }.manifest.telemetry
+        val target = dispatcher.manifestOf(executionOf(experiment)).telemetry
         check(target is TelemetryTarget.Endpoint) { "$experiment was launched with nowhere to report to" }
         return target.token
+    }
+
+    /** The platform reports the run ended, after its launcher certified it. */
+    private fun succeeded(experiment: String) {
+        val execution = executionOf(experiment)
+        dispatcher.certify(execution, 0, UnitOutcome.Succeeded(1.0))
+        dispatcher.finish(execution, ended(ExitReason.OK))
     }
 
     /** Which execution is carrying this experiment, since other cases' work shares the platform. */

@@ -32,6 +32,8 @@ import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import org.opendc.web.launcher.TelemetryReport
 import org.opendc.web.server.model.Execution
+import org.opendc.web.server.model.ExecutionUnit
+import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.telemetry.RunKey
 import org.opendc.web.server.telemetry.TelemetryStore
 
@@ -63,11 +65,16 @@ class TelemetryResource(private val store: TelemetryStore) {
             throw conflict("This execution has already finished")
         }
         val experimentId = execution.experiment.publicId
-        val carried = execution.units.associateBy { it.scenarioIndex to it.seed }
+        val carried =
+            ExecutionUnit
+                .findByExecution(execution.id)
+                .map { it.unit }
+                .filter { it.state == UnitState.CARRIED }
+                .associateBy { it.scenarioIndex to it.seed }
         for (run in report.runs) {
             // A report naming work this execution is not carrying is dropped rather than refused:
             // one token writes one bag's progress, and a launcher that got that wrong is not a
-            // reason to lose the runs it got right.
+            // reason to lose the runs it got right. Work cancelled while it was out is not carried.
             val unit = carried[run.scenarioIndex to run.seed] ?: continue
             // Against the count settled at submit, not one the launcher sends: the denominator is
             // the platform's and holds still for the whole of a run.

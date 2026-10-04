@@ -31,22 +31,31 @@ import jakarta.persistence.FetchType
 import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
-import jakarta.persistence.JoinColumn
-import jakarta.persistence.JoinTable
-import jakarta.persistence.ManyToMany
+import jakarta.persistence.LockModeType
 import jakarta.persistence.ManyToOne
+import jakarta.persistence.OneToMany
 import jakarta.persistence.Table
 import org.intellij.lang.annotations.Language
+import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
+import org.opendc.web.dispatcher.Grant
+import org.opendc.web.dispatcher.PlatformSpan
+import org.opendc.web.launcher.PeakMemory
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID
 
-/** Lifecycle of one dispatched execution and of each unit inside it. */
+/** Lifecycle of one dispatched execution. */
 enum class ExecutionState {
+    /** Written down, waiting for the platform to have room. */
     QUEUED,
+
+    /** Handed to the platform, which has not started it yet. */
+    SUBMITTED,
+
+    /** The platform saw it start. */
     RUNNING,
     SUCCEEDED,
     FAILED,
@@ -56,6 +65,44 @@ enum class ExecutionState {
     val isTerminal: Boolean
         get() = this == SUCCEEDED || this == FAILED || this == CANCELLED
 }
+
+/** Lifecycle of one `(scenario, seed)` run, and of its part in each execution that carried it. */
+enum class UnitState {
+    /** No execution is carrying it. Never the state of an execution's own record of it. */
+    QUEUED,
+
+    /** A live execution is carrying it. */
+    CARRIED,
+    SUCCEEDED,
+    FAILED,
+    CANCELLED,
+    ;
+
+    val isTerminal: Boolean
+        get() = this == SUCCEEDED || this == FAILED || this == CANCELLED
+}
+
+/** Which of the platform span columns are filled in. */
+enum class SpanKind { NOT_STARTED, STARTED, RAN }
+
+/** Whether peak memory was measured. */
+enum class PeakMemoryKind { MEASURED, UNMEASURED }
+
+/** What the platform has said about when an execution ran. */
+sealed interface ObservedSpan {
+    data object NotStarted : ObservedSpan
+
+    /** It started and has not been seen to end. */
+    data class Started(val at: Instant) : ObservedSpan
+
+    data class Ran(
+        val startedAt: Instant,
+        val endedAt: Instant,
+    ) : ObservedSpan
+}
+
+/** Reported in place of an exit code the platform never recorded. */
+const val NO_EXIT_CODE = -1
 
 /**
  * One `(scenario, seed)` run of a submitted experiment.
@@ -78,7 +125,7 @@ class RunUnit : PanacheEntityBase {
     var seed: Long = 0
 
     @Enumerated(EnumType.STRING)
-    var state: ExecutionState = ExecutionState.QUEUED
+    var state: UnitState = UnitState.QUEUED
 
     /**
      * How much work this run is. Written once, at submit, from the document's own workload, and never
@@ -100,14 +147,26 @@ class RunUnit : PanacheEntityBase {
         @Language("JPAQL")
         private const val QUEUED_WORK = """
             SELECT u FROM RunUnit u
-            WHERE u.state = org.opendc.web.server.model.ExecutionState.QUEUED
+            WHERE u.state = org.opendc.web.server.model.UnitState.QUEUED
             ORDER BY u.experiment.id, u.scenarioIndex, u.seed
+        """
+
+        @Language("JPAQL")
+        private const val QUEUED_OF_EXPERIMENT = """
+            SELECT u FROM RunUnit u
+            WHERE u.experiment.id = ?1
+              AND u.state = org.opendc.web.server.model.UnitState.QUEUED
+            ORDER BY u.scenarioIndex, u.seed
         """
 
         fun findByExperiment(experimentId: Long): List<RunUnit> = list(BY_EXPERIMENT, experimentId)
 
         /** Everything submitted that no execution is carrying yet. */
         fun findQueued(): List<RunUnit> = list(QUEUED_WORK)
+
+        /** The queued units of one experiment, locked, so a claim and a cancel cannot both take them. */
+        fun lockQueued(experimentId: Long): List<RunUnit> =
+            find(QUEUED_OF_EXPERIMENT, experimentId).withLock(LockModeType.PESSIMISTIC_WRITE).list()
     }
 }
 
@@ -115,8 +174,8 @@ class RunUnit : PanacheEntityBase {
  * One attempt at running a bag of units together.
  *
  * [publicId] is what the platform is asked about, so a restarted server can cancel and reconcile
- * work it did not start. [state] names the variant: a running execution has no exit, a terminal one
- * has all of [exitCode], [exitReason] and [finishedAt].
+ * work it did not start. [state] names the variant, and the schema checks every other column
+ * against it.
  */
 @Entity
 @Table(name = "executions")
@@ -130,13 +189,9 @@ class Execution : PanacheEntityBase {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     lateinit var experiment: Experiment
 
-    @ManyToMany
-    @JoinTable(
-        name = "execution_units",
-        joinColumns = [JoinColumn(name = "execution_id")],
-        inverseJoinColumns = [JoinColumn(name = "unit_id")],
-    )
-    var units: MutableList<RunUnit> = mutableListOf()
+    /** What this attempt carried, and how each unit of it ended. */
+    @OneToMany(mappedBy = "execution")
+    var carried: MutableList<ExecutionUnit> = mutableListOf()
 
     @Enumerated(EnumType.STRING)
     var state: ExecutionState = ExecutionState.QUEUED
@@ -147,8 +202,7 @@ class Execution : PanacheEntityBase {
      * All that is kept of the credential this execution's launcher reports progress with.
      *
      * Absent until the work is handed to a platform, which [state] already says. Nothing outside
-     * [grantToken] and [findByToken] ever sees this column, so how a token is turned into it is not
-     * a fact the rest of the server has to carry.
+     * [grantToken] and [findByToken] ever sees this column.
      */
     var tokenHash: String? = null
 
@@ -164,18 +218,120 @@ class Execution : PanacheEntityBase {
 
     var estimatedMakespanSeconds: Double = 0.0
 
+    var runtimeMultiplier: Double = 1.0
+
+    var memoryMultiplier: Double = 1.0
+
     lateinit var createdAt: Instant
 
-    var startedAt: Instant? = null
+    var submittedAt: Instant? = null
 
-    var finishedAt: Instant? = null
+    @Enumerated(EnumType.STRING)
+    var platformSpan: SpanKind = SpanKind.NOT_STARTED
+
+    var platformStartedAt: Instant? = null
+
+    var platformEndedAt: Instant? = null
+
+    var settledAt: Instant? = null
 
     var exitCode: Int? = null
 
     @Enumerated(EnumType.STRING)
     var exitReason: ExitReason? = null
 
-    var exitMessage: String? = null
+    var exitMessage: String = ""
+
+    @Enumerated(EnumType.STRING)
+    var peakMemoryKind: PeakMemoryKind = PeakMemoryKind.UNMEASURED
+
+    var peakResidentMb: Double? = null
+
+    var peakLiveHeapMb: Double? = null
+
+    /** What the platform was asked to give this attempt. */
+    val grant: Grant get() = Grant(parallelism, heapMb, memoryRequestMb, timeLimitSeconds)
+
+    /** What the platform said about when it ran. */
+    val span: ObservedSpan
+        get() =
+            when (platformSpan) {
+                SpanKind.NOT_STARTED -> ObservedSpan.NotStarted
+                SpanKind.STARTED -> ObservedSpan.Started(checkNotNull(platformStartedAt))
+                SpanKind.RAN -> ObservedSpan.Ran(checkNotNull(platformStartedAt), checkNotNull(platformEndedAt))
+            }
+
+    val peakMemory: PeakMemory
+        get() =
+            when (peakMemoryKind) {
+                PeakMemoryKind.UNMEASURED -> PeakMemory.Unmeasured
+                PeakMemoryKind.MEASURED -> PeakMemory.Measured(checkNotNull(peakResidentMb), checkNotNull(peakLiveHeapMb))
+            }
+
+    /** What the process exited with, or [NO_EXIT_CODE] while it has not or where nothing was recorded. */
+    val reportedExitCode: Int get() = exitCode ?: NO_EXIT_CODE
+
+    /** Hands the work to the platform: out of the queue, with a fresh credential, returned once. */
+    fun submit(at: Instant): String {
+        state = ExecutionState.SUBMITTED
+        submittedAt = at
+        return grantToken()
+    }
+
+    /** Puts work the platform could not take back in the queue, keeping its attempt and its units. */
+    fun release() {
+        state = ExecutionState.QUEUED
+        submittedAt = null
+        tokenHash = null
+    }
+
+    /** Records the platform starting it. Only an execution not yet known to have started moves. */
+    fun start(at: Instant) {
+        if (state != ExecutionState.QUEUED && state != ExecutionState.SUBMITTED) {
+            return
+        }
+        if (state == ExecutionState.QUEUED) {
+            submittedAt = at
+        }
+        state = ExecutionState.RUNNING
+        platformSpan = SpanKind.STARTED
+        platformStartedAt = at
+    }
+
+    /**
+     * Records how it ended. A span observed to start and then reported as never started keeps what was
+     * observed: the platform forgetting a start is not evidence that nothing ran.
+     */
+    fun settle(
+        state: ExecutionState,
+        outcome: ExitOutcome,
+        at: Instant,
+    ) {
+        if (this.state == ExecutionState.QUEUED) {
+            submittedAt = at
+        }
+        this.state = state
+        this.exitReason = outcome.reason
+        this.exitCode = outcome.exitCode
+        this.exitMessage = outcome.message
+        this.settledAt = at
+        when (val span = outcome.span) {
+            is PlatformSpan.Ran -> {
+                platformSpan = SpanKind.RAN
+                platformStartedAt = span.startedAt
+                platformEndedAt = span.endedAt
+            }
+            PlatformSpan.NotStarted -> {}
+        }
+        when (val peak = outcome.peakMemory) {
+            is PeakMemory.Measured -> {
+                peakMemoryKind = PeakMemoryKind.MEASURED
+                peakResidentMb = peak.residentMb
+                peakLiveHeapMb = peak.liveHeapMb
+            }
+            PeakMemory.Unmeasured -> {}
+        }
+    }
 
     /**
      * Mints the credential a launcher reports this execution's progress with, and returns it the one
@@ -185,41 +341,81 @@ class Execution : PanacheEntityBase {
      * for: an execution that failed and was replaced leaves a process nobody stopped holding a
      * credential that no longer resolves.
      */
-    fun grantToken(): String {
+    private fun grantToken(): String {
         val token = "$TOKEN_PREFIX${Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(TOKEN_BYTES).also(RANDOM::nextBytes))}"
         tokenHash = hash(token)
         return token
     }
 
     companion object : PanacheCompanion<Execution> {
-        // The units are fetched with the execution because every caller reads across the pair:
-        // settling writes their states, and the status fold reads their progress beside the
-        // attempt and exit of whichever execution carried them.
         @Language("JPAQL")
         private const val BY_EXPERIMENT = """
-            SELECT DISTINCT e FROM Execution e
-            LEFT JOIN FETCH e.units
+            SELECT e FROM Execution e
             WHERE e.experiment.id = ?1
-            ORDER BY e.createdAt
+            ORDER BY e.createdAt, e.id
         """
 
         @Language("JPAQL")
-        private const val LIVE = """
-            SELECT DISTINCT e FROM Execution e
-            LEFT JOIN FETCH e.units
+        private const val ON_PLATFORM = """
+            SELECT e FROM Execution e
             WHERE e.state IN (
-                org.opendc.web.server.model.ExecutionState.QUEUED,
+                org.opendc.web.server.model.ExecutionState.SUBMITTED,
                 org.opendc.web.server.model.ExecutionState.RUNNING
             )
-            ORDER BY e.createdAt
+            ORDER BY e.createdAt, e.id
+        """
+
+        @Language("JPAQL")
+        private const val WAITING = """
+            SELECT e FROM Execution e
+            WHERE e.state = org.opendc.web.server.model.ExecutionState.QUEUED
+            ORDER BY e.createdAt, e.id
+        """
+
+        @Language("JPAQL")
+        private const val ON_PLATFORM_OF_EXPERIMENT = """
+            SELECT e.publicId FROM Execution e
+            WHERE e.experiment.id = ?1
+              AND e.state IN (
+                org.opendc.web.server.model.ExecutionState.SUBMITTED,
+                org.opendc.web.server.model.ExecutionState.RUNNING
+              )
+        """
+
+        @Language("JPAQL")
+        private const val ON_PLATFORM_OF_PROJECT = """
+            SELECT e.publicId FROM Execution e
+            WHERE e.experiment.project.id = ?1
+              AND e.state IN (
+                org.opendc.web.server.model.ExecutionState.SUBMITTED,
+                org.opendc.web.server.model.ExecutionState.RUNNING
+              )
         """
 
         fun findByExperiment(experimentId: Long): List<Execution> = list(BY_EXPERIMENT, experimentId)
 
-        /** Executions this server believes a platform is still holding. */
-        fun findLive(): List<Execution> = list(LIVE)
+        /** Executions this server believes a platform is holding. */
+        fun findOnPlatform(): List<Execution> = list(ON_PLATFORM)
+
+        /** Executions written down and waiting for room, oldest first. */
+        fun findWaiting(): List<Execution> = list(WAITING)
+
+        /**
+         * The executions of one experiment a platform holds, by id only. Read without loading them,
+         * because a caller about to delete the experiment cannot flush rows that still point at it.
+         */
+        fun onPlatformOfExperiment(experimentId: Long): List<UUID> =
+            getEntityManager().createQuery(ON_PLATFORM_OF_EXPERIMENT, UUID::class.java).setParameter(1, experimentId).resultList
+
+        /** The executions of every experiment of one project a platform holds, by id only, as above. */
+        fun onPlatformOfProject(projectId: Long): List<UUID> =
+            getEntityManager().createQuery(ON_PLATFORM_OF_PROJECT, UUID::class.java).setParameter(1, projectId).resultList
 
         fun findByPublicId(publicId: UUID): Execution? = find("publicId = ?1", publicId).firstResult()
+
+        /** The execution behind [publicId], locked for the rest of the transaction. */
+        fun lockByPublicId(publicId: UUID): Execution? =
+            find("publicId = ?1", publicId).withLock(LockModeType.PESSIMISTIC_WRITE).firstResult()
 
         /** The execution [token] was minted for, or none if it was never minted or has been replaced. */
         fun findByToken(token: String): Execution? = find("tokenHash = ?1", hash(token)).firstResult()
@@ -233,5 +429,96 @@ class Execution : PanacheEntityBase {
 
         private fun hash(token: String): String =
             MessageDigest.getInstance("SHA-256").digest(token.toByteArray()).joinToString("") { "%02x".format(it) }
+    }
+}
+
+/** How one unit of an execution ended, as recorded on its row. */
+sealed interface UnitVerdict {
+    data class Succeeded(val elapsedSeconds: Double) : UnitVerdict
+
+    data class Failed(
+        val reason: ExitReason,
+        val message: String,
+    ) : UnitVerdict
+
+    data object Cancelled : UnitVerdict
+}
+
+/**
+ * One unit's part in one execution: what it was expected to cost there, and how it ended there.
+ *
+ * [state] names the variant: a carried unit has no reason yet, a succeeded one took a measured time,
+ * and a failed or cancelled one carries the reason.
+ */
+@Entity
+@Table(name = "execution_units")
+class ExecutionUnit : PanacheEntityBase {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    var id: Long = 0
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    lateinit var execution: Execution
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    lateinit var unit: RunUnit
+
+    var estimatedSeconds: Double = 0.0
+
+    var estimatedPeakMemoryMb: Double = 0.0
+
+    @Enumerated(EnumType.STRING)
+    var state: UnitState = UnitState.CARRIED
+
+    @Enumerated(EnumType.STRING)
+    var exitReason: ExitReason? = null
+
+    var exitMessage: String = ""
+
+    var elapsedSeconds: Double? = null
+
+    fun record(verdict: UnitVerdict) {
+        when (verdict) {
+            is UnitVerdict.Succeeded -> {
+                state = UnitState.SUCCEEDED
+                exitReason = ExitReason.OK
+                elapsedSeconds = verdict.elapsedSeconds
+            }
+            is UnitVerdict.Failed -> {
+                state = UnitState.FAILED
+                exitReason = verdict.reason
+                exitMessage = verdict.message
+            }
+            UnitVerdict.Cancelled -> {
+                state = UnitState.CANCELLED
+                exitReason = ExitReason.CANCELLED
+            }
+        }
+    }
+
+    companion object : PanacheCompanion<ExecutionUnit> {
+        // The execution and the unit are fetched with the row because every caller reads across all
+        // three: the status fold reads a unit's progress beside how its latest attempt ended.
+        @Language("JPAQL")
+        private const val BY_EXPERIMENT = """
+            SELECT eu FROM ExecutionUnit eu
+            JOIN FETCH eu.execution e
+            JOIN FETCH eu.unit u
+            WHERE e.experiment.id = ?1
+            ORDER BY e.createdAt, e.id
+        """
+
+        @Language("JPAQL")
+        private const val BY_EXECUTION = """
+            SELECT eu FROM ExecutionUnit eu
+            JOIN FETCH eu.unit u
+            WHERE eu.execution.id = ?1
+            ORDER BY u.scenarioIndex, u.seed
+        """
+
+        /** Every attempt's record of every unit of an experiment, oldest attempt first. */
+        fun findByExperiment(experimentId: Long): List<ExecutionUnit> = list(BY_EXPERIMENT, experimentId)
+
+        fun findByExecution(executionId: Long): List<ExecutionUnit> = list(BY_EXECUTION, executionId)
     }
 }

@@ -25,42 +25,67 @@ package org.opendc.web.launcher
 import kotlinx.serialization.Serializable
 import org.opendc.sdk.model.experiment.ScenarioSpec
 
+/** The one environment variable a launcher reads: where its manifest is. */
+const val MANIFEST_URL_VARIABLE = "MANIFEST_URL"
+
+/** The entry point every dispatcher that starts a launcher from its files names. */
+const val LAUNCHER_MAIN = "org.opendc.web.launcher.MainKt"
+
 /**
- * Everything one launcher process needs, written by the dispatcher and read at startup. The
- * launcher's whole environment is a single URL naming one of these.
+ * Everything one launcher process needs, written by the server and read at startup.
  *
- * Every reference inside a scenario is already a
- * [org.opendc.sdk.model.resource.UriReference]: what a name means is the server's business, and it
- * has answered that question by the time this is written.
+ * The launcher never resolves a name. The server has rewritten every reference in the units to a
+ * path relative to the launcher's working directory, and [inputs] says which bytes to put at those
+ * paths before anything runs. Nothing consults [inputs] while resolving: it is a staging list, not a
+ * resolution table.
  *
- * @property scenarios Fully resolved runs, each narrowed to one repetition by `runs = 1` and its own
- *           `initialSeed`.
- * @property parallelism How many of [scenarios] run at once.
- * @property results Where the finished output tree is copied, as `<results>/<scenario>/seed=<seed>/`.
- * @property telemetry Where progress is reported while the runs are still going. Defaulted to
+ * @property inputs What to fetch before the first unit starts.
+ * @property units The runs, each narrowed to one repetition and carrying where its results go.
+ * @property parallelism How many units run at once.
+ * @property telemetry Where progress is reported while the units are still going. Defaulted to
  *           [TelemetryTarget.None] so a manifest written by hand needs nothing to listen to it.
  */
 @Serializable
 data class LaunchManifest(
-    val scenarios: List<ScenarioSpec>,
+    val inputs: List<StagedInput>,
+    val units: List<LaunchUnit>,
     val parallelism: Int,
-    val results: String,
     val telemetry: TelemetryTarget = TelemetryTarget.None,
 )
 
 /**
- * The codes the launcher chooses to exit with.
+ * Bytes to put somewhere before the units start.
  *
- * They start at twenty to stay clear of the codes it does not choose: 1 for an uncaught error, 3
- * under `-XX:+ExitOnOutOfMemoryError`, and 128 plus the signal when a process is killed.
+ * @property path Where, relative to the working directory. It has to stay inside it.
+ * @property source Where the bytes are, as a `file:` or `http(s):` URL.
+ * @property key The stored object the bytes are, which never changes under one key. A launcher
+ *           ignores it; a dispatcher that stages inputs itself caches by it, since [source] is signed
+ *           afresh for every manifest.
  */
-const val EXIT_OK = 0
+@Serializable
+data class StagedInput(
+    val path: String,
+    val source: String,
+    val key: String,
+)
 
-/** The manifest, or a scenario inside it, did not parse or did not validate. */
-const val EXIT_INVALID_SPEC = 20
+/**
+ * One `(scenario, seed)` run.
+ *
+ * @property scenario The run, with `runs = 1`, its own `initialSeed`, and every reference a staged path.
+ * @property outputs Where each file the run writes is published.
+ * @property outcome Where the unit's [UnitOutcome] is published, once its outputs are.
+ */
+@Serializable
+data class LaunchUnit(
+    val scenario: ScenarioSpec,
+    val outputs: List<OutputTarget>,
+    val outcome: String,
+)
 
-/** The simulation threw. */
-const val EXIT_SIMULATION_ERROR = 21
-
-/** An input could not be read or an output could not be written. */
-const val EXIT_TRANSFER_FAILED = 22
+/** Where the output file named [file] is published to. */
+@Serializable
+data class OutputTarget(
+    val file: String,
+    val target: String,
+)

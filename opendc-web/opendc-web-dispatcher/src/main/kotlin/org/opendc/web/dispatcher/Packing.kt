@@ -24,6 +24,7 @@ package org.opendc.web.dispatcher
 
 import kotlin.math.ceil
 import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.min
 
 /** One `(scenario, seed)` run with what it is expected to cost. */
@@ -40,18 +41,27 @@ data class PlannedUnit(
 }
 
 /**
+ * What a platform is asked to give one execution. Memory is in whole megabytes, as platforms count it.
+ *
+ * @property parallelism How many units run at once, which is also how many cores are asked for.
+ * @property heapMb What the units need between them, which is the process heap.
+ * @property memoryRequestMb What the platform must reserve: the heap and the process around it.
+ */
+data class Grant(
+    val parallelism: Int,
+    val heapMb: Int,
+    val memoryRequestMb: Int,
+    val timeLimitSeconds: Int,
+)
+
+/**
  * One packed execution.
  *
- * @property heapMb What the units need between them, which is the process heap.
- * @property memoryRequestMb What the platform must reserve, heap plus the process itself.
  * @property makespanSeconds Expected wall clock, which elapsed time is later compared against.
  */
 data class PlannedBag(
     val units: List<PlannedUnit>,
-    val parallelism: Int,
-    val heapMb: Double,
-    val memoryRequestMb: Double,
-    val timeLimitSeconds: Int,
+    val grant: Grant,
     val makespanSeconds: Double,
 )
 
@@ -60,20 +70,31 @@ data class PlannedBag(
  * up on.
  *
  * @property jvmBaselineMb The launcher's own footprint, paid once however many units share it.
+ * @property offHeapPerUnitMb What each unit holds outside the heap, such as parquet buffers.
+ * @property heapHeadroom How much heap a unit is given per megabyte of its estimated peak.
  * @property startupSeconds What a launcher costs before its first run begins, likewise paid once.
  * @property timeSafetyFactor How far past its estimate the work in a bag may run before it is killed.
  * @property maxAttempts Including the first, so two means one retry.
- * @property growthFactor What a grant is multiplied by when the work needs more than it was given.
+ * @property growthFactor What a unit's memory or a bag's time is multiplied by when it was not enough.
  * @property maxMemoryRequestMb The largest grant worth asking for.
  */
 data class DispatchPolicy(
     val jvmBaselineMb: Double,
+    val offHeapPerUnitMb: Double,
+    val heapHeadroom: Double,
     val startupSeconds: Double,
     val timeSafetyFactor: Double,
     val maxAttempts: Int,
     val growthFactor: Double,
     val maxMemoryRequestMb: Double,
 )
+
+/** What a bag of [size] units, the largest of which peaks at [headPeakMb], asks the platform to reserve. */
+fun requestMb(
+    size: Int,
+    headPeakMb: Double,
+    policy: DispatchPolicy,
+): Double = policy.jvmBaselineMb + policy.offHeapPerUnitMb * size + policy.heapHeadroom * size * headPeakMb
 
 /**
  * Packs units into bags, memory first.
@@ -99,104 +120,145 @@ fun planBags(
 
     while (index < ordered.size) {
         val head = ordered[index]
-        val fits = floor((slot.memoryMb - policy.jvmBaselineMb) / head.peakMemoryMb).coerceIn(1.0, slot.cores.toDouble())
+        val perUnit = policy.offHeapPerUnitMb + policy.heapHeadroom * head.peakMemoryMb
+        val fits = floor((slot.memoryMb - policy.jvmBaselineMb) / perUnit).coerceIn(1.0, slot.cores.toDouble())
         val size = min(fits.toInt(), ordered.size - index)
-        val bag = ordered.subList(index, index + size).toList()
-        bags.add(bag.toBag(policy.jvmBaselineMb + size * head.peakMemoryMb, policy))
+        bags.add(ordered.subList(index, index + size).toList().toBag(slot, policy))
         index += size
     }
     return bags
 }
 
 /**
- * How a failed execution is tried again, or an empty list when nothing different is worth trying.
- *
- * Failures a different grant cannot change are given up on at once. For the rest, the lever depends
- * on which resource ran out: a bag's memory is `baseline + n x peak` while its duration is its
- * longest single unit, so splitting it halves what it holds and does not shorten it. Memory is
- * answered by splitting, or by a larger grant once a bag is down to one unit; time only by a longer
- * limit.
- *
- * Every attempt writes the same deterministic output, so a retry overwrites what it replaces.
+ * How a failed execution's units are tried again, or an empty list when nothing different is worth
+ * trying: a failure no grant could change, or one that has used up its attempts.
  */
 fun retryBags(
-    bag: PlannedBag,
+    units: List<PlannedUnit>,
+    failed: Grant,
     attempt: Int,
     reason: ExitReason,
     slot: ExecutionSlot,
     policy: DispatchPolicy,
-): List<PlannedBag> {
-    if (!reason.isResourceShaped || attempt >= policy.maxAttempts) {
-        return emptyList()
-    }
-    return when (reason) {
-        ExitReason.OOM ->
-            if (bag.units.size > 1) {
-                split(bag, slot, policy)
-            } else {
-                enlarged(bag, policy, memoryRequestMb = bag.memoryRequestMb * policy.growthFactor)
-            }
-
-        ExitReason.TIMEOUT, ExitReason.WALLTIME ->
-            enlarged(
-                bag,
-                policy,
-                timeLimitSeconds = ceil(bag.timeLimitSeconds * policy.growthFactor).toInt(),
-            )
-
-        // Nothing is known about why it died, so it is tried once more as it was.
-        ExitReason.UNKNOWN -> listOf(bag)
-
-        ExitReason.OK, ExitReason.SIMULATION_ERROR, ExitReason.INVALID_SPEC, ExitReason.CANCELLED -> emptyList()
-    }
-}
-
-/** The same work in more bags, each holding at most half of what did not fit. */
-private fun split(
-    bag: PlannedBag,
-    slot: ExecutionSlot,
-    policy: DispatchPolicy,
-): List<PlannedBag> {
-    val half = ceil(bag.units.size / 2.0).toInt()
-    val bags = planBags(bag.units, slot.copy(cores = min(slot.cores, half)), policy)
-    return if (bags.size > 1) {
-        bags
-    } else {
-        enlarged(bag, policy, memoryRequestMb = bag.memoryRequestMb * policy.growthFactor)
-    }
-}
-
-private fun enlarged(
-    bag: PlannedBag,
-    policy: DispatchPolicy,
-    memoryRequestMb: Double = bag.memoryRequestMb,
-    timeLimitSeconds: Int = bag.timeLimitSeconds,
 ): List<PlannedBag> =
-    if (memoryRequestMb > policy.maxMemoryRequestMb) {
+    if (!reason.isResourceShaped || attempt >= policy.maxAttempts) {
         emptyList()
     } else {
-        listOf(
-            bag.copy(
-                heapMb = (memoryRequestMb - policy.jvmBaselineMb).coerceAtLeast(1.0),
-                memoryRequestMb = memoryRequestMb,
-                timeLimitSeconds = timeLimitSeconds,
-            ),
-        )
+        escalatedBags(units, failed, reason, slot, policy)
     }
 
+/**
+ * The bags that answer the resource [reason] says ran out under [failed].
+ *
+ * Memory is answered per unit: each unit is grown to at least its share of the heap that was not
+ * enough, so the estimate that packed it does not pack it the same way again, and the units are
+ * re-packed around their new size. Time is answered with a longer limit, up to the slot's cap; a bag
+ * already at the cap has nothing left to try. A death nobody explained is tried once more as it was.
+ */
+fun escalatedBags(
+    units: List<PlannedUnit>,
+    failed: Grant,
+    reason: ExitReason,
+    slot: ExecutionSlot,
+    policy: DispatchPolicy,
+): List<PlannedBag> =
+    when (reason) {
+        ExitReason.OOM -> {
+            val share = failed.heapMb / (failed.parallelism * policy.heapHeadroom)
+            val grown = units.map { it.copy(peakMemoryMb = policy.growthFactor * max(it.peakMemoryMb, share)) }
+            if (grown.any { requestMb(1, it.peakMemoryMb, policy) > policy.maxMemoryRequestMb }) {
+                emptyList()
+            } else {
+                requeuedBags(grown, failed, slot, policy)
+            }
+        }
+
+        ExitReason.TIMEOUT, ExitReason.WALLTIME -> {
+            val longer = slot.timeCap.clamp(ceil(failed.timeLimitSeconds * policy.growthFactor).toInt())
+            if (longer <= failed.timeLimitSeconds) {
+                emptyList()
+            } else {
+                planBags(units, slot, policy).map { it.withLimitAtLeast(longer) }
+            }
+        }
+
+        ExitReason.UNKNOWN -> requeuedBags(units, failed, slot, policy)
+
+        ExitReason.OK, ExitReason.SIMULATION_ERROR, ExitReason.INVALID_SPEC, ExitReason.CANCELLED, ExitReason.REJECTED -> emptyList()
+    }
+
+/** [units] packed afresh, never given less time than [failed] had. */
+fun requeuedBags(
+    units: List<PlannedUnit>,
+    failed: Grant,
+    slot: ExecutionSlot,
+    policy: DispatchPolicy,
+): List<PlannedBag> = planBags(units, slot, policy).map { it.withLimitAtLeast(failed.timeLimitSeconds) }
+
+/** A unit no bag can hold here, whatever else it is packed with. */
+sealed interface Unfit {
+    val unit: PlannedUnit
+
+    /** Its estimate alone runs past the slot's time cap. */
+    data class TooLong(
+        override val unit: PlannedUnit,
+        val seconds: Int,
+        val capSeconds: Int,
+    ) : Unfit
+
+    /** It alone needs more memory than any grant worth asking for. */
+    data class TooLarge(
+        override val unit: PlannedUnit,
+        val memoryMb: Double,
+        val capMb: Double,
+    ) : Unfit
+}
+
+/**
+ * The units that cannot run here at all.
+ *
+ * Judged on the estimate without the safety factor: a unit whose estimate fits but whose margin does
+ * not is still run, with its limit clamped to the cap.
+ */
+fun unfit(
+    units: List<PlannedUnit>,
+    slot: ExecutionSlot,
+    policy: DispatchPolicy,
+): List<Unfit> =
+    units.mapNotNull { unit ->
+        val seconds = ceil(policy.startupSeconds + unit.cpuSeconds).toInt()
+        val memory = requestMb(1, unit.peakMemoryMb, policy)
+        val cap = slot.timeCap
+        when {
+            cap is TimeCap.Limited && seconds > cap.seconds -> Unfit.TooLong(unit, seconds, cap.seconds)
+            memory > policy.maxMemoryRequestMb -> Unfit.TooLarge(unit, memory, policy.maxMemoryRequestMb)
+            else -> null
+        }
+    }
+
+private fun PlannedBag.withLimitAtLeast(seconds: Int): PlannedBag =
+    copy(
+        grant = grant.copy(timeLimitSeconds = max(grant.timeLimitSeconds, seconds)),
+    )
+
 private fun List<PlannedUnit>.toBag(
-    memoryRequestMb: Double,
+    slot: ExecutionSlot,
     policy: DispatchPolicy,
 ): PlannedBag {
+    val head = maxOf { it.peakMemoryMb }
     val makespan = maxOf { it.cpuSeconds }
+    // Starting a launcher costs the same whatever it then runs, so it is added rather than
+    // multiplied: a factor over a short bag's estimate is all startup and no work.
+    val limit = ceil(policy.startupSeconds + policy.timeSafetyFactor * makespan).toInt().coerceAtLeast(1)
     return PlannedBag(
         units = this,
-        parallelism = size,
-        heapMb = memoryRequestMb - policy.jvmBaselineMb,
-        memoryRequestMb = memoryRequestMb,
-        // Starting a launcher costs the same whatever it then runs, so it is added rather than
-        // multiplied: a factor over a short bag's estimate is all startup and no work.
-        timeLimitSeconds = ceil(policy.startupSeconds + policy.timeSafetyFactor * makespan).toInt().coerceAtLeast(1),
+        grant =
+            Grant(
+                parallelism = size,
+                heapMb = ceil(policy.heapHeadroom * size * head).toInt().coerceAtLeast(1),
+                memoryRequestMb = ceil(requestMb(size, head, policy)).toInt(),
+                timeLimitSeconds = slot.timeCap.clamp(limit),
+            ),
         makespanSeconds = makespan,
     )
 }

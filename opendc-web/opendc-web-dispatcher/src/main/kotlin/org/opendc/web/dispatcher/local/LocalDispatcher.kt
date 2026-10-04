@@ -22,33 +22,43 @@
 
 package org.opendc.web.dispatcher.local
 
-import org.opendc.sdk.model.serialization.SdkJson
+import org.opendc.web.dispatcher.CapacitySnapshot
 import org.opendc.web.dispatcher.Dispatcher
 import org.opendc.web.dispatcher.ExecutionSlot
 import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
+import org.opendc.web.dispatcher.Grant
+import org.opendc.web.dispatcher.Launch
 import org.opendc.web.dispatcher.LaunchRequest
-import org.opendc.web.launcher.EXIT_INVALID_SPEC
-import org.opendc.web.launcher.EXIT_OK
-import org.opendc.web.launcher.EXIT_SIMULATION_ERROR
-import org.opendc.web.launcher.EXIT_TRANSFER_FAILED
-import org.opendc.web.launcher.LaunchManifest
+import org.opendc.web.dispatcher.PlatformEvent
+import org.opendc.web.dispatcher.PlatformSpan
+import org.opendc.web.dispatcher.PlatformVerdict
+import org.opendc.web.dispatcher.TimeCap
+import org.opendc.web.dispatcher.launcherExitMessage
+import org.opendc.web.dispatcher.launcherExitReason
+import org.opendc.web.dispatcher.logTail
+import org.opendc.web.launcher.LAUNCHER_MAIN
+import org.opendc.web.launcher.MANIFEST_URL_VARIABLE
+import org.opendc.web.launcher.PEAK_MEMORY_FILE
+import org.opendc.web.launcher.PeakMemory
+import org.opendc.web.launcher.peakMemoryOf
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.math.ceil
-
-/** The entry point a local execution runs. */
-const val LAUNCHER_MAIN = "org.opendc.web.launcher.MainKt"
+import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.readText
 
 /**
  * How much of this machine the local dispatcher may use, and where the launcher it starts lives.
  *
  * @property classpath Where [mainClass] and everything it needs is found.
- * @property workDir Where manifests and launcher logs are written.
+ * @property workDir Where each execution gets a directory to run in, removed once it has ended.
  */
 data class LocalDispatcherConfig(
     val cores: Int,
@@ -62,15 +72,17 @@ data class LocalDispatcherConfig(
  * Runs bags as subprocesses of this server.
  *
  * The process handle is the terminal observer: an exit code the launcher chose is taken at face
- * value, and anything else is read as the machine having ended the process.
+ * value, and anything else is read as the machine having ended the process. Nothing outlives this
+ * server's lifetime, so reconciling after a restart has nothing to adopt.
  */
 class LocalDispatcher(private val config: LocalDispatcherConfig) : Dispatcher {
     private val running = ConcurrentHashMap<UUID, Running>()
-    private val listener = AtomicReference<(UUID, ExitOutcome) -> Unit> { _, _ -> }
+    private val pendingCancels = ConcurrentHashMap.newKeySet<UUID>()
+    private val listener = AtomicReference<(PlatformEvent) -> Unit> { }
 
     override val name: String get() = NAME
 
-    override fun slot(): ExecutionSlot = ExecutionSlot(config.cores, config.memoryMb)
+    override fun slot(): ExecutionSlot = ExecutionSlot(config.cores, config.memoryMb, TimeCap.Unlimited)
 
     /**
      * Work larger than the whole machine is admitted once nothing else is running, since it would
@@ -82,55 +94,94 @@ class LocalDispatcher(private val config: LocalDispatcherConfig) : Dispatcher {
     ): Boolean {
         val live = running.values.toList()
         return live.isEmpty() ||
-            (live.sumOf { it.cores } + cores <= config.cores && live.sumOf { it.memoryMb } + memoryMb <= config.memoryMb)
+            (
+                live.sumOf { it.grant.parallelism } + cores <= config.cores &&
+                    live.sumOf { it.grant.memoryRequestMb.toDouble() } + memoryMb <= config.memoryMb
+            )
     }
 
-    override fun observe(onFinished: (UUID, ExitOutcome) -> Unit) {
-        listener.set(onFinished)
+    override fun capacity(): CapacitySnapshot {
+        val live = running.values.toList()
+        return CapacitySnapshot(
+            totalCores = config.cores,
+            totalMemoryMb = config.memoryMb,
+            allocatedCores = live.sumOf { it.grant.parallelism },
+            allocatedMemoryMb = live.sumOf { it.grant.memoryRequestMb.toDouble() },
+        )
     }
 
-    override fun launch(request: LaunchRequest) {
-        val directory = config.workDir.resolve(request.executionId.toString())
-        Files.createDirectories(directory)
-        val manifest = directory.resolve("manifest.json")
-        Files.writeString(manifest, SdkJson.json.encodeToString(LaunchManifest.serializer(), request.manifest))
+    override fun observe(listener: (PlatformEvent) -> Unit) {
+        this.listener.set(listener)
+    }
 
-        val builder =
-            ProcessBuilder(command(request))
-                .redirectErrorStream(true)
-                .redirectOutput(directory.resolve("launcher.log").toFile())
-        builder.environment()[MANIFEST_URL] = manifest.toUri().toString()
-
-        val process = builder.start()
-        running[request.executionId] =
-            Running(process, request.manifest.parallelism, request.memoryRequestMb, AtomicReference(Intent.RUN))
-        watch(request.executionId, process, request.timeLimitSeconds)
+    override fun launch(request: LaunchRequest): Launch {
+        if (running.containsKey(request.executionId)) {
+            return Launch.Accepted
+        }
+        val directory = directoryOf(request.executionId)
+        val process =
+            try {
+                Files.createDirectories(directory)
+                ProcessBuilder(command(request))
+                    .directory(directory.toFile())
+                    .redirectErrorStream(true)
+                    .redirectOutput(directory.resolve(LOG_FILE).toFile())
+                    .also { it.environment()[MANIFEST_URL_VARIABLE] = request.manifestUrl }
+                    .start()
+            } catch (e: IOException) {
+                directory.toFile().deleteRecursively()
+                return Launch.Rejected("Could not start a launcher: ${e.message}")
+            }
+        val execution = Running(process, request.grant, Instant.now(), AtomicReference(Intent.RUN))
+        running[request.executionId] = execution
+        // A cancel that arrived while the process was being started finds it here.
+        if (pendingCancels.remove(request.executionId)) {
+            cancel(request.executionId)
+        }
+        watch(request.executionId, execution, request.grant.timeLimitSeconds)
+        return Launch.Accepted
     }
 
     override fun cancel(executionId: UUID) {
-        val execution = running[executionId] ?: return
+        val execution = running[executionId]
+        if (execution == null) {
+            pendingCancels += executionId
+            return
+        }
         execution.intent.set(Intent.CANCEL)
         execution.process.destroyForcibly()
     }
 
     /**
-     * A launcher this server did not start is never adopted.
+     * A launcher from an earlier lifetime is never adopted.
      *
-     * One left over from an earlier lifetime is ended rather than waited for, so the retry that
-     * replaces it cannot race a process still writing the same output.
+     * One left over is ended rather than waited for, so the retry that replaces it cannot race a
+     * process still writing the same output, and every directory nothing is running in is swept.
      */
-    override fun reconcile(executionIds: List<UUID>): Set<UUID> {
-        val live = executionIds.filterTo(mutableSetOf()) { running.containsKey(it) }
-        for (executionId in executionIds - live) {
+    override fun reconcile(executionIds: List<UUID>): Map<UUID, PlatformVerdict> {
+        for (executionId in executionIds.filterNot { running.containsKey(it) }) {
             orphan(executionId)?.destroyForcibly()
         }
-        return live
+        if (config.workDir.exists()) {
+            config.workDir
+                .listDirectoryEntries()
+                .filter { entry -> running.keys.none { it.toString() == entry.fileName.toString() } }
+                .forEach { it.toFile().deleteRecursively() }
+        }
+        return executionIds.associateWith { executionId ->
+            running[executionId]?.let { PlatformVerdict.Running(it.startedAt) } ?: PlatformVerdict.Unknown
+        }
     }
+
+    /** Nothing is held open between calls; processes still running are this server's to end. */
+    override fun close() {}
+
+    private fun directoryOf(executionId: UUID): Path = config.workDir.resolve(executionId.toString())
 
     private fun command(request: LaunchRequest): List<String> =
         listOf(
             Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-            "-Xmx${ceil(request.heapMb).toLong()}m",
+            "-Xmx${request.grant.heapMb}m",
             "-XX:+ExitOnOutOfMemoryError",
             "-D$EXECUTION_PROPERTY=${request.executionId}",
             "-cp",
@@ -140,22 +191,72 @@ class LocalDispatcher(private val config: LocalDispatcherConfig) : Dispatcher {
 
     private fun watch(
         executionId: UUID,
-        process: Process,
+        execution: Running,
         timeLimitSeconds: Int,
     ) {
         Thread
             .ofVirtual()
             .name("opendc-local-$executionId")
             .start {
+                val process = execution.process
+                listener.get().invoke(PlatformEvent.Started(executionId, execution.startedAt))
                 if (!process.waitFor(timeLimitSeconds.toLong(), TimeUnit.SECONDS)) {
-                    running[executionId]?.intent?.set(Intent.TIMEOUT)
+                    execution.intent.compareAndSet(Intent.RUN, Intent.TIMEOUT)
                     process.destroyForcibly()
                     process.waitFor()
                 }
-                val intent = running.remove(executionId)?.intent?.get() ?: Intent.RUN
-                listener.get().invoke(executionId, outcome(process.exitValue(), intent))
+                val directory = directoryOf(executionId)
+                val outcome = outcome(process.exitValue(), execution, Instant.now(), directory)
+                try {
+                    listener.get().invoke(PlatformEvent.Finished(executionId, outcome))
+                    // Released only once the outcome is in the server's hands: a listener that threw
+                    // leaves the directory for the next reconcile to sweep.
+                    directory.toFile().deleteRecursively()
+                } finally {
+                    running.remove(executionId)
+                }
             }
     }
+
+    private fun outcome(
+        code: Int,
+        execution: Running,
+        endedAt: Instant,
+        directory: Path,
+    ): ExitOutcome {
+        val (reason, message) =
+            when (execution.intent.get()) {
+                Intent.CANCEL -> ExitReason.CANCELLED to "cancelled"
+                Intent.TIMEOUT -> ExitReason.TIMEOUT to "ran past its time limit"
+                Intent.RUN ->
+                    if (code == KILLED) {
+                        ExitReason.OOM to "killed, most likely for memory"
+                    } else {
+                        launcherExitReason(
+                            code,
+                        ) to launcherExitMessage(code)
+                    }
+            }
+        return ExitOutcome(
+            reason = reason,
+            exitCode = code,
+            message = message,
+            span = PlatformSpan.Ran(execution.startedAt, endedAt),
+            peakMemory = readOr(directory.resolve(PEAK_MEMORY_FILE), PeakMemory.Unmeasured) { peakMemoryOf(it) },
+            logTail = readOr(directory.resolve(LOG_FILE), "") { logTail(it) },
+        )
+    }
+
+    private fun <T> readOr(
+        file: Path,
+        absent: T,
+        read: (String) -> T,
+    ): T =
+        try {
+            if (file.exists()) read(file.readText()) else absent
+        } catch (e: IOException) {
+            absent
+        }
 
     private fun orphan(executionId: UUID): ProcessHandle? =
         ProcessHandle
@@ -164,30 +265,10 @@ class LocalDispatcher(private val config: LocalDispatcherConfig) : Dispatcher {
             .findFirst()
             .orElse(null)
 
-    private fun outcome(
-        code: Int,
-        intent: Intent,
-    ): ExitOutcome =
-        when (intent) {
-            Intent.CANCEL -> ExitOutcome(ExitReason.CANCELLED, code, "cancelled")
-            Intent.TIMEOUT -> ExitOutcome(ExitReason.TIMEOUT, code, "exceeded its time limit")
-            Intent.RUN -> classify(code)
-        }
-
-    private fun classify(code: Int): ExitOutcome =
-        when (code) {
-            EXIT_OK -> ExitOutcome(ExitReason.OK, code, "")
-            EXIT_INVALID_SPEC -> ExitOutcome(ExitReason.INVALID_SPEC, code, "the spec did not validate")
-            EXIT_SIMULATION_ERROR -> ExitOutcome(ExitReason.SIMULATION_ERROR, code, "the simulation failed")
-            EXIT_TRANSFER_FAILED -> ExitOutcome(ExitReason.UNKNOWN, code, "an input or output could not be transferred")
-            JVM_EXIT_ON_OUT_OF_MEMORY, KILLED -> ExitOutcome(ExitReason.OOM, code, "ran out of memory")
-            else -> ExitOutcome(ExitReason.UNKNOWN, code, "Unknown failure: exit with code $code")
-        }
-
     private class Running(
         val process: Process,
-        val cores: Int,
-        val memoryMb: Double,
+        val grant: Grant,
+        val startedAt: Instant,
         val intent: AtomicReference<Intent>,
     )
 
@@ -197,15 +278,13 @@ class LocalDispatcher(private val config: LocalDispatcherConfig) : Dispatcher {
     companion object {
         const val NAME = "local"
 
-        /** The entry point a local execution runs. */
-        const val LAUNCHER_MAIN = "org.opendc.web.launcher.MainKt"
-
-        private const val MANIFEST_URL = "MANIFEST_URL"
+        /** What the launcher's output is written to, inside its execution's directory. */
+        const val LOG_FILE = "launcher.log"
 
         /** Identifies a launcher process as belonging to one execution of this server. */
         private const val EXECUTION_PROPERTY = "opendc.execution"
 
-        private const val JVM_EXIT_ON_OUT_OF_MEMORY = 3
+        /** What a process the kernel's out-of-memory killer ended exits with. */
         private const val KILLED = 137
     }
 }

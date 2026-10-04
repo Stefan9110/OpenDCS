@@ -41,11 +41,11 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.server.auth.Identity
-import org.opendc.web.server.model.Execution
-import org.opendc.web.server.model.ExecutionState
+import org.opendc.web.server.model.ExecutionUnit
 import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.RunUnit
+import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.results.ExperimentResults
 import org.opendc.web.server.results.ResultsReader
 import org.opendc.web.server.results.ScenarioResults
@@ -55,6 +55,7 @@ import org.opendc.web.server.service.SubmissionPipeline
 import org.opendc.web.server.service.SubmissionPreview
 import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.resultKey
+import org.opendc.web.server.storage.runKey
 import java.util.UUID
 import java.util.zip.Deflater
 import java.util.zip.ZipEntry
@@ -125,6 +126,9 @@ enum class ExitReasonWire {
 
     @SerialName("cancelled")
     CANCELLED,
+
+    @SerialName("rejected")
+    REJECTED,
 
     @SerialName("unknown")
     UNKNOWN,
@@ -345,7 +349,7 @@ class ExperimentsResource(
     ): ExperimentStatus {
         val experiment = accessibleExperiment(id)
         val units = RunUnit.findByExperiment(experiment.id)
-        val scenarios = scenarioStatuses(units, executionsOf(experiment.id))
+        val scenarios = scenarioStatuses(units, attemptsOf(experiment.id))
         return ExperimentStatus(
             id = experiment.publicId.toString(),
             name = experiment.name,
@@ -368,7 +372,7 @@ class ExperimentsResource(
         if (units.isEmpty()) {
             throw notFound("Scenario")
         }
-        return scenarioStatus(index, units, executionsOf(experiment.id))
+        return scenarioStatus(index, units, attemptsOf(experiment.id))
     }
 
     /**
@@ -386,7 +390,7 @@ class ExperimentsResource(
     ): ScenarioStatus {
         val experiment = accessibleExperiment(id)
         val units = pipeline.retryScenario(experiment, index)
-        return scenarioStatus(index, units, executionsOf(experiment.id))
+        return scenarioStatus(index, units, attemptsOf(experiment.id))
     }
 
     @GET
@@ -424,7 +428,13 @@ class ExperimentsResource(
     ): Response {
         val experiment = accessibleExperiment(id)
         val prefix = resultKey(experiment.publicId)
-        val keys = store.list(prefix)
+        // Only what a unit certified: an attempt cut off partway can have published some of its
+        // files, and those must never be readable as a result.
+        val keys =
+            RunUnit
+                .findByExperiment(experiment.id)
+                .filter { it.state == UnitState.SUCCEEDED }
+                .flatMap { store.list(runKey(experiment.publicId, it.scenarioIndex, it.seed)) }
         if (keys.isEmpty()) {
             throw notFound("Results")
         }
@@ -521,43 +531,44 @@ class ExperimentsResource(
         }
 
     /**
-     * The execution carrying each unit.
+     * Each unit's latest attempt.
      *
-     * A unit that has been retried belongs to more than one, and executions arrive oldest first, so
-     * the last write per unit is the attempt that counts.
+     * A unit that has been retried has a row per execution that carried it, and rows arrive oldest
+     * first, so the last write per unit is the attempt that counts.
      */
-    private fun executionsOf(experimentId: Long): Map<Long, Execution> =
-        Execution.findByExperiment(experimentId).flatMap { execution -> execution.units.map { it.id to execution } }.toMap()
+    private fun attemptsOf(experimentId: Long): Map<Long, ExecutionUnit> =
+        ExecutionUnit.findByExperiment(experimentId).associateBy { it.unit.id }
 
     private fun scenarioStatuses(
         units: List<RunUnit>,
-        executions: Map<Long, Execution>,
+        attempts: Map<Long, ExecutionUnit>,
     ): List<ScenarioStatus> =
         units
             .groupBy { it.scenarioIndex }
             .toSortedMap()
-            .map { (index, scenarioUnits) -> scenarioStatus(index, scenarioUnits, executions) }
+            .map { (index, scenarioUnits) -> scenarioStatus(index, scenarioUnits, attempts) }
 
     private fun scenarioStatus(
         index: Int,
         units: List<RunUnit>,
-        executions: Map<Long, Execution>,
+        attempts: Map<Long, ExecutionUnit>,
     ): ScenarioStatus {
-        val failed = units.firstOrNull { it.state == ExecutionState.FAILED || it.state == ExecutionState.CANCELLED }
+        val failed = units.firstOrNull { it.state == UnitState.FAILED || it.state == UnitState.CANCELLED }
         return ScenarioStatus(
             scenarioIndex = index,
             state = foldStates(units.map { it.state }),
             completedTasks = units.sumOf { it.completedTasks },
             totalTasks = units.sumOf { it.totalTasks },
-            attempt = units.maxOf { executions[it.id]?.attempt ?: 1 },
-            exitInfo = failed?.let { executions[it.id] }?.let(::exitInfo),
+            attempt = units.maxOf { attempts[it.id]?.execution?.attempt ?: 1 },
+            exitInfo = failed?.let { attempts[it.id] }?.let(::exitInfo),
         )
     }
 
-    private fun exitInfo(bag: Execution): ExitInfo? =
-        bag.exitReason?.let { reason ->
+    /** How a unit's latest attempt ended, for a unit that has ended without succeeding. */
+    private fun exitInfo(attempt: ExecutionUnit): ExitInfo? =
+        attempt.exitReason?.let { reason ->
             ExitInfo(
-                exitCode = bag.exitCode ?: -1,
+                exitCode = attempt.execution.reportedExitCode,
                 reason =
                     when (reason) {
                         ExitReason.OK -> ExitReasonWire.OK
@@ -567,9 +578,10 @@ class ExperimentsResource(
                         ExitReason.TIMEOUT -> ExitReasonWire.TIMEOUT
                         ExitReason.WALLTIME -> ExitReasonWire.WALLTIME
                         ExitReason.CANCELLED -> ExitReasonWire.CANCELLED
+                        ExitReason.REJECTED -> ExitReasonWire.REJECTED
                         ExitReason.UNKNOWN -> ExitReasonWire.UNKNOWN
                     },
-                message = bag.exitMessage,
+                message = attempt.exitMessage.ifEmpty { null },
             )
         }
 
@@ -585,7 +597,7 @@ class ExperimentsResource(
             RunStateWire.RUNNING -> ExperimentStateWire.RUNNING
             RunStateWire.SUCCEEDED -> ExperimentStateWire.SUCCEEDED
             RunStateWire.FAILED ->
-                if (units.any { it.state == ExecutionState.SUCCEEDED }) {
+                if (units.any { it.state == UnitState.SUCCEEDED }) {
                     ExperimentStateWire.PARTIAL
                 } else {
                     ExperimentStateWire.FAILED
@@ -595,13 +607,13 @@ class ExperimentsResource(
     }
 
     // Mirror of foldExperimentState in the frontend (lib/experiment/status.ts); the two must not
-    // drift, which the status tests pin.
-    private fun foldStates(states: List<ExecutionState>): RunStateWire =
+    // drift, which the status tests pin. A carried unit is running as far as a reader is concerned.
+    private fun foldStates(states: List<UnitState>): RunStateWire =
         when {
-            states.isEmpty() || states.all { it == ExecutionState.QUEUED } -> RunStateWire.QUEUED
+            states.isEmpty() || states.all { it == UnitState.QUEUED } -> RunStateWire.QUEUED
             states.any { !it.isTerminal } -> RunStateWire.RUNNING
-            states.all { it == ExecutionState.SUCCEEDED } -> RunStateWire.SUCCEEDED
-            states.all { it == ExecutionState.CANCELLED } -> RunStateWire.CANCELLED
+            states.all { it == UnitState.SUCCEEDED } -> RunStateWire.SUCCEEDED
+            states.all { it == UnitState.CANCELLED } -> RunStateWire.CANCELLED
             else -> RunStateWire.FAILED
         }
 }

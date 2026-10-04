@@ -27,6 +27,7 @@ import java.nio.channels.Channels
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.time.Duration
 
 /** A directory of objects, one file per key. What a development machine and the test suite use. */
 class LocalObjectStore(private val root: Path) : ObjectStore {
@@ -115,8 +116,20 @@ class LocalObjectStore(private val root: Path) : ObjectStore {
     /** Bytes that came through the server were a whole file by the time the request that carried them ended. */
     override fun completeUpload(key: String): Boolean = exists(key)
 
-    /** A launcher on this machine reads and writes the files itself, so nothing is signed. */
-    override fun locationOf(prefix: String): String = fileOf(prefix).toAbsolutePath().toUri().toString()
+    /** A launcher on this machine reads the file itself, so nothing is signed and nothing expires. */
+    override fun readUrl(
+        key: String,
+        lifetime: Duration,
+    ): String = fileOf(key).toAbsolutePath().toUri().toString()
+
+    override fun writeUrl(
+        key: String,
+        lifetime: Duration,
+    ): String = fileOf(key).toAbsolutePath().toUri().toString()
+
+    override fun deletePrefix(prefix: String) {
+        fileOf(prefix).toFile().deleteRecursively()
+    }
 
     /** A directory holds nothing open between calls. */
     override fun close() {}

@@ -26,6 +26,7 @@ import io.smallrye.config.ConfigMapping
 import io.smallrye.config.WithDefault
 import org.opendc.web.dispatcher.DispatchPolicy
 import org.opendc.web.dispatcher.estimate.EstimatorCoefficients
+import java.time.Duration
 
 /** How work is estimated, shaped and escalated, and where it runs. */
 @ConfigMapping(prefix = "opendc.execution")
@@ -40,6 +41,19 @@ interface ExecutionConfig {
      * has no idea what this server calls itself.
      */
     fun telemetryUrl(): String
+
+    /**
+     * How long the URLs a launcher is handed stay valid: its manifest, its inputs and its outputs.
+     *
+     * Long enough to outlast the longest wait in a platform's queue plus the run. A signature for
+     * object storage lasts seven days at most, which is also the most this may be.
+     */
+    @WithDefault("PT168H")
+    fun urlLifetime(): Duration
+
+    /** How long to leave the platform alone after it could not take an execution. */
+    @WithDefault("PT30S")
+    fun launchRetryDelay(): Duration
 
     fun estimator(): EstimatorSettings
 
@@ -117,6 +131,14 @@ interface ExecutionConfig {
         @WithDefault("256.0")
         fun jvmBaselineMb(): Double
 
+        /** What each run holds outside the heap, such as its output writers' buffers. */
+        @WithDefault("0.0")
+        fun offHeapPerUnitMb(): Double
+
+        /** How much heap a run is given per megabyte of its estimated peak. */
+        @WithDefault("1.0")
+        fun heapHeadroom(): Double
+
         /**
          * What a launcher costs before its first run begins: starting a JVM, loading the classes a
          * simulation needs and fetching its inputs. Added to every bag's time limit, because it is
@@ -160,6 +182,8 @@ fun ExecutionConfig.EstimatorSettings.toCoefficients(): EstimatorCoefficients =
 fun ExecutionConfig.toPolicy(): DispatchPolicy =
     DispatchPolicy(
         jvmBaselineMb = packing().jvmBaselineMb(),
+        offHeapPerUnitMb = packing().offHeapPerUnitMb(),
+        heapHeadroom = packing().heapHeadroom(),
         startupSeconds = packing().startupSeconds(),
         timeSafetyFactor = packing().timeSafetyFactor(),
         maxAttempts = retry().maxAttempts(),

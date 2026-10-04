@@ -28,6 +28,7 @@ import org.opendc.web.launcher.MetricSeries
 import org.opendc.web.launcher.ResultMetric
 import org.opendc.web.server.model.RunUnit
 import org.opendc.web.server.storage.resultKey
+import org.opendc.web.server.storage.runKey
 import org.opendc.web.server.telemetry.RunKey
 import org.opendc.web.server.telemetry.TelemetryStore
 import java.util.UUID
@@ -109,7 +110,7 @@ class ResultsReader(
         posted: Map<RunKey, List<MetricSeries>>,
     ): Map<ResultMetric, List<MetricPoint>> {
         if (unit.state.isTerminal) {
-            val landed = parquet.read("${resultKey(experimentId)}/${unit.scenarioIndex}/seed=${unit.seed}")
+            val landed = parquet.read(runKey(experimentId, unit.scenarioIndex, unit.seed))
             if (landed.isNotEmpty()) {
                 return landed
             }

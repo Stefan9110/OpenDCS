@@ -22,12 +22,21 @@
 
 package org.opendc.web.server.rest
 
+import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
 import jakarta.inject.Inject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.opendc.web.dispatcher.ExitReason
+import org.opendc.web.launcher.UnitFailure
+import org.opendc.web.launcher.UnitOutcome
 import org.opendc.web.server.ApiTest
+import org.opendc.web.server.execution.ExecutionLoop
+import org.opendc.web.server.execution.RecordingDispatcher
+import org.opendc.web.server.execution.ended
+import org.opendc.web.server.model.Execution
+import org.opendc.web.server.model.Experiment
 import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.resultKey
 import java.util.UUID
@@ -43,10 +52,18 @@ class ExperimentArchiveTest {
     @Inject
     lateinit var store: ObjectStore
 
+    @Inject
+    lateinit var loop: ExecutionLoop
+
+    @Inject
+    lateinit var dispatcher: RecordingDispatcher
+
     private lateinit var projectId: String
 
     @BeforeEach
     fun seedProject() {
+        loop.drain()
+        dispatcher.forget()
         projectId =
             ApiTest.requestJson()
                 .body("""{"name":"Archive ${UUID.randomUUID()}"}""")
@@ -63,6 +80,7 @@ class ExperimentArchiveTest {
         write(experiment, "0/seed=0/host.parquet", "first")
         write(experiment, "0/seed=1/service.parquet", "second")
         write(experiment, "1/seed=0/host.parquet", "third")
+        finished(experiment, failing = emptySet())
 
         val entries = archive(experiment)
 
@@ -83,8 +101,21 @@ class ExperimentArchiveTest {
     fun `a name that reads like a path does not become one`() {
         val experiment = submitted("../../etc/passwd")
         write(experiment, "0/seed=0/host.parquet", "content")
+        finished(experiment, failing = emptySet())
 
         assertEquals(listOf("etcpasswd/raw-output/0/seed=0/host.parquet"), archive(experiment).keys.toList())
+    }
+
+    // An attempt cut off partway can have published some of its files. They are not results, and
+    // must not be handed out as though they were.
+    @Test
+    fun `leaves out what a unit published without finishing`() {
+        val experiment = submitted("Half Done")
+        write(experiment, "0/seed=0/host.parquet", "certified")
+        write(experiment, "1/seed=0/host.parquet", "cut off")
+        finished(experiment, failing = setOf(1))
+
+        assertEquals(listOf("half-done/raw-output/0/seed=0/host.parquet"), archive(experiment).keys.toList())
     }
 
     @Test
@@ -122,6 +153,27 @@ class ExperimentArchiveTest {
         store.put("${resultKey(UUID.fromString(experiment))}/$path", content.byteInputStream())
     }
 
+    /** Runs the experiment to its end, its launcher certifying every scenario but those in [failing]. */
+    private fun finished(
+        experiment: String,
+        failing: Set<Int>,
+    ) {
+        loop.drain()
+        val execution = executionOf(experiment)
+        for (unit in dispatcher.manifestOf(execution).units) {
+            val index = unit.scenario.id
+            val outcome = if (index in failing) UnitOutcome.Failed(UnitFailure.SIMULATION_ERROR, "threw") else UnitOutcome.Succeeded(1.0)
+            dispatcher.certify(execution, index, outcome, seed = unit.scenario.initialSeed.toLong())
+        }
+        dispatcher.finish(execution, ended(ExitReason.OK, 23))
+    }
+
+    private fun executionOf(experiment: String): UUID =
+        QuarkusTransaction.requiringNew().call {
+            val id = checkNotNull(Experiment.findByPublicId(UUID.fromString(experiment))).id
+            Execution.findByExperiment(id).single().publicId
+        }
+
     /** The archive, unpacked, so a case can say what is in it rather than how long it was. */
     private fun archive(experiment: String): Map<String, String> {
         val bytes =
@@ -146,7 +198,7 @@ class ExperimentArchiveTest {
 
     private companion object {
         const val TOPOLOGY =
-            """{"datacenters":[{"clusters":[{"name":"C0","hosts":[{"name":"H0","count":1,""" +
+            """{"datacenters":[{"clusters":[{"name":"C0","hosts":[{"name":"H0","count":%d,""" +
                 """"cpu":{"coreCount":4,"coreSpeed":"2.5 GHz"},"memory":{"size":"16 GiB"}}]}]}]}"""
 
         const val WORKLOAD =
@@ -154,6 +206,7 @@ class ExperimentArchiveTest {
                 """"cpuCoreCount":1,"cpuCapacity":"1 GHz","memory":"1 GiB",""" +
                 """"fragments":[{"duration":"10 minutes","cpuUsage":"1 GHz"}]}]}"""
 
-        const val SPEC = """{"name":"archive","topologies":[$TOPOLOGY],"workloads":[$WORKLOAD],"runs":1}"""
+        /** Two scenarios of two runs each, so an archive has scenarios and seeds to lay out. */
+        val SPEC = """{"name":"archive","topologies":[${TOPOLOGY.format(1)},${TOPOLOGY.format(2)}],"workloads":[$WORKLOAD],"runs":2}"""
     }
 }

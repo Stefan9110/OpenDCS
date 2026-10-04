@@ -23,99 +23,214 @@
 package org.opendc.web.launcher
 
 import mu.KotlinLogging
+import org.apache.logging.log4j.ThreadContext
 import org.opendc.sdk.model.resource.NamedReference
-import org.opendc.sdk.model.resource.ProvisionedResource
 import org.opendc.sdk.model.resource.ResourceProvisioner
 import org.opendc.sdk.model.resource.UriReference
 import org.opendc.sdk.model.serialization.SdkJson
 import org.opendc.sdk.runner.OpenDC
-import org.opendc.sdk.runner.SimulationReport
+import org.opendc.sdk.runner.provision.FileSystemResourceProvisioner
 import java.io.IOException
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
+import java.lang.management.ManagementFactory
+import java.lang.management.MemoryType
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
-import java.util.concurrent.ConcurrentHashMap
-import kotlin.io.path.copyTo
-import kotlin.io.path.createDirectories
+import java.nio.file.StandardOpenOption
+import java.util.concurrent.Executors
 import kotlin.io.path.exists
-import kotlin.io.path.listDirectoryEntries
-import kotlin.io.path.name
+import kotlin.io.path.readLines
 import kotlin.system.exitProcess
 
-/** Names the manifest that says everything else. */
-private const val MANIFEST_URL = "MANIFEST_URL"
-
-/** What the output tree under the working directory is called. It never leaves this process. */
+/** What the output tree of a unit is called. It never leaves this process. */
 private const val RUN = "run"
+
+/** A failure message is a marker's payload and a log line, not a stack dump. */
+private const val MESSAGE_CAP = 2000
+
+private const val MEGABYTE = 1024.0 * 1024.0
 
 private val logger = KotlinLogging.logger {}
 
-/** A failure the launcher recognises well enough to give the dispatcher a code for. */
-class LaunchFailure(
-    val exitCode: Int,
-    message: String,
-    cause: Throwable? = null,
-) : Exception(message, cause)
+fun main(): Unit = exitProcess(launch(System.getenv(MANIFEST_URL_VARIABLE).orEmpty(), Path.of("").toAbsolutePath()))
 
-fun main(): Unit = exitProcess(launch())
-
-private fun launch(): Int {
-    val workDir = Files.createTempDirectory("opendc-launcher")
-    return try {
-        run(readManifest(workDir), workDir)
-        EXIT_OK
-    } catch (e: Exception) {
-        logger.error(e) { "The launch failed" }
-        exitCodeOf(e)
-    } finally {
-        workDir.toFile().deleteRecursively()
-    }
+/**
+ * Runs the manifest at [manifestUrl] and returns the code to exit with.
+ *
+ * Everything is fetched and written inside a working directory of its own under [reportDir], which
+ * is removed again before returning. What stays in [reportDir] is the peak-memory report, for the
+ * platform to read back after the process has gone.
+ */
+internal fun launch(
+    manifestUrl: String,
+    reportDir: Path,
+): Int {
+    val workDir = Files.createTempDirectory(reportDir, "work-")
+    val code =
+        try {
+            run(readManifest(manifestUrl), workDir)
+        } catch (e: Exception) {
+            logger.error(e) { "The launch failed" }
+            exitCodeOf(e)
+        } finally {
+            workDir.toFile().deleteRecursively()
+        }
+    writePeakMemory(reportDir.resolve(PEAK_MEMORY_FILE))
+    return code
 }
 
-private fun readManifest(workDir: Path): LaunchManifest {
-    val url = System.getenv(MANIFEST_URL) ?: throw LaunchFailure(EXIT_INVALID_SPEC, "$MANIFEST_URL is not set")
-    val file = fetch(url, workDir.resolve("manifest.json"))
+private fun readManifest(url: String): LaunchManifest {
+    if (url.isEmpty()) {
+        throw LaunchFailure(EXIT_INVALID_SPEC, "$MANIFEST_URL_VARIABLE is not set")
+    }
+    var text = ""
+    fetch(url) { text = it.readBytes().decodeToString() }
     return try {
-        SdkJson.json.decodeFromString<LaunchManifest>(Files.readString(file))
-    } catch (e: Exception) {
-        throw LaunchFailure(EXIT_INVALID_SPEC, "The manifest at $url could not be read", e)
+        SdkJson.json.decodeFromString(LaunchManifest.serializer(), text)
+    } catch (e: IllegalArgumentException) {
+        throw LaunchFailure(EXIT_INVALID_SPEC, "The manifest at ${redacted(url)} could not be read", e)
     }
 }
 
 /**
- * Simulates the manifest's scenarios into a directory of this process's own, and publishes the
- * result only once every one of them has finished. Nothing partial is ever visible where results are
- * looked for.
+ * Stages the inputs, runs every unit, and publishes what each one produced as it finishes.
+ *
+ * A unit's failure is its own: it is published as that unit's outcome and the rest carry on. The
+ * process fails only for what is nobody's unit, such as an input that could not be staged or an
+ * outcome that could not be published.
  */
 private fun run(
     manifest: LaunchManifest,
     workDir: Path,
-) {
-    val issues =
-        manifest.scenarios.flatMap { scenario ->
-            scenario.validate().map { "scenario ${scenario.id}: ${it.path} ${it.message}" }
-        }
-    if (issues.isNotEmpty()) {
-        throw LaunchFailure(EXIT_INVALID_SPEC, issues.joinToString(prefix = "The manifest carries invalid scenarios: "))
+): Int {
+    val inputs = manifest.inputs.map { it to inside(workDir, it.path) }
+    for ((input, path) in inputs) {
+        stage(input.source, path)
     }
 
     val telemetry = TelemetrySink()
-    val report =
+    val reports =
         reporting(manifest.telemetry, telemetry).use {
+            val threads = manifest.parallelism.coerceIn(1, maxOf(1, minOf(manifest.units.size, Runtime.getRuntime().availableProcessors())))
+            val pool = Executors.newFixedThreadPool(threads)
+            try {
+                manifest.units.map { unit -> pool.submit<UnitReport> { runUnit(unit, workDir, telemetry) } }.map { it.get() }
+            } finally {
+                pool.shutdownNow()
+            }
+        }
+    return when {
+        reports.any { it is UnitReport.Unpublished } -> EXIT_TRANSFER_FAILED
+        reports.any { it is UnitReport.Published && it.outcome is UnitOutcome.Failed } -> EXIT_UNITS_FAILED
+        else -> EXIT_OK
+    }
+}
+
+/** Whether a unit's outcome reached its target, which is what the server settles the unit from. */
+private sealed interface UnitReport {
+    data class Published(val outcome: UnitOutcome) : UnitReport
+
+    data object Unpublished : UnitReport
+}
+
+/** Runs one unit and publishes its outputs, then its outcome. */
+private fun runUnit(
+    unit: LaunchUnit,
+    workDir: Path,
+    telemetry: TelemetrySink,
+): UnitReport {
+    val scenario = unit.scenario
+    ThreadContext.put("scenario", scenario.id.toString())
+    ThreadContext.put("seed", scenario.initialSeed.toString())
+    try {
+        val outcome = simulate(unit, workDir, telemetry)
+        if (outcome is UnitOutcome.Failed) {
+            logger.warn { "The unit failed: ${outcome.message}" }
+        }
+        return try {
+            val body = SdkJson.json.encodeToString(UnitOutcome.serializer(), outcome).encodeToByteArray()
+            publish(Payload(body.size.toLong()) { body.inputStream() }, unit.outcome)
+            UnitReport.Published(outcome)
+        } catch (e: LaunchFailure) {
+            logger.error(e) { "The unit's outcome could not be published" }
+            UnitReport.Unpublished
+        }
+    } finally {
+        ThreadContext.clearMap()
+    }
+}
+
+private fun simulate(
+    unit: LaunchUnit,
+    workDir: Path,
+    telemetry: TelemetrySink,
+): UnitOutcome {
+    val scenario = unit.scenario
+    val issues = scenario.validate()
+    if (issues.isNotEmpty()) {
+        return UnitOutcome.Failed(UnitFailure.INVALID_SPEC, issues.joinToString { "${it.path} ${it.message}" }.take(MESSAGE_CAP))
+    }
+    val output = workDir.resolve("output").resolve("${scenario.id}").resolve("${scenario.initialSeed}")
+    val started = System.nanoTime()
+    return try {
+        val report =
             OpenDC
                 .builder()
-                .provisioner(provisioner(workDir.resolve("inputs")))
-                .output(workDir.resolve("output"))
+                .provisioner(staged(workDir))
+                .output(output)
                 .sink(telemetry)
-                .parallelism(manifest.parallelism.coerceIn(1, Runtime.getRuntime().availableProcessors()))
+                .parallelism(1)
                 .build()
-                .simulate(RUN, manifest.scenarios)
+                .simulate(RUN, listOf(scenario))
+        val seconds = (System.nanoTime() - started) / 1e9
+        val written = report.runs.firstNotNullOfOrNull { it.outputPath }
+        for (target in unit.outputs) {
+            val file = written?.resolve(target.file)
+            if (file != null && file.exists()) {
+                publish(Payload(file), target.target)
+            }
         }
-    publish(report, manifest.results)
+        UnitOutcome.Succeeded(seconds)
+    } catch (e: Exception) {
+        val failure = generateSequence<Throwable>(e) { it.cause }.filterIsInstance<LaunchFailure>().firstOrNull()
+        val kind =
+            when (failure?.exitCode) {
+                EXIT_INVALID_SPEC -> UnitFailure.INVALID_SPEC
+                EXIT_TRANSFER_FAILED -> UnitFailure.TRANSFER
+                else -> UnitFailure.SIMULATION_ERROR
+            }
+        logger.error(e) { "The unit threw" }
+        UnitOutcome.Failed(kind, (e.message ?: e.javaClass.name).take(MESSAGE_CAP))
+    } finally {
+        output.toFile().deleteRecursively()
+    }
+}
+
+/**
+ * Resolves the paths the server rewrote every reference to, against the working directory.
+ *
+ * A name reaching this point is the server having failed to resolve it, not something to guess at.
+ */
+private fun staged(workDir: Path): ResourceProvisioner {
+    val files = FileSystemResourceProvisioner(workDir)
+    return ResourceProvisioner { reference ->
+        when (reference) {
+            is NamedReference ->
+                throw LaunchFailure(EXIT_INVALID_SPEC, "The manifest names '${reference.name}' instead of locating it")
+            is UriReference -> files.provision(reference)
+        }
+    }
+}
+
+/** [relative] under [workDir], refusing anything that would land outside it. */
+private fun inside(
+    workDir: Path,
+    relative: String,
+): Path {
+    val path = workDir.resolve(relative).normalize()
+    if (!path.startsWith(workDir) || path == workDir) {
+        throw LaunchFailure(EXIT_INVALID_SPEC, "The manifest stages '$relative', which is outside the working directory")
+    }
+    return path
 }
 
 /**
@@ -135,126 +250,35 @@ private fun reporting(
     }
 
 /**
- * Resolves the URIs the server wrote into the scenarios, bringing each one over at most once however
- * many concurrent runs ask for it.
+ * Writes the process's own account of its peak memory.
  *
- * A name reaching this point is the server having failed to resolve it, not something to guess at.
+ * Written in place, never renamed into place, because a platform may have mounted that very path to
+ * read it back after the process exits.
  */
-private fun provisioner(staging: Path): ResourceProvisioner {
-    val resolved = ConcurrentHashMap<String, Path>()
-    return ResourceProvisioner { reference ->
-        val uri =
-            when (reference) {
-                is UriReference -> reference.uri
-                is NamedReference ->
-                    throw LaunchFailure(EXIT_INVALID_SPEC, "The manifest names '${reference.name}' instead of locating it")
-            }
-        val local = resolved.computeIfAbsent(uri) { fetch(it, staging.resolve(it.substringAfterLast('/'))) }
-        object : ProvisionedResource {
-            override val path: Path = local
-
-            override fun close() {}
-        }
-    }
-}
-
-/** Copies each run's output to `<results>/<scenario>/seed=<seed>/`, where the server reads it. */
-private fun publish(
-    report: SimulationReport,
-    results: String,
-) {
-    val root = writable(results)
-    for (scenario in report.scenarios) {
-        for (run in scenario.runs) {
-            val from = run.outputPath ?: continue
-            val to = root.resolve(scenario.scenario.id.toString()).resolve("seed=${run.seed}")
-            to.createDirectories()
-            for (file in from.listDirectoryEntries()) {
-                copy(file, to.resolve(file.name))
-            }
-        }
-    }
-}
-
-/**
- * A local, seekable path holding what [uri] names.
- *
- * A `file:` location is read where it lies, which is what a launcher beside the store sees; a remote
- * one is fetched to [target]. Only a single file can be fetched, so a workload trace, being a
- * directory of tables, has to be somewhere this process can reach directly.
- */
-private fun fetch(
-    uri: String,
-    target: Path,
-): Path {
-    val parsed =
-        try {
-            URI.create(uri)
-        } catch (e: IllegalArgumentException) {
-            throw LaunchFailure(EXIT_INVALID_SPEC, "'$uri' is not a URI", e)
-        }
-    return when (parsed.scheme) {
-        null -> existing(Path.of(uri))
-        "file" -> existing(Path.of(parsed))
-        "http", "https" -> download(parsed, target)
-        else -> throw LaunchFailure(EXIT_TRANSFER_FAILED, "Cannot reach '$uri': the launcher reads file: and https: only")
-    }
-}
-
-/** The directory [uri] names, which this process has to be able to write into. */
-private fun writable(uri: String): Path {
-    val parsed = URI.create(uri)
-    val path =
-        when (parsed.scheme) {
-            null -> Path.of(uri)
-            "file" -> Path.of(parsed)
-            else -> throw LaunchFailure(EXIT_TRANSFER_FAILED, "'$uri' has to name a directory this process can write into")
-        }
+private fun writePeakMemory(file: Path) {
+    val text = SdkJson.json.encodeToString(PeakMemory.serializer(), peakMemory())
     try {
-        return path.createDirectories()
+        Files.writeString(file, text, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)
     } catch (e: IOException) {
-        throw LaunchFailure(EXIT_TRANSFER_FAILED, "Could not write into $path", e)
+        logger.warn { "Could not write the peak memory report: ${e.message}" }
     }
 }
 
-private fun existing(path: Path): Path {
-    if (!path.exists()) {
-        throw LaunchFailure(EXIT_TRANSFER_FAILED, "$path does not exist")
+/** The resident high-water mark from the kernel, beside the most heap the simulation's objects held. */
+private fun peakMemory(): PeakMemory {
+    val status = Path.of("/proc/self/status")
+    if (!status.exists()) {
+        return PeakMemory.Unmeasured
     }
-    return path
-}
-
-private fun copy(
-    from: Path,
-    to: Path,
-) {
-    try {
-        from.copyTo(to, StandardCopyOption.REPLACE_EXISTING)
-    } catch (e: IOException) {
-        throw LaunchFailure(EXIT_TRANSFER_FAILED, "Could not write $to", e)
-    }
-}
-
-private fun download(
-    uri: URI,
-    target: Path,
-): Path {
-    target.parent.createDirectories()
-    val response =
-        try {
-            HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).build().use { client ->
-                client.send(HttpRequest.newBuilder(uri).GET().build(), HttpResponse.BodyHandlers.ofFile(target))
-            }
-        } catch (e: IOException) {
-            throw LaunchFailure(EXIT_TRANSFER_FAILED, "Could not read $uri", e)
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-            throw LaunchFailure(EXIT_TRANSFER_FAILED, "Interrupted while reading $uri", e)
-        }
-    if (response.statusCode() !in 200..299) {
-        throw LaunchFailure(EXIT_TRANSFER_FAILED, "GET $uri answered ${response.statusCode()}")
-    }
-    return target
+    val residentKb =
+        status.readLines().firstOrNull { it.startsWith("VmHWM:") }?.split(Regex("\\s+"))?.getOrNull(1)?.toDoubleOrNull()
+            ?: return PeakMemory.Unmeasured
+    val liveHeap =
+        ManagementFactory
+            .getMemoryPoolMXBeans()
+            .filter { it.type == MemoryType.HEAP }
+            .sumOf { it.peakUsage?.used ?: 0L }
+    return PeakMemory.Measured(residentMb = residentKb / 1024.0, liveHeapMb = liveHeap / MEGABYTE)
 }
 
 /**

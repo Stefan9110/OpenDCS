@@ -37,6 +37,7 @@ export type ExitReason =
     | "timeout"
     | "walltime"
     | "cancelled"
+    | "rejected"
     | "unknown"
 
 export interface ExitInfo {

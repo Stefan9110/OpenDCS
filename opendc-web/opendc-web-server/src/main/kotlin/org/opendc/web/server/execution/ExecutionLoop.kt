@@ -27,227 +27,231 @@ import io.quarkus.runtime.StartupEvent
 import io.quarkus.scheduler.Scheduled
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.enterprise.event.Observes
+import org.opendc.sdk.model.serialization.SdkJson
 import org.opendc.web.dispatcher.Dispatcher
 import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
+import org.opendc.web.dispatcher.Grant
+import org.opendc.web.dispatcher.Launch
 import org.opendc.web.dispatcher.LaunchRequest
-import org.opendc.web.dispatcher.PlannedBag
-import org.opendc.web.dispatcher.retryBags
+import org.opendc.web.dispatcher.PlatformEvent
+import org.opendc.web.dispatcher.PlatformSpan
+import org.opendc.web.dispatcher.PlatformVerdict
+import org.opendc.web.launcher.LaunchManifest
+import org.opendc.web.launcher.PeakMemory
 import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.ExecutionState
-import org.opendc.web.server.model.Experiment
+import org.opendc.web.server.model.ExecutionUnit
+import org.opendc.web.server.model.NO_EXIT_CODE
 import org.opendc.web.server.model.RunUnit
+import org.opendc.web.server.model.UnitState
+import org.opendc.web.server.storage.ObjectStore
+import org.opendc.web.server.storage.manifestKey
 import org.slf4j.LoggerFactory
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
-import kotlin.math.ceil
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+
+/** The longest a signature for object storage can last, and so the longest a manifest URL may. */
+private val MAX_URL_LIFETIME = Duration.ofDays(7)
+
+/** An execution taken out of the queue and ready to hand over, with the manifest written for it. */
+private class Claim(
+    val executionId: UUID,
+    val experimentId: UUID,
+    val grant: Grant,
+    val manifest: LaunchManifest,
+)
 
 /**
- * Keeps the platform as busy as the queue and its capacity allow, and records what comes back.
+ * Keeps the platform as busy as the queue and its capacity allow, and records what it reports.
  *
  * The server admits and the platform queues: each pass shapes the oldest outstanding work against
- * the slot the dispatcher offers, starts it if there is room, and otherwise leaves it queued.
+ * the slot the dispatcher offers, hands it over if there is room, and otherwise leaves it queued.
  *
  * Transactions are opened by hand rather than declared, because the two things that must not share
- * one are a database write and starting a process: a launch inside the claiming transaction would
+ * one are a database write and a platform call: a launch inside the claiming transaction would
  * survive a rollback as a process nothing has a record of.
  */
 @ApplicationScoped
 class ExecutionLoop(
     private val dispatcher: Dispatcher,
     private val planner: ExecutionPlanner,
+    private val settlement: Settlement,
+    private val store: ObjectStore,
     private val config: ExecutionConfig,
 ) {
-    /**
-     * Attaches the observer and settles whatever this server left running when it stopped.
-     *
-     * Recovery asks the platform rather than sweeping for anything that has been quiet too long. An
-     * execution it no longer knows is retried, which is safe because a retry writes the same
-     * deterministic output as the attempt it replaces.
-     */
+    private val reconciled = AtomicBoolean(false)
+    private val pausedUntil = AtomicReference(Instant.MIN)
+
+    /** Attaches the observer. Reconciling waits for the first pass of the queue, on the same thread. */
     fun onStart(
         @Suppress("UNUSED_PARAMETER") @Observes event: StartupEvent,
     ) {
-        dispatcher.observe(::settle)
-
-        val live = QuarkusTransaction.requiringNew().call<List<UUID>> { runningIds() }
-        if (live.isEmpty()) {
-            return
+        check(config.urlLifetime() <= MAX_URL_LIFETIME) {
+            "opendc.execution.url-lifetime is ${config.urlLifetime()}, above the $MAX_URL_LIFETIME a signed URL can last"
         }
-        val alive = dispatcher.reconcile(live)
-        QuarkusTransaction.requiringNew().run {
-            for (executionId in live - alive) {
-                LOG.info("The platform no longer knows execution {}; its work goes round again", executionId)
-                settleRow(executionId, LOST)
-            }
-        }
+        dispatcher.observe(::onEvent)
     }
 
     @Scheduled(every = "2s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     fun drain() {
+        if (!reconciled.get()) {
+            try {
+                reconcile()
+                reconciled.set(true)
+            } catch (e: Exception) {
+                LOG.error("Could not reconcile with the platform; trying again on the next pass", e)
+                return
+            }
+        }
+        if (Instant.now() < pausedUntil.get()) {
+            return
+        }
         while (true) {
-            val request =
+            val claim =
                 try {
-                    QuarkusTransaction.requiringNew().call<LaunchRequest?> { claim() } ?: return
+                    QuarkusTransaction.requiringNew().call<Claim?> { claim() } ?: return
                 } catch (e: Exception) {
                     LOG.error("Could not shape queued work", e)
                     return
                 }
-            try {
-                dispatcher.launch(request)
-            } catch (e: Exception) {
-                LOG.error("Could not launch execution ${request.executionId}", e)
-                QuarkusTransaction.requiringNew().run { release(request.executionId) }
-                return
+            when (val launch = handOver(claim)) {
+                Launch.Accepted ->
+                    if (QuarkusTransaction.requiringNew().call<Boolean> { abandoned(claim.executionId) }) {
+                        dispatcher.cancel(claim.executionId)
+                    }
+                is Launch.Rejected -> settlement.settle(claim.executionId, refused(launch.message))
+                is Launch.Unavailable -> {
+                    LOG.warn("The platform could not take execution {}: {}", claim.executionId, launch.message)
+                    QuarkusTransaction.requiringNew().run { release(claim.executionId) }
+                    pausedUntil.set(Instant.now().plus(config.launchRetryDelay()))
+                    return
+                }
             }
         }
     }
 
-    /** Where a platform's report of an execution ending lands. */
-    fun settle(
-        executionId: UUID,
-        exit: ExitOutcome,
-    ) {
-        QuarkusTransaction.requiringNew().run { settleRow(executionId, exit) }
+    /**
+     * Asks the platform about every execution this server believes it holds, and settles accordingly.
+     *
+     * Recovery asks rather than sweeping for anything that has been quiet too long. An execution that
+     * ended while nobody listened is settled from what it left; one the platform no longer knows goes
+     * round again at the same attempt.
+     */
+    fun reconcile() {
+        val ids = QuarkusTransaction.requiringNew().call<List<UUID>> { Execution.findOnPlatform().map { it.publicId } }
+        if (ids.isEmpty()) {
+            return
+        }
+        val verdicts = dispatcher.reconcile(ids)
+        for (id in ids) {
+            when (val verdict = verdicts[id] ?: PlatformVerdict.Unknown) {
+                PlatformVerdict.Waiting -> {}
+                is PlatformVerdict.Running ->
+                    QuarkusTransaction.requiringNew().run {
+                        Execution.lockByPublicId(
+                            id,
+                        )?.start(verdict.startedAt)
+                    }
+                is PlatformVerdict.Ended -> settlement.settle(id, verdict.outcome)
+                PlatformVerdict.Unknown -> {
+                    LOG.info("The platform no longer knows execution {}; its work goes round again", id)
+                    settlement.requeue(id)
+                }
+            }
+        }
+    }
+
+    /** Where the platform's events land. Failures propagate, so the platform delivers the event again. */
+    private fun onEvent(event: PlatformEvent) {
+        when (event) {
+            is PlatformEvent.Started ->
+                QuarkusTransaction.requiringNew().run {
+                    Execution.lockByPublicId(
+                        event.executionId,
+                    )?.start(event.at)
+                }
+            is PlatformEvent.Finished -> settlement.settle(event.executionId, event.outcome)
+        }
     }
 
     /**
-     * The next execution to start, marked as running before this returns.
+     * The next execution to hand over, taken out of the queue before this returns.
      *
      * One a retry wrote down comes first, since its work is already spoken for; otherwise the
      * oldest submitted units are shaped into a new execution.
      */
-    private fun claim(): LaunchRequest? {
+    private fun claim(): Claim? {
         val execution = admissible() ?: return null
-        execution.state = ExecutionState.RUNNING
-        execution.startedAt = Instant.now()
-        execution.units.forEach { it.state = ExecutionState.RUNNING }
-        return LaunchRequest(
+        val token = execution.submit(Instant.now())
+        return Claim(
             executionId = execution.publicId,
-            manifest = planner.manifest(execution.experiment, execution.units, execution.parallelism, execution.grantToken()),
-            heapMb = execution.heapMb.toDouble(),
-            memoryRequestMb = execution.memoryRequestMb.toDouble(),
-            timeLimitSeconds = execution.timeLimitSeconds,
+            experimentId = execution.experiment.publicId,
+            grant = execution.grant,
+            manifest = planner.manifest(execution, token, config.urlLifetime()),
         )
     }
 
-    /** An execution the platform would take right now, written down but not yet started. */
+    /** An execution the platform would take right now, written down but not yet handed over. */
     private fun admissible(): Execution? {
-        val waiting = Execution.findLive().firstOrNull { it.state == ExecutionState.QUEUED }
+        val waiting = Execution.findWaiting().firstOrNull()
         if (waiting != null) {
-            return waiting.takeIf { dispatcher.admits(it.parallelism, it.memoryRequestMb.toDouble()) }
+            if (!dispatcher.admits(waiting.parallelism, waiting.memoryRequestMb.toDouble())) {
+                return null
+            }
+            return Execution.lockByPublicId(waiting.publicId)?.takeIf { it.state == ExecutionState.QUEUED }
         }
-        val units = RunUnit.findQueued().groupBy { it.experiment.id }.values.firstOrNull() ?: return null
-        val experiment = units.first().experiment
+        val experiment = RunUnit.findQueued().firstOrNull()?.experiment ?: return null
+        val units = RunUnit.lockQueued(experiment.id)
         val bag = planner.plan(experiment, units, dispatcher.slot()).firstOrNull() ?: return null
-        if (!dispatcher.admits(bag.parallelism, bag.memoryRequestMb)) {
+        if (!dispatcher.admits(bag.grant.parallelism, bag.grant.memoryRequestMb.toDouble())) {
             return null
         }
-        return persist(experiment, bag, unitsOf(bag, units), attempt = 1)
+        return planner.queue(experiment, bag, units, attempt = 1, dispatcher = dispatcher.name)
     }
-
-    /** Puts the work back when the platform would not take it. */
-    private fun release(executionId: UUID) {
-        val execution = Execution.findByPublicId(executionId) ?: return
-        execution.units.forEach { it.state = ExecutionState.QUEUED }
-        execution.delete()
-    }
-
-    private fun runningIds(): List<UUID> = Execution.findLive().filter { it.state == ExecutionState.RUNNING }.map { it.publicId }
 
     /**
-     * Records how an execution ended, and decides whether its work goes round again.
-     *
-     * A failure that a different grant could fix becomes a fresh execution; one that would fail
-     * identically ends its units.
+     * Writes the manifest where the launcher will read it and hands the execution over. Anything that
+     * goes wrong on the way is the platform being unavailable, which the next pass tries again.
      */
-    private fun settleRow(
-        executionId: UUID,
-        exit: ExitOutcome,
-    ) {
-        val execution = Execution.findByPublicId(executionId)
-        if (execution == null) {
-            LOG.warn("Ignoring an outcome for an execution this server does not know: {}", executionId)
-            return
+    private fun handOver(claim: Claim): Launch =
+        try {
+            val key = manifestKey(claim.experimentId, claim.executionId)
+            val manifest = SdkJson.json.encodeToString(LaunchManifest.serializer(), claim.manifest).encodeToByteArray()
+            store.put(key, manifest.inputStream())
+            dispatcher.launch(LaunchRequest(claim.executionId, store.readUrl(key, config.urlLifetime()), claim.grant))
+        } catch (e: Exception) {
+            Launch.Unavailable(e.message ?: e.javaClass.name)
         }
-        if (execution.state.isTerminal) {
-            return
-        }
-        execution.state = if (exit.reason == ExitReason.OK) ExecutionState.SUCCEEDED else terminalStateFor(exit.reason)
-        execution.exitCode = exit.exitCode
-        execution.exitReason = exit.reason
-        execution.exitMessage = exit.message.ifEmpty { null }
-        execution.finishedAt = Instant.now()
 
-        if (exit.reason == ExitReason.OK) {
-            // A run that finished got through all of its work, whatever the last report to reach the
-            // server said. The denominator is planned rather than measured, so a sampled run would
-            // otherwise leave the bar short of the end of a scenario that is over.
-            execution.units.forEach {
-                it.state = ExecutionState.SUCCEEDED
-                it.completedTasks = it.totalTasks
-            }
-            return
-        }
-        val retries =
-            retryBags(
-                planner.bagOf(execution),
-                execution.attempt,
-                exit.reason,
-                dispatcher.slot(),
-                config.toPolicy(),
-            )
-        if (retries.isEmpty()) {
-            execution.units.forEach { it.state = terminalStateFor(exit.reason) }
-            return
-        }
-        for (bag in retries) {
-            val units = unitsOf(bag, execution.units)
-            // The attempt starts over from nothing, so what the one it replaces got through is no
-            // longer progress towards anything.
-            units.forEach { it.completedTasks = 0 }
-            persist(execution.experiment, bag, units, execution.attempt + 1)
-        }
+    /** Whether everything [executionId] carries was cancelled while it was being handed over. */
+    private fun abandoned(executionId: UUID): Boolean {
+        val execution = Execution.findByPublicId(executionId) ?: return false
+        return ExecutionUnit.findByExecution(execution.id).all { it.unit.state == UnitState.CANCELLED }
     }
 
-    /** Which of [candidates] a planned bag is made of. */
-    private fun unitsOf(
-        bag: PlannedBag,
-        candidates: List<RunUnit>,
-    ): List<RunUnit> {
-        val planned = bag.units.mapTo(mutableSetOf()) { it.scenarioIndex to it.seed }
-        return candidates.filter { (it.scenarioIndex to it.seed) in planned }
+    /** Puts work the platform could not take back in the queue, as the same execution at the same attempt. */
+    private fun release(executionId: UUID) {
+        val execution = Execution.lockByPublicId(executionId) ?: return
+        if (execution.state == ExecutionState.SUBMITTED) {
+            execution.release()
+        }
     }
-
-    /** Writes down an execution. It is started by the next pass of the queue, or by this one. */
-    private fun persist(
-        experiment: Experiment,
-        bag: PlannedBag,
-        units: List<RunUnit>,
-        attempt: Int,
-    ): Execution {
-        val execution = Execution()
-        execution.experiment = experiment
-        execution.units = units.toMutableList()
-        execution.state = ExecutionState.QUEUED
-        execution.attempt = attempt
-        execution.dispatcher = dispatcher.name
-        execution.parallelism = bag.parallelism
-        execution.heapMb = ceil(bag.heapMb).toInt()
-        execution.memoryRequestMb = ceil(bag.memoryRequestMb).toInt()
-        execution.timeLimitSeconds = bag.timeLimitSeconds
-        execution.estimatedMakespanSeconds = bag.makespanSeconds
-        execution.createdAt = Instant.now()
-        execution.persist()
-        return execution
-    }
-
-    private fun terminalStateFor(reason: ExitReason): ExecutionState =
-        if (reason == ExitReason.CANCELLED) ExecutionState.CANCELLED else ExecutionState.FAILED
 
     private companion object {
         val LOG = LoggerFactory.getLogger(ExecutionLoop::class.java)
 
-        val LOST = ExitOutcome(ExitReason.UNKNOWN, -1, "the platform no longer knows about this execution")
+        fun refused(message: String) =
+            ExitOutcome(
+                ExitReason.REJECTED,
+                NO_EXIT_CODE,
+                message,
+                PlatformSpan.NotStarted,
+                PeakMemory.Unmeasured,
+                "",
+            )
     }
 }

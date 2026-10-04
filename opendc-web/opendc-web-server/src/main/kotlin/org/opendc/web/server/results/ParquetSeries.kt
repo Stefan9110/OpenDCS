@@ -85,9 +85,9 @@ class ParquetSeries(private val store: ObjectStore) {
     /**
      * What the run whose output lies under [prefix] measured.
      *
-     * Empty where it wrote nothing, which is what a run that failed before publishing looks like.
-     * That answer is remembered too: this is only ever asked about runs that have stopped, so a run
-     * with no output now will have none later either.
+     * Empty where it wrote nothing, which is what a run that failed before publishing looks like,
+     * and also what one looks like before its files have landed. Only an answer with something in
+     * it is remembered, so the second kind is read again rather than reported empty for good.
      */
     fun read(prefix: String): Map<ResultMetric, List<MetricPoint>> {
         memoised[prefix]?.let { return it }
@@ -95,7 +95,9 @@ class ParquetSeries(private val store: ObjectStore) {
             OutputFileSpec.entries.fold(
                 emptyMap<ResultMetric, List<MetricPoint>>(),
             ) { all, table -> all + readTable(prefix, table) }
-        memoised[prefix] = reduced
+        if (reduced.isNotEmpty()) {
+            memoised[prefix] = reduced
+        }
         return reduced
     }
 
