@@ -70,6 +70,15 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     return (await response.json()) as T
 }
 
+/** A plain-text resource, such as a log, with failures read the same way as JSON requests. */
+export async function apiText(path: string): Promise<string> {
+    const response = await fetch(apiUrl(path), { headers: await credentials() })
+    if (!response.ok) {
+        throw new ApiError(await problemFrom(response))
+    }
+    return response.text()
+}
+
 async function problemFrom(response: Response): Promise<ApiProblem> {
     const fallback: ApiProblem = {
         status: response.status,

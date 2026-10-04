@@ -18,6 +18,7 @@ import { allows } from "@/lib/project/permissions"
 import { ActionIcon, Badge, Container, Group, Stack } from "@mantine/core"
 import { IconPencil } from "@tabler/icons-react"
 import { useSearchParams } from "next/navigation"
+import { useState } from "react"
 
 export function ProjectView() {
     const params = useSearchParams()
@@ -37,7 +38,8 @@ export function ProjectView() {
 function LoadedProject({ projectId }: { projectId: Id }) {
     const project = useProject(projectId)
     const templates = useTopologies(projectId)
-    const experiments = useExperiments(projectId)
+    const [page, setPage] = useState(1)
+    const experiments = useExperiments(projectId, page)
     const rename = useRenameProject(projectId)
 
     // Without the project there is no page to annotate, so this is a dead end rather than an error
@@ -100,6 +102,8 @@ function LoadedProject({ projectId }: { projectId: Id }) {
                         <ExperimentSection
                             projectId={projectId}
                             experiments={loaded}
+                            page={page}
+                            onPage={setPage}
                             templates={templates.data ?? []}
                         />
                     )}

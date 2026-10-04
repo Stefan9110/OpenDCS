@@ -89,6 +89,43 @@ export interface ScenarioStatus {
     exitInfo?: ExitInfo
 }
 
+/** One window of a longer list, and how long the whole list is. */
+export interface Page<T> {
+    items: T[]
+    total: number
+}
+
+/** How one execution's attempt at a unit went. */
+export type CarriedOutcome =
+    | { type: "carried" }
+    | { type: "succeeded" }
+    | { type: "failed"; reason: ExitReason; message: string }
+    | { type: "cancelled" }
+
+export interface RunAttempt {
+    executionId: Id
+    attempt: number
+    outcome: CarriedOutcome
+}
+
+export interface OutputFile {
+    name: string
+    sizeBytes: number
+}
+
+/** One seed of a scenario: every attempt at it, and the files it left once it landed. */
+export interface ScenarioRun {
+    seed: number
+    state: ScenarioExecutionState
+    attempts: RunAttempt[]
+    files: OutputFile[]
+}
+
+export interface ScenarioDetail {
+    status: ScenarioStatus
+    runs: ScenarioRun[]
+}
+
 export interface ExperimentStatus {
     id: Id
     name: string

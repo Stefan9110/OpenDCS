@@ -1,5 +1,5 @@
-import { ApiError, apiRequest, apiUrl, credentials } from "@/lib/api/client"
-import type { ExitReason, Handle, PlanTier } from "@/lib/api/types"
+import { apiRequest, apiText } from "@/lib/api/client"
+import type { CarriedOutcome, ExitReason, Handle, Page, PlanTier } from "@/lib/api/types"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 export type ExecutionPhase =
@@ -25,12 +25,6 @@ export interface AdminExecution {
     createdAt: string
     phase: ExecutionPhase
 }
-
-export type CarriedOutcome =
-    | { type: "carried" }
-    | { type: "succeeded" }
-    | { type: "failed"; reason: ExitReason; message: string }
-    | { type: "cancelled" }
 
 export interface CarriedUnit {
     scenarioIndex: number
@@ -67,11 +61,6 @@ export interface AdminAccount {
     status: { type: "active" } | { type: "deactivated"; at: string }
     createdAt: string
     projectCount: number
-}
-
-interface Page<T> {
-    items: T[]
-    total: number
 }
 
 /** Which executions to list: the live ones, every one, or those in one state. */
@@ -128,12 +117,9 @@ export function useAdminExecution(id: string | undefined) {
 export function useExecutionLog(id: string, enabled: boolean) {
     return useQuery({
         queryKey: adminKeys.log(id),
-        queryFn: async () => {
-            const response = await fetch(apiUrl(`api/v1/admin/executions/${id}/logs`), { headers: await credentials() })
-            if (!response.ok) throw new ApiError({ status: response.status, title: "No log was collected", issues: [] })
-            return response.text()
-        },
+        queryFn: () => apiText(`api/v1/admin/executions/${id}/logs`),
         enabled,
+        retry: false,
     })
 }
 

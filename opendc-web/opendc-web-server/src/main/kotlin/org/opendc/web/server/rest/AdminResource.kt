@@ -51,7 +51,6 @@ import org.opendc.web.server.model.ExecutionUnit
 import org.opendc.web.server.model.HandleKind
 import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.Submission
-import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.model.UserAccount
 import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.logKey
@@ -60,8 +59,6 @@ import java.time.Instant
 
 /** How many times its estimated makespan a running execution may take before it is flagged as overdue. */
 private const val STRAGGLER_FACTOR = 2.0
-
-private const val MAX_PAGE = 500
 
 private val LIVE = listOf(ExecutionState.QUEUED, ExecutionState.SUBMITTED, ExecutionState.RUNNING)
 
@@ -74,9 +71,7 @@ private const val EXECUTIONS_IN = """
     ORDER BY e.createdAt DESC
 """
 
-/** A handle or display name containing a pattern, with `!` escaping the pattern's wildcards. */
-private const val ACCOUNT_FILTER = "LOWER(handle) LIKE ?1 ESCAPE '!' OR LOWER(displayName) LIKE ?1 ESCAPE '!'"
-
+/** Accounts whose handle or display name contains a pattern, with `!` escaping the pattern's wildcards. */
 @Language("JPAQL")
 private const val ACCOUNTS_MATCHING = """
     SELECT u FROM UserAccount u
@@ -104,14 +99,14 @@ class AdminResource(
     @Path("executions")
     fun executions(
         @QueryParam("state") states: List<String>,
-        @QueryParam("limit") @DefaultValue("100") limit: Int,
+        @QueryParam("limit") @DefaultValue("50") limit: Int,
         @QueryParam("offset") @DefaultValue("0") offset: Int,
-    ): AdminExecutionPage {
+    ): Page<AdminExecution> {
         val wanted = if (states.isEmpty()) LIVE else states.map(::stateOf)
-        val size = limit.coerceIn(1, MAX_PAGE)
         val now = Instant.now()
-        val page = Execution.find(EXECUTIONS_IN, wanted).range(offset.coerceAtLeast(0), offset.coerceAtLeast(0) + size - 1).list()
-        return AdminExecutionPage(page.map { it.toAdmin(now) }, Execution.count("state IN ?1", wanted))
+        val page = Execution.find(EXECUTIONS_IN, wanted).within(Window.of(offset, limit))
+        // Counted on its own: a count of the fetching query would fetch associations it never selects.
+        return Page(page.map { it.toAdmin(now) }, Execution.count("state IN ?1", wanted))
     }
 
     @GET
@@ -183,11 +178,10 @@ class AdminResource(
         @QueryParam("q") @DefaultValue("") q: String,
         @QueryParam("limit") @DefaultValue("50") limit: Int,
         @QueryParam("offset") @DefaultValue("0") offset: Int,
-    ): AdminAccountPage {
+    ): Page<AdminAccount> {
         val pattern = "%${q.trim().lowercase().replace("!", "!!").replace("%", "!%").replace("_", "!_")}%"
-        val start = offset.coerceAtLeast(0)
-        val accounts = UserAccount.find(ACCOUNTS_MATCHING, pattern).range(start, start + limit.coerceIn(1, MAX_PAGE) - 1).list()
-        return AdminAccountPage(accounts.map { it.toAdmin() }, UserAccount.count(ACCOUNT_FILTER, pattern))
+        val matching = UserAccount.find(ACCOUNTS_MATCHING, pattern)
+        return Page(matching.within(Window.of(offset, limit)).map { it.toAdmin() }, matching.count())
     }
 
     private fun Execution.toAdmin(now: Instant): AdminExecution {
@@ -253,13 +247,7 @@ private fun ExecutionUnit.toCarried(): CarriedUnit =
         seed = unit.seed,
         estimatedSeconds = estimatedSeconds,
         estimatedPeakMemoryMb = estimatedPeakMemoryMb,
-        outcome =
-            when (state) {
-                UnitState.QUEUED, UnitState.CARRIED -> CarriedOutcome.Carried
-                UnitState.SUCCEEDED -> CarriedOutcome.Succeeded
-                UnitState.FAILED -> CarriedOutcome.Failed(checkNotNull(exitReason) { "a failed unit records why" }.toWire(), exitMessage)
-                UnitState.CANCELLED -> CarriedOutcome.Cancelled
-            },
+        outcome = outcome(),
     )
 
 private fun UserAccount.toAdmin(): AdminAccount =
@@ -284,12 +272,6 @@ private fun UserAccount.toAdmin(): AdminAccount =
         createdAt = createdAt.toString(),
         projectCount = ProjectMember.count("user.id = ?1", id).toInt(),
     )
-
-@Serializable
-data class AdminExecutionPage(
-    val items: List<AdminExecution>,
-    val total: Long,
-)
 
 @Serializable
 data class AdminExecution(
@@ -356,28 +338,6 @@ data class CarriedUnit(
 )
 
 @Serializable
-sealed interface CarriedOutcome {
-    @Serializable
-    @SerialName("carried")
-    data object Carried : CarriedOutcome
-
-    @Serializable
-    @SerialName("succeeded")
-    data object Succeeded : CarriedOutcome
-
-    @Serializable
-    @SerialName("failed")
-    data class Failed(
-        val reason: ExitReasonWire,
-        val message: String,
-    ) : CarriedOutcome
-
-    @Serializable
-    @SerialName("cancelled")
-    data object Cancelled : CarriedOutcome
-}
-
-@Serializable
 data class PlatformCapacity(
     val dispatcher: String,
     val totalCores: Int,
@@ -399,12 +359,6 @@ sealed interface TimeCapWire {
     @SerialName("limited")
     data class Limited(val seconds: Int) : TimeCapWire
 }
-
-@Serializable
-data class AdminAccountPage(
-    val items: List<AdminAccount>,
-    val total: Long,
-)
 
 @Serializable
 data class AdminAccount(

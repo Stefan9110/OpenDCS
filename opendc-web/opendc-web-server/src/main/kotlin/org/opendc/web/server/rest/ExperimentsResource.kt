@@ -47,10 +47,10 @@ import org.opendc.web.server.auth.ProjectPermission
 import org.opendc.web.server.auth.experimentFor
 import org.opendc.web.server.auth.projectFor
 import org.opendc.web.server.model.ExecutionUnit
-import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.RunUnit
 import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.results.ExperimentResults
+import org.opendc.web.server.results.LogExcerpt
 import org.opendc.web.server.results.ResultsReader
 import org.opendc.web.server.results.ScenarioResults
 import org.opendc.web.server.service.CostEstimate
@@ -58,6 +58,8 @@ import org.opendc.web.server.service.SpecCodec
 import org.opendc.web.server.service.SubmissionPipeline
 import org.opendc.web.server.service.SubmissionPreview
 import org.opendc.web.server.storage.ObjectStore
+import org.opendc.web.server.storage.logKey
+import org.opendc.web.server.storage.runKey
 import java.time.Instant
 import org.opendc.web.server.model.Experiment as ExperimentEntity
 
@@ -132,6 +134,65 @@ enum class ExitReasonWire {
     @SerialName("unknown")
     UNKNOWN,
 }
+
+/** How one execution's attempt at a unit went. */
+@Serializable
+sealed interface CarriedOutcome {
+    @Serializable
+    @SerialName("carried")
+    data object Carried : CarriedOutcome
+
+    @Serializable
+    @SerialName("succeeded")
+    data object Succeeded : CarriedOutcome
+
+    @Serializable
+    @SerialName("failed")
+    data class Failed(
+        val reason: ExitReasonWire,
+        val message: String,
+    ) : CarriedOutcome
+
+    @Serializable
+    @SerialName("cancelled")
+    data object Cancelled : CarriedOutcome
+}
+
+fun ExecutionUnit.outcome(): CarriedOutcome =
+    when (state) {
+        UnitState.QUEUED, UnitState.CARRIED -> CarriedOutcome.Carried
+        UnitState.SUCCEEDED -> CarriedOutcome.Succeeded
+        UnitState.FAILED -> CarriedOutcome.Failed(checkNotNull(exitReason) { "a failed unit records why" }.toWire(), exitMessage)
+        UnitState.CANCELLED -> CarriedOutcome.Cancelled
+    }
+
+/** One scenario: how it stands, and each of its runs with every attempt at it and the files it left. */
+@Serializable
+data class ScenarioDetail(
+    val status: ScenarioStatus,
+    val runs: List<ScenarioRun>,
+)
+
+@Serializable
+data class ScenarioRun(
+    val seed: Long,
+    val state: RunStateWire,
+    val attempts: List<RunAttempt>,
+    val files: List<OutputFile>,
+)
+
+@Serializable
+data class RunAttempt(
+    val executionId: String,
+    val attempt: Int,
+    val outcome: CarriedOutcome,
+)
+
+@Serializable
+data class OutputFile(
+    val name: String,
+    val sizeBytes: Long,
+)
 
 fun ExitReason.toWire(): ExitReasonWire =
     when (this) {
@@ -227,6 +288,9 @@ data class PreviewRequest(
 // passes through unfolded and a month of parquet does not arrive a point at a time.
 private const val MAX_BUCKETS = 2048
 
+/** The most log lines one attempt contributes to a scenario's log, counted from the end. */
+private const val MAX_LOG_LINES = 5000
+
 @Path("experiments")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
@@ -238,33 +302,36 @@ class ExperimentsResource(
     private val store: ObjectStore,
     private val links: DownloadLinks,
 ) {
+    /** Experiments newest first, of one project or of every project the caller is a member of. */
     @GET
     fun list(
         @QueryParam("project") projectId: String?,
-        @QueryParam("limit") @DefaultValue("100") limit: Int,
+        @QueryParam("limit") @DefaultValue("50") limit: Int,
         @QueryParam("offset") @DefaultValue("0") offset: Int,
-    ): List<ExperimentSummary> {
-        val experiments =
+    ): Page<ExperimentSummary> {
+        val user = identity.currentUser()
+        val query =
             if (projectId != null) {
-                ExperimentEntity.findByProject(projectFor(identity.currentUser(), projectId, ProjectPermission.READ).project.id)
+                ExperimentEntity.ofProject(projectFor(user, projectId, ProjectPermission.READ).project.id)
             } else {
-                val memberships = ProjectMember.findByUser(identity.currentUser().id)
-                memberships.flatMap { ExperimentEntity.findByProject(it.project.id) }
+                ExperimentEntity.ofMember(user.id)
             }
-        val window = experiments.drop(offset).take(limit)
+        val window = query.within(Window.of(offset, limit))
         val unitsByExperiment = unitsFor(window.map { it.id })
-        return window.map { experiment ->
-            val units = unitsByExperiment[experiment.id].orEmpty()
-            ExperimentSummary(
-                id = experiment.publicId.toString(),
-                name = experiment.name,
-                state = experimentState(experiment, units),
-                scenarioCount = experiment.scenarioCount,
-                progress = ProgressReport(units.sumOf { it.completedTasks }, units.sumOf { it.totalTasks }),
-                createdAt = experiment.createdAt.toString(),
-                submittedAt = experiment.submittedAt?.toString(),
-            )
-        }
+        val items =
+            window.map { experiment ->
+                val units = unitsByExperiment[experiment.id].orEmpty()
+                ExperimentSummary(
+                    id = experiment.publicId.toString(),
+                    name = experiment.name,
+                    state = experimentState(experiment, units),
+                    scenarioCount = experiment.scenarioCount,
+                    progress = ProgressReport(units.sumOf { it.completedTasks }, units.sumOf { it.totalTasks }),
+                    createdAt = experiment.createdAt.toString(),
+                    submittedAt = experiment.submittedAt?.toString(),
+                )
+            }
+        return Page(items, query.count())
     }
 
     @POST
@@ -375,13 +442,71 @@ class ExperimentsResource(
     fun scenario(
         @PathParam("id") id: String,
         @PathParam("index") index: Int,
-    ): ScenarioStatus {
+    ): ScenarioDetail {
         val experiment = readable(id)
         val units = RunUnit.findByExperiment(experiment.id).filter { it.scenarioIndex == index }
         if (units.isEmpty()) {
             throw notFound("Scenario")
         }
-        return scenarioStatus(index, units, attemptsOf(experiment.id))
+        // Oldest attempt first, so the last of each unit's is the one that counts.
+        val attempts = ExecutionUnit.findByExperiment(experiment.id).groupBy { it.unit.id }
+        return ScenarioDetail(
+            status = scenarioStatus(index, units, attempts.mapValues { it.value.last() }),
+            runs =
+                units.sortedBy { it.seed }.map { unit ->
+                    ScenarioRun(
+                        seed = unit.seed,
+                        state = foldStates(listOf(unit.state)),
+                        attempts =
+                            attempts[unit.id].orEmpty().map {
+                                RunAttempt(it.execution.publicId.toString(), it.execution.attempt, it.outcome())
+                            },
+                        files =
+                            store.list(runKey(experiment.publicId, index, unit.seed)).map {
+                                OutputFile(it.substringAfterLast('/'), store.size(it))
+                            },
+                    )
+                },
+        )
+    }
+
+    /**
+     * What a scenario's runs wrote to the launcher log, attempt by attempt. A log is collected when
+     * its execution ends, so a scenario still running has none from its current attempt yet.
+     */
+    @GET
+    @Path("{id}/scenarios/{index}/logs")
+    @Produces("text/plain; charset=utf-8")
+    fun scenarioLogs(
+        @PathParam("id") id: String,
+        @PathParam("index") index: Int,
+    ): String {
+        val experiment = readable(id)
+        val executions =
+            ExecutionUnit
+                .findByExperiment(experiment.id)
+                .filter { it.unit.scenarioIndex == index }
+                .map { it.execution }
+                .distinctBy { it.id }
+        val sections =
+            executions.mapNotNull { execution ->
+                val key = logKey(experiment.publicId, execution.publicId)
+                if (!store.exists(key)) {
+                    return@mapNotNull null
+                }
+                val excerpt = store.open(key).bufferedReader().useLines { LogExcerpt.ofScenario(it, index, MAX_LOG_LINES) }
+                buildString {
+                    appendLine("== Attempt ${execution.attempt}, execution ${execution.publicId} ==")
+                    if (excerpt.omitted > 0) {
+                        appendLine("... ${excerpt.omitted} earlier lines left out")
+                    }
+                    excerpt.lines.forEach(::appendLine)
+                }
+            }
+        if (sections.isEmpty()) {
+            throw notFound("Log")
+        }
+        return sections.joinToString("\n")
     }
 
     /**

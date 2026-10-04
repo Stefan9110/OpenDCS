@@ -14,7 +14,7 @@ import {
     scenarioCount,
 } from "@/lib/experiment/spec"
 import { isTerminalScenario, progressFraction } from "@/lib/experiment/status"
-import { ActionIcon, Group, Paper, Progress, Stack, Table, Text, Tooltip } from "@mantine/core"
+import { ActionIcon, Anchor, Group, Paper, Progress, Stack, Table, Text, Tooltip } from "@mantine/core"
 import { IconRefresh } from "@tabler/icons-react"
 
 const MAX_HEIGHT = 520
@@ -49,10 +49,12 @@ const PROGRESS_COLUMN = { w: PROGRESS_WIDTH, pos: "sticky", right: 0, visibleFro
 export function ScenarioTable({
     spec,
     statuses,
+    onOpen,
     onRetry,
 }: {
     spec: ExperimentSpec
     statuses: ScenarioStatus[]
+    onOpen?: (scenarioIndex: number) => void
     onRetry?: (scenarioIndex: number) => void
 }) {
     const axes = experimentAxes(spec)
@@ -108,9 +110,20 @@ export function ScenarioTable({
                             return (
                                 <Table.Tr key={`scenario-${scenarioIndex}`}>
                                     <Table.Td {...INDEX_COLUMN} {...PINNED}>
-                                        <Text size="sm" c="dimmed">
-                                            {scenarioIndex}
-                                        </Text>
+                                        {onOpen === undefined ? (
+                                            <Text size="sm" c="dimmed">
+                                                {scenarioIndex}
+                                            </Text>
+                                        ) : (
+                                            <Anchor
+                                                component="button"
+                                                size="sm"
+                                                aria-label={`Open scenario ${scenarioIndex}`}
+                                                onClick={() => onOpen(scenarioIndex)}
+                                            >
+                                                {scenarioIndex}
+                                            </Anchor>
+                                        )}
                                     </Table.Td>
                                     {varying.map((key) => (
                                         <Table.Td key={key}>

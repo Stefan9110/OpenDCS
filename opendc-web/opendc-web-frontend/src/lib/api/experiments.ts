@@ -1,16 +1,18 @@
-import { apiRequest } from "@/lib/api/client"
+import { apiRequest, apiText } from "@/lib/api/client"
 import type {
     Experiment,
     ExperimentPreview,
     ExperimentStatus,
     ExperimentSummary,
     Id,
+    Page,
+    ScenarioDetail,
     ScenarioStatus,
 } from "@/lib/api/types"
 import { type ExperimentResults, isLiveResults } from "@/lib/experiment/results"
 import type { ExperimentSpec } from "@/lib/experiment/spec"
 import { isTerminalExperiment } from "@/lib/experiment/status"
-import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { type QueryClient, keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 const LIVE_POLL_MS = 2000
 
@@ -18,6 +20,7 @@ const LIVE_POLL_MS = 2000
 // project only scopes the list it appears in.
 export const experimentKeys = {
     list: (projectId: Id) => ["projects", projectId, "experiments"] as const,
+    page: (projectId: Id, page: number) => ["projects", projectId, "experiments", page] as const,
     detail: (experimentId: Id) => ["experiments", experimentId] as const,
     status: (experimentId: Id) => ["experiments", experimentId, "status"] as const,
     results: (experimentId: Id) => ["experiments", experimentId, "results"] as const,
@@ -28,11 +31,19 @@ export interface ExperimentChange {
     spec: ExperimentSpec
 }
 
-export function useExperiments(projectId: Id) {
+export const EXPERIMENT_PAGE_SIZE = 20
+
+/** One page of a project's experiments, newest first, counting pages from 1. */
+export function useExperiments(projectId: Id, page: number) {
+    const offset = (page - 1) * EXPERIMENT_PAGE_SIZE
     return useQuery({
-        queryKey: experimentKeys.list(projectId),
-        queryFn: () => apiRequest<ExperimentSummary[]>(`api/v1/experiments?project=${projectId}`),
-        refetchInterval: (query) => (query.state.data?.some(isLive) ? LIVE_POLL_MS : false),
+        queryKey: experimentKeys.page(projectId, page),
+        queryFn: () =>
+            apiRequest<Page<ExperimentSummary>>(
+                `api/v1/experiments?project=${projectId}&limit=${EXPERIMENT_PAGE_SIZE}&offset=${offset}`,
+            ),
+        placeholderData: keepPreviousData,
+        refetchInterval: (query) => (query.state.data?.items.some(isLive) ? LIVE_POLL_MS : false),
         retry: false,
     })
 }
@@ -57,6 +68,30 @@ export function useExperimentStatus(experimentId: Id) {
 
 function isLive(entry: { state: ExperimentSummary["state"] }): boolean {
     return entry.state !== "draft" && !isTerminalExperiment(entry.state)
+}
+
+/** One scenario's runs and attempts, polled while it is still going. */
+export function useScenario(experimentId: Id, scenarioIndex: number | undefined) {
+    return useQuery({
+        queryKey: [...experimentKeys.detail(experimentId), "scenarios", scenarioIndex] as const,
+        queryFn: () => apiRequest<ScenarioDetail>(`api/v1/experiments/${experimentId}/scenarios/${scenarioIndex}`),
+        enabled: scenarioIndex !== undefined,
+        refetchInterval: (query) => {
+            const state = query.state.data?.status.state
+            return state === "queued" || state === "running" ? LIVE_POLL_MS : false
+        },
+    })
+}
+
+/** What a scenario's runs wrote to the launcher log; there is none until an attempt has ended. */
+export function useScenarioLog(experimentId: Id, scenarioIndex: number, attempts: number) {
+    return useQuery({
+        // Keyed by how many attempts have ended, so a newly collected log is fetched once it exists.
+        queryKey: [...experimentKeys.detail(experimentId), "scenarios", scenarioIndex, "log", attempts] as const,
+        queryFn: () => apiText(`api/v1/experiments/${experimentId}/scenarios/${scenarioIndex}/logs`),
+        enabled: attempts > 0,
+        retry: false,
+    })
 }
 
 export function useExperimentResults(experimentId: Id) {

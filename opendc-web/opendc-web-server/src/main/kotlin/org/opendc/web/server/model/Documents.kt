@@ -24,6 +24,7 @@ package org.opendc.web.server.model
 
 import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanion
 import io.quarkus.hibernate.orm.panache.kotlin.PanacheEntityBase
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheQuery
 import jakarta.persistence.Entity
 import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
@@ -36,6 +37,7 @@ import jakarta.persistence.MappedSuperclass
 import jakarta.persistence.Table
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
+import org.intellij.lang.annotations.Language
 import java.time.Instant
 import java.util.UUID
 
@@ -145,7 +147,30 @@ class Experiment : SpecDocument() {
     }
 
     companion object : PanacheCompanion<Experiment> {
+        @Language("JPAQL")
+        private const val OF_PROJECT = """
+            SELECT x FROM Experiment x
+            WHERE x.project.id = ?1
+            ORDER BY x.createdAt DESC, x.id DESC
+        """
+
+        @Language("JPAQL")
+        private const val OF_MEMBER = """
+            SELECT x FROM Experiment x
+            WHERE x.project.id IN (
+                SELECT m.project.id FROM ProjectMember m
+                WHERE m.user.id = ?1
+            )
+            ORDER BY x.createdAt DESC, x.id DESC
+        """
+
         fun findByProject(projectId: Long): List<Experiment> = list("project.id = ?1 order by createdAt", projectId)
+
+        /** A project's experiments, newest first. */
+        fun ofProject(projectId: Long): PanacheQuery<Experiment> = find(OF_PROJECT, projectId)
+
+        /** The experiments of every project [userId] is a member of, newest first. */
+        fun ofMember(userId: Long): PanacheQuery<Experiment> = find(OF_MEMBER, userId)
 
         fun findByPublicId(publicId: UUID): Experiment? = find("publicId = ?1", publicId).firstResult()
 

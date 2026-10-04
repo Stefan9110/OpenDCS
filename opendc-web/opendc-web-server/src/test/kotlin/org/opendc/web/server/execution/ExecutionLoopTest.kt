@@ -189,8 +189,8 @@ class ExecutionLoopTest {
             assertEquals("partial", it)
         }
         val failed = ApiTest.requestJson().get("/api/v1/experiments/${experiment.first}/scenarios/1").then().extract()
-        assertEquals("simulationError", failed.path<String>("exitInfo.reason"))
-        assertEquals("threw", failed.path<String>("exitInfo.message"))
+        assertEquals("simulationError", failed.path<String>("status.exitInfo.reason"))
+        assertEquals("threw", failed.path<String>("status.exitInfo.message"))
     }
 
     // A refusal is the platform saying it will never run this, so asking again would loop forever.
@@ -205,7 +205,7 @@ class ExecutionLoopTest {
         assertEquals(1, launchedFor(experiment).size, "a refused execution is not offered twice")
         assertTrue(unitsOf(experiment).all { it.state == UnitState.FAILED })
         val status = ApiTest.requestJson().get("/api/v1/experiments/${experiment.first}/scenarios/0").then().extract()
-        assertEquals("rejected", status.path<String>("exitInfo.reason"))
+        assertEquals("rejected", status.path<String>("status.exitInfo.reason"))
     }
 
     // A platform that cannot take work now has not said anything about the work, so the same

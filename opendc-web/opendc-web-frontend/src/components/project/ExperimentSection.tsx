@@ -3,23 +3,28 @@
 import { ExperimentTable } from "@/components/project/ExperimentTable"
 import { openNamePrompt } from "@/components/util/NamePrompt"
 import { notifyProblem } from "@/components/util/feedback"
-import { useCreateExperiment } from "@/lib/api/experiments"
-import type { ExperimentSummary, Id, TopologyTemplate } from "@/lib/api/types"
+import { EXPERIMENT_PAGE_SIZE, useCreateExperiment } from "@/lib/api/experiments"
+import type { ExperimentSummary, Id, Page, TopologyTemplate } from "@/lib/api/types"
 import type { ExperimentSpec } from "@/lib/experiment/spec"
 import { usePermission } from "@/lib/project/permissions"
-import { Button, Group, Paper, Stack, Title, Tooltip } from "@mantine/core"
+import { Button, Group, Pagination, Paper, Stack, Title, Tooltip } from "@mantine/core"
 import { IconPlus } from "@tabler/icons-react"
 import { useRouter } from "next/navigation"
 
 export function ExperimentSection({
     projectId,
     experiments,
+    page,
+    onPage,
     templates,
 }: {
     projectId: Id
-    experiments: ExperimentSummary[]
+    experiments: Page<ExperimentSummary>
+    page: number
+    onPage: (page: number) => void
     templates: TopologyTemplate[]
 }) {
+    const pages = Math.ceil(experiments.total / EXPERIMENT_PAGE_SIZE)
     const create = useCreateExperiment(projectId)
     const canEdit = usePermission(projectId, "edit")
     const router = useRouter()
@@ -64,7 +69,12 @@ export function ExperimentSection({
                         </Tooltip>
                     )}
                 </Group>
-                <ExperimentTable projectId={projectId} experiments={experiments} />
+                <ExperimentTable projectId={projectId} experiments={experiments.items} />
+                {pages > 1 && (
+                    <Group justify="flex-end">
+                        <Pagination total={pages} value={page} onChange={onPage} size="sm" />
+                    </Group>
+                )}
             </Stack>
         </Paper>
     )

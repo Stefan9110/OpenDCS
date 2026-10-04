@@ -300,16 +300,18 @@ class ExperimentsResourceTest {
     }
 
     @Test
-    fun theListingIsScopedToTheProjectAndPageable() {
+    fun theListingIsScopedToTheProjectNewestFirstAndPageable() {
         val first = draftId("Page one")
         val second = draftId("Page two")
 
-        val all = ApiTest.requestJson().get("/api/v1/experiments?project=$projectId").jsonPath().getList<String>("id")
-        assertEquals(listOf(first, second), all)
+        val all = ApiTest.requestJson().get("/api/v1/experiments?project=$projectId").jsonPath()
+        assertEquals(listOf(second, first), all.getList<String>("items.id"))
+        assertEquals(2, all.getInt("total"))
 
         val page = ApiTest.requestJson().get("/api/v1/experiments?project=$projectId&limit=1&offset=1")
         page.then().statusCode(200)
-        assertEquals(listOf(second), page.jsonPath().getList<String>("id"))
+        assertEquals(listOf(first), page.jsonPath().getList<String>("items.id"))
+        assertEquals(2, page.jsonPath().getInt("total"), "the total counts the whole list, not the page")
     }
 
     @Test
@@ -331,7 +333,7 @@ class ExperimentsResourceTest {
 
     private fun draftId(name: String): String = createDraft(name).then().statusCode(201).extract().path("id")
 
-    private fun summaryCount(): Int = ApiTest.requestJson().get("/api/v1/experiments?project=$projectId").jsonPath().getList<Any>("id").size
+    private fun summaryCount(): Int = ApiTest.requestJson().get("/api/v1/experiments?project=$projectId").jsonPath().getInt("total")
 
     private companion object {
         val SPEC: String = ApiTest.fixture("minimal-experiment.json")

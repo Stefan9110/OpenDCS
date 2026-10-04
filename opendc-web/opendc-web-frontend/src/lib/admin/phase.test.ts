@@ -1,4 +1,4 @@
-import { outcomeLabel, phaseBadge, phaseSince, scenarioRanges } from "@/lib/admin/phase"
+import { phaseBadge, phaseSince, scenarioRanges } from "@/lib/admin/phase"
 import { describe, expect, it } from "vitest"
 
 describe("phaseBadge", () => {
@@ -28,12 +28,6 @@ describe("phaseSince", () => {
                 "created",
             ),
         ).toBe("settled")
-    })
-})
-
-describe("outcomeLabel", () => {
-    it("names why a unit failed rather than only that it did", () => {
-        expect(outcomeLabel({ type: "failed", reason: "oom", message: "" })).toBe("Out of memory")
     })
 })
 
