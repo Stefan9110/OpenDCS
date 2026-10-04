@@ -88,9 +88,13 @@ class CatalogsResourceTest {
         for (template in templates) {
             val topology =
                 buildJsonObject {
-                    putJsonArray("clusters") {
+                    putJsonArray("datacenters") {
                         addJsonObject {
-                            putJsonArray("hosts") { add(template.jsonObject.getValue("host")) }
+                            putJsonArray("clusters") {
+                                addJsonObject {
+                                    putJsonArray("hosts") { add(template.jsonObject.getValue("host")) }
+                                }
+                            }
                         }
                     }
                 }

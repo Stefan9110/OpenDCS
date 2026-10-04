@@ -278,8 +278,8 @@ class ProjectsResourceTest {
 
     private companion object {
         const val TOPOLOGY =
-            """{"clusters":[{"name":"C0","hosts":[{"name":"H0","cpu":{"coreCount":4,"coreSpeed":"2.5 GHz"},""" +
-                """"memory":{"size":"16 GiB"}}]}]}"""
+            """{"datacenters":[{"clusters":[{"name":"C0","hosts":[{"name":"H0","cpu":{"coreCount":4,"coreSpeed":"2.5 GHz"},""" +
+                """"memory":{"size":"16 GiB"}}]}]}]}"""
 
         val MINIMAL_SPEC: String = ApiTest.fixture("minimal-experiment.json")
     }

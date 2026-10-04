@@ -192,7 +192,9 @@ class TopologiesResourceTest {
     @Test
     fun unknownTopologyKeyIsRejectedByStrictParsing() {
         ApiTest.requestJson()
-            .body("""{"projectId":"$projectId","name":"Bad","topology":{"clusters":${clusters("2.5 GHz")},"wattage":5}}""")
+            .body(
+                """{"projectId":"$projectId","name":"Bad","topology":{"datacenters":[{"clusters":${clusters("2.5 GHz")}}],"wattage":5}}""",
+            )
             .post("/api/v1/topologies")
             .then()
             .statusCode(400)
@@ -234,5 +236,5 @@ class TopologiesResourceTest {
     private fun clusters(coreSpeed: String): String =
         """[{"name":"C0","hosts":[{"name":"H0","cpu":{"coreCount":4,"coreSpeed":"$coreSpeed"},"memory":{"size":"16 GiB"}}]}]"""
 
-    private fun topology(coreSpeed: String): String = """{"clusters":${clusters(coreSpeed)}}"""
+    private fun topology(coreSpeed: String): String = """{"datacenters":[{"clusters":${clusters(coreSpeed)}}]}"""
 }

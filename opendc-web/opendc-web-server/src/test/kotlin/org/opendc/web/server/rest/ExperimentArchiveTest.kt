@@ -146,11 +146,11 @@ class ExperimentArchiveTest {
 
     private companion object {
         const val TOPOLOGY =
-            """{"clusters":[{"name":"C0","hosts":[{"name":"H0","count":1,""" +
-                """"cpu":{"coreCount":4,"coreSpeed":"2.5 GHz"},"memory":{"size":"16 GiB"}}]}]}"""
+            """{"datacenters":[{"clusters":[{"name":"C0","hosts":[{"name":"H0","count":1,""" +
+                """"cpu":{"coreCount":4,"coreSpeed":"2.5 GHz"},"memory":{"size":"16 GiB"}}]}]}]}"""
 
         const val WORKLOAD =
-            """{"type":"inline","tasks":[{"id":0,"name":"t0","submissionTime":"0 ms","duration":"10 minutes",""" +
+            """{"type":"inline","tasks":[{"id":0,"submissionTime":"0 ms","duration":"10 minutes",""" +
                 """"cpuCoreCount":1,"cpuCapacity":"1 GHz","memory":"1 GiB",""" +
                 """"fragments":[{"duration":"10 minutes","cpuUsage":"1 GHz"}]}]}"""
 

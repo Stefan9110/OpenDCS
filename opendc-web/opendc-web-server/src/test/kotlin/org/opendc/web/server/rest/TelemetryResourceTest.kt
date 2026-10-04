@@ -314,8 +314,8 @@ class TelemetryResourceTest {
 
     private companion object {
         const val TOPOLOGY =
-            """{"clusters":[{"name":"C0","hosts":[{"name":"H0","count":1,""" +
-                """"cpu":{"coreCount":4,"coreSpeed":"2.5 GHz"},"memory":{"size":"16 GiB"}}]}]}"""
+            """{"datacenters":[{"clusters":[{"name":"C0","hosts":[{"name":"H0","count":1,""" +
+                """"cpu":{"coreCount":4,"coreSpeed":"2.5 GHz"},"memory":{"size":"16 GiB"}}]}]}]}"""
 
         /** How many tasks the document describes, and so the denominator every bar here reads against. */
         const val TASK_COUNT = 8
@@ -326,7 +326,7 @@ class TelemetryResourceTest {
                 prefix = """{"type":"inline","tasks":[""",
                 postfix = "]}",
             ) { id ->
-                """{"id":$id,"name":"t$id","submissionTime":"0 ms","duration":"10 minutes",""" +
+                """{"id":$id,"submissionTime":"0 ms","duration":"10 minutes",""" +
                     """"cpuCoreCount":1,"cpuCapacity":"1 GHz","memory":"1 GiB",""" +
                     """"fragments":[{"duration":"10 minutes","cpuUsage":"1 GHz"}]}"""
             }

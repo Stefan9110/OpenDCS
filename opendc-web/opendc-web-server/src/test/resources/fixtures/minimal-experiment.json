@@ -2,14 +2,18 @@
     "name": "minimal",
     "topologies": [
         {
-            "clusters": [
+            "datacenters": [
                 {
-                    "name": "C0",
-                    "hosts": [
+                    "clusters": [
                         {
-                            "name": "H0",
-                            "cpu": { "coreCount": 4, "coreSpeed": "2.5 GHz" },
-                            "memory": { "size": "16 GiB" }
+                            "name": "C0",
+                            "hosts": [
+                                {
+                                    "name": "H0",
+                                    "cpu": { "coreCount": 4, "coreSpeed": "2.5 GHz" },
+                                    "memory": { "size": "16 GiB" }
+                                }
+                            ]
                         }
                     ]
                 }
@@ -22,7 +26,6 @@
             "tasks": [
                 {
                     "id": 0,
-                    "name": "task0",
                     "submissionTime": "0 ms",
                     "duration": "10 minutes",
                     "cpuCoreCount": 1,
