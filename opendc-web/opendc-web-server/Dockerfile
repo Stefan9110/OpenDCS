@@ -21,7 +21,8 @@ ENV OPENDC_SERVER_OPTS="-XX:MaxRAMPercentage=25" \
     OPENDC_STORAGE_DIRECTORY=/var/lib/opendc/data \
     OPENDC_DISPATCHER_LOCAL_WORK_DIR=/var/lib/opendc/executions
 
-EXPOSE 8080
+# 8080 serves the app; 9000 serves /q/health and /q/metrics, for probes and Prometheus only.
+EXPOSE 8080 9000
 ENTRYPOINT ["/opt/opendc/bin/opendc-server"]
 
 LABEL org.opencontainers.image.authors="OpenDC Maintainers <opendc@atlarge-research.com>" \

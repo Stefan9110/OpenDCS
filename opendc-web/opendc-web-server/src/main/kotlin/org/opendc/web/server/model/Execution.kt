@@ -553,9 +553,27 @@ class ExecutionUnit : PanacheEntityBase {
             ORDER BY u.scenarioIndex, u.seed
         """
 
+        // A unit failed here and nowhere since: no later attempt carries it.
+        @Language("JPAQL")
+        private const val RETRYABLE = """
+            SELECT eu FROM ExecutionUnit eu
+            JOIN FETCH eu.unit u
+            WHERE eu.execution.id = ?1
+              AND eu.state = org.opendc.web.server.model.UnitState.FAILED
+              AND u.state = org.opendc.web.server.model.UnitState.FAILED
+              AND NOT EXISTS (
+                SELECT later FROM ExecutionUnit later
+                WHERE later.unit = u AND later.id > eu.id
+              )
+            ORDER BY u.scenarioIndex, u.seed
+        """
+
         /** Every attempt's record of every unit of an experiment, oldest attempt first. */
         fun findByExperiment(experimentId: Long): List<ExecutionUnit> = list(BY_EXPERIMENT, experimentId)
 
         fun findByExecution(executionId: Long): List<ExecutionUnit> = list(BY_EXECUTION, executionId)
+
+        /** The units [executionId] was the last attempt for and that ended failed. */
+        fun findRetryable(executionId: Long): List<ExecutionUnit> = list(RETRYABLE, executionId)
     }
 }

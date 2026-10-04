@@ -76,7 +76,14 @@ export function AccountActions({ session, closeDrawer }: Readonly<{ session: Aut
             )}
             <Divider my="xs" />
             {session.account.isAdmin && (
-                <NavLink component="button" c="red" label="Admin panel" leftSection={<IconSettings size={16} />} />
+                <NavLink
+                    component={Link}
+                    href="/admin"
+                    c="red"
+                    label="Admin panel"
+                    leftSection={<IconSettings size={16} />}
+                    onClick={closeDrawer}
+                />
             )}
             {controls.type === "auth0" && (
                 <>

@@ -133,6 +133,19 @@ enum class ExitReasonWire {
     UNKNOWN,
 }
 
+fun ExitReason.toWire(): ExitReasonWire =
+    when (this) {
+        ExitReason.OK -> ExitReasonWire.OK
+        ExitReason.SIMULATION_ERROR -> ExitReasonWire.SIMULATION_ERROR
+        ExitReason.INVALID_SPEC -> ExitReasonWire.INVALID_SPEC
+        ExitReason.OOM -> ExitReasonWire.OOM
+        ExitReason.TIMEOUT -> ExitReasonWire.TIMEOUT
+        ExitReason.WALLTIME -> ExitReasonWire.WALLTIME
+        ExitReason.CANCELLED -> ExitReasonWire.CANCELLED
+        ExitReason.REJECTED -> ExitReasonWire.REJECTED
+        ExitReason.UNKNOWN -> ExitReasonWire.UNKNOWN
+    }
+
 @Serializable
 data class Experiment(
     val id: String,
@@ -529,18 +542,7 @@ class ExperimentsResource(
         attempt.exitReason?.let { reason ->
             ExitInfo(
                 exitCode = attempt.execution.reportedExitCode,
-                reason =
-                    when (reason) {
-                        ExitReason.OK -> ExitReasonWire.OK
-                        ExitReason.SIMULATION_ERROR -> ExitReasonWire.SIMULATION_ERROR
-                        ExitReason.INVALID_SPEC -> ExitReasonWire.INVALID_SPEC
-                        ExitReason.OOM -> ExitReasonWire.OOM
-                        ExitReason.TIMEOUT -> ExitReasonWire.TIMEOUT
-                        ExitReason.WALLTIME -> ExitReasonWire.WALLTIME
-                        ExitReason.CANCELLED -> ExitReasonWire.CANCELLED
-                        ExitReason.REJECTED -> ExitReasonWire.REJECTED
-                        ExitReason.UNKNOWN -> ExitReasonWire.UNKNOWN
-                    },
+                reason = reason.toWire(),
                 message = attempt.exitMessage.ifEmpty { null },
             )
         }

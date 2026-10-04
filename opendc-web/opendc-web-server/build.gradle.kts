@@ -68,6 +68,8 @@ dependencies {
     implementation(libs.quarkus.smallrye.openapi)
     implementation(libs.quarkus.oidc)
     implementation(libs.quarkus.security)
+    implementation(libs.quarkus.smallrye.health)
+    implementation(libs.quarkus.micrometer.prometheus)
 
     implementation(libs.quarkus.hibernate.orm.panache.kotlin)
     implementation(libs.quarkus.hibernate.validator)

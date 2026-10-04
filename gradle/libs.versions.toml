@@ -85,6 +85,8 @@ quarkus-redis-client = { module = "io.quarkus:quarkus-redis-client" }
 quarkus-rest = { module = "io.quarkus:quarkus-rest" }
 quarkus-rest-kotlin-serialization = { module = "io.quarkus:quarkus-rest-kotlin-serialization" }
 quarkus-hibernate-orm-panache-kotlin = { module = "io.quarkus:quarkus-hibernate-orm-panache-kotlin" }
+quarkus-smallrye-health = { module = "io.quarkus:quarkus-smallrye-health" }
+quarkus-micrometer-prometheus = { module = "io.quarkus:quarkus-micrometer-registry-prometheus" }
 
 # Quarkus (Testing)
 quarkus-junit5-core = { module = "io.quarkus:quarkus-junit" }

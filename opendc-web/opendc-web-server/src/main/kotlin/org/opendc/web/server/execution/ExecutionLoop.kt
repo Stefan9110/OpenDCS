@@ -39,6 +39,7 @@ import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.dispatcher.PlatformVerdict
 import org.opendc.web.launcher.LaunchManifest
 import org.opendc.web.launcher.PeakMemory
+import org.opendc.web.server.metrics.ServerMetrics
 import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.ExecutionState
 import org.opendc.web.server.model.ExecutionUnit
@@ -82,6 +83,7 @@ class ExecutionLoop(
     private val settlement: Settlement,
     private val store: ObjectStore,
     private val config: ExecutionConfig,
+    private val metrics: ServerMetrics,
 ) {
     private val reconciled = AtomicBoolean(false)
     private val pausedUntil = AtomicReference(Instant.MIN)
@@ -118,7 +120,9 @@ class ExecutionLoop(
                     LOG.error("Could not shape queued work", e)
                     return
                 }
-            when (val launch = handOver(claim)) {
+            val launch = handOver(claim)
+            metrics.launched(launch)
+            when (launch) {
                 Launch.Accepted ->
                     if (QuarkusTransaction.requiringNew().call<Boolean> { abandoned(claim.executionId) }) {
                         dispatcher.cancel(claim.executionId)

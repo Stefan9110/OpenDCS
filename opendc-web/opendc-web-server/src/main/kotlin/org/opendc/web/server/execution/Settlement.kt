@@ -29,11 +29,13 @@ import org.opendc.web.dispatcher.Dispatcher
 import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.dispatcher.PlatformSpan
+import org.opendc.web.dispatcher.escalatedBags
 import org.opendc.web.dispatcher.requeuedBags
 import org.opendc.web.dispatcher.retryBags
 import org.opendc.web.launcher.PeakMemory
 import org.opendc.web.launcher.UnitFailure
 import org.opendc.web.launcher.UnitOutcome
+import org.opendc.web.server.metrics.ServerMetrics
 import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.ExecutionState
 import org.opendc.web.server.model.ExecutionUnit
@@ -41,6 +43,8 @@ import org.opendc.web.server.model.NO_EXIT_CODE
 import org.opendc.web.server.model.Submission
 import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.model.UnitVerdict
+import org.opendc.web.server.rest.conflict
+import org.opendc.web.server.rest.notFound
 import org.opendc.web.server.service.charge
 import org.opendc.web.server.service.chargedSeconds
 import org.opendc.web.server.storage.ObjectStore
@@ -81,6 +85,7 @@ class Settlement(
     private val planner: ExecutionPlanner,
     private val config: ExecutionConfig,
     private val store: ObjectStore,
+    private val metrics: ServerMetrics,
 ) {
     /** Settles the execution behind [executionId] from what the platform reported. Uses up an attempt. */
     fun settle(
@@ -93,6 +98,34 @@ class Settlement(
      * attempt: losing it while the server was down says nothing about the work.
      */
     fun requeue(executionId: UUID) = close(executionId, LOST, Attempt.SAME)
+
+    /**
+     * Runs again the units [executionId] was the last attempt for and that ended failed, shaped the way
+     * automatic retry shapes them but past its attempt cap, which is the reason an administrator
+     * retries at all. Runs in the caller's transaction.
+     */
+    fun resubmit(executionId: UUID): List<Execution> {
+        val execution = Execution.lockByPublicId(executionId) ?: throw notFound("Execution")
+        if (!execution.state.isTerminal) {
+            throw conflict("This execution is still live")
+        }
+        val failed = ExecutionUnit.findRetryable(execution.id).ifEmpty { throw conflict("Nothing in this execution is left to retry") }
+        val slot = dispatcher.slot()
+        val policy = config.toPolicy()
+        return failed.groupBy { checkNotNull(it.exitReason) { "a failed unit records why" } }.flatMap { (reason, rows) ->
+            val units = planner.storedEstimates(rows)
+            val bags =
+                if (reason.isResourceShaped) {
+                    escalatedBags(units, execution.grant, reason, slot, policy)
+                } else {
+                    requeuedBags(units, execution.grant, slot, policy)
+                }
+            if (bags.isEmpty()) {
+                throw conflict("Retrying would exceed what this deployment allows one execution")
+            }
+            bags.map { planner.queue(execution.experiment, it, rows.map { row -> row.unit }, execution.attempt + 1, dispatcher.name) }
+        }
+    }
 
     /**
      * Closes [execution], which is still queued and was never handed out, as cancelled. Runs in the
@@ -166,6 +199,7 @@ class Settlement(
         }
         val now = Instant.now()
         execution.settle(stateFor(outcome.reason), outcome, now)
+        metrics.settled(outcome.reason)
         when (val submission = execution.experiment.submission) {
             Submission.Draft -> {}
             is Submission.Submitted -> charge(submission.by, chargedSeconds(outcome.reason, outcome.span, execution.parallelism), now)
