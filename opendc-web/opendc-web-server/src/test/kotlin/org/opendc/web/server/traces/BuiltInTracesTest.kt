@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-package org.opendc.web.server.service
+package org.opendc.web.server.traces
 
 import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.runtime.StartupEvent

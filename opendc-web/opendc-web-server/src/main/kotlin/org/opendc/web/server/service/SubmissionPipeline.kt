@@ -61,6 +61,9 @@ import org.opendc.web.server.rest.invalidDocument
 import org.opendc.web.server.rest.notFound
 import org.opendc.web.server.rest.toWire
 import org.opendc.web.server.results.ResultsReader
+import org.opendc.web.server.traces.TraceResolution
+import org.opendc.web.server.traces.refuseUriReferences
+import org.opendc.web.server.traces.resolveTraces
 import java.time.Instant
 import java.util.UUID
 

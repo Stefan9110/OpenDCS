@@ -45,7 +45,7 @@ import org.opendc.web.server.model.ProjectMember
 import org.opendc.web.server.model.RunUnit
 import org.opendc.web.server.model.SimulationCap
 import org.opendc.web.server.model.UserAccount
-import org.opendc.web.server.service.TraceDisposal
+import org.opendc.web.server.traces.TraceDisposal
 import java.time.Instant
 
 /**

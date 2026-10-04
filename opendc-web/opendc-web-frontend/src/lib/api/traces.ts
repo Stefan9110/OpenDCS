@@ -3,6 +3,7 @@ import type {
     CatalogEntry,
     RegisteredTrace,
     Trace,
+    TraceImport,
     TraceKind,
     TraceKindTables,
     TraceShare,
@@ -178,6 +179,55 @@ export function useRevokeShare(traceId: string) {
         mutationFn: (handle: string) =>
             apiRequest<void>(`api/v1/traces/${traceId}/shares/${handle}`, { method: "DELETE" }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: traceKeys.shares(traceId) }),
+    })
+}
+
+const IMPORTS_KEY = ["trace-imports"] as const
+const IMPORT_POLL_MS = 2000
+
+/** Whether an import that was running in [before] has succeeded by [after], so the library has grown. */
+export function importLanded(before: readonly TraceImport[], after: readonly TraceImport[]): boolean {
+    const running = new Set(before.filter((entry) => entry.progress.type === "running").map((entry) => entry.id))
+    return after.some((entry) => entry.progress.type === "succeeded" && running.has(entry.id))
+}
+
+/** The caller's imports, polled while any is running; the library is refetched when one lands. */
+export function useTraceImports() {
+    const queryClient = useQueryClient()
+    return useQuery({
+        queryKey: IMPORTS_KEY,
+        queryFn: async () => {
+            const before = queryClient.getQueryData<TraceImport[]>(IMPORTS_KEY) ?? []
+            const after = await apiRequest<TraceImport[]>("api/v1/traces/imports")
+            if (importLanded(before, after)) void queryClient.invalidateQueries({ queryKey: traceKeys.all })
+            return after
+        },
+        refetchInterval: (query) =>
+            query.state.data?.some((entry) => entry.progress.type === "running") ? IMPORT_POLL_MS : false,
+    })
+}
+
+export interface ImportRequest {
+    kind: TraceKind
+    name: string
+    description: string
+    sources: Record<string, string>
+}
+
+export function useStartImport() {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: (request: ImportRequest) =>
+            apiRequest<TraceImport>("api/v1/traces/imports", { method: "POST", body: request }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: IMPORTS_KEY }),
+    })
+}
+
+export function useDismissImport() {
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: (id: string) => apiRequest<void>(`api/v1/traces/imports/${id}`, { method: "DELETE" }),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: IMPORTS_KEY }),
     })
 }
 

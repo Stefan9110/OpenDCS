@@ -20,17 +20,21 @@
  * SOFTWARE.
  */
 
-package org.opendc.web.server.service
+package org.opendc.web.server.traces
 
 import jakarta.enterprise.context.ApplicationScoped
 import org.apache.parquet.hadoop.ParquetFileReader
 import org.opendc.trace.spi.TraceFormat
+import org.opendc.web.server.model.Trace
 import org.opendc.web.server.model.TraceKind
+import org.opendc.web.server.model.TracePart
 import org.opendc.web.server.rest.DocumentIssue
 import org.opendc.web.server.rest.invalidDocument
 import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.StoredObjectFile
+import org.opendc.web.server.storage.traceKey
 import java.nio.file.Path
+import java.time.Instant
 
 /** What a table turned out to hold. */
 data class TableFacts(
@@ -48,6 +52,22 @@ data class TableFacts(
  */
 @ApplicationScoped
 class TraceIngest(private val store: ObjectStore) {
+    /** Inspects every table of [trace] in the store and records what each holds, which makes the trace whole. */
+    fun record(trace: Trace) {
+        for (table in trace.kind.tables) {
+            val facts = inspect(trace.kind, table, traceKey(trace.publicId, table))
+            val part =
+                TracePart.find(trace.id, table) ?: TracePart().also {
+                    it.trace = trace
+                    it.tableName = table
+                    it.persist()
+                }
+            part.sizeBytes = facts.sizeBytes
+            part.rowCount = facts.rowCount
+        }
+        trace.updatedAt = Instant.now()
+    }
+
     fun inspect(
         kind: TraceKind,
         table: String,

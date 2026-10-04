@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-package org.opendc.web.server.service
+package org.opendc.web.server.traces
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull

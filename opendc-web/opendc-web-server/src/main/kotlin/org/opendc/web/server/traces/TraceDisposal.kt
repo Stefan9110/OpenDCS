@@ -20,15 +20,18 @@
  * SOFTWARE.
  */
 
-package org.opendc.web.server.service
+package org.opendc.web.server.traces
 
 import io.quarkus.scheduler.Scheduled
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.transaction.Transactional
 import org.opendc.web.server.model.Trace
 import org.opendc.web.server.model.TraceGrant
+import org.opendc.web.server.model.TraceImport
 import org.opendc.web.server.model.TraceOrigin
 import org.opendc.web.server.model.TracePart
+import org.opendc.web.server.model.UserAccount
+import org.opendc.web.server.rest.conflict
 import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.traceKey
 import org.slf4j.LoggerFactory
@@ -46,8 +49,28 @@ import java.time.Instant
  */
 @ApplicationScoped
 class TraceDisposal(private val store: ObjectStore) {
+    /**
+     * Frees [slug] for a new trace of [owner]'s. An upload or import that never finished holds a name
+     * nobody can see, so nothing would ever free it; since it is invisible and unusable, starting
+     * again takes it over. One that is still being imported is left to finish.
+     */
+    fun claim(
+        slug: String,
+        owner: UserAccount,
+    ) {
+        val existing = Trace.findBySlug(slug) ?: return
+        if (existing.owner?.id != owner.id || existing.isComplete()) {
+            throw conflict("You already have a trace called $slug")
+        }
+        if (TraceImport.isRunningFor(existing.id)) {
+            throw conflict("$slug is still being imported")
+        }
+        discard(existing)
+    }
+
     /** Removes a trace and everything belonging to it, in the store as well as the database. */
     fun discard(trace: Trace) {
+        TraceImport.findByTrace(trace.id)?.delete()
         for (grant in TraceGrant.findByTrace(trace.id)) {
             grant.delete()
         }
@@ -66,7 +89,7 @@ class TraceDisposal(private val store: ObjectStore) {
     fun sweepAbandoned() {
         val cutoff = Instant.now().minus(ABANDONED_AFTER)
         val stale = Trace.list("origin = ?1 and updatedAt < ?2", TraceOrigin.UPLOADED, cutoff)
-        for (trace in stale.filterNot { it.isComplete() }) {
+        for (trace in stale.filterNot { it.isComplete() || TraceImport.isRunningFor(it.id) }) {
             LOG.info("Removing {}, registered {} ago and never finished", trace.slug, ABANDONED_AFTER)
             discard(trace)
         }

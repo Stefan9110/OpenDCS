@@ -31,7 +31,9 @@ import jakarta.persistence.FetchType
 import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
+import jakarta.persistence.LockModeType
 import jakarta.persistence.ManyToOne
+import jakarta.persistence.OneToOne
 import jakarta.persistence.Table
 import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
@@ -114,6 +116,26 @@ class Trace : PanacheEntityBase {
     fun isComplete(): Boolean = TracePart.findByTrace(id).map { it.tableName }.containsAll(kind.tables)
 
     companion object : PanacheCompanion<Trace> {
+        /** Persists a trace of [owner]'s that holds no tables yet, and so is not in anybody's library. */
+        fun unfinished(
+            slug: String,
+            kind: TraceKind,
+            owner: UserAccount,
+            description: String?,
+            at: Instant,
+        ): Trace {
+            val trace = Trace()
+            trace.slug = slug
+            trace.kind = kind
+            trace.origin = TraceOrigin.UPLOADED
+            trace.owner = owner
+            trace.description = description
+            trace.createdAt = at
+            trace.updatedAt = at
+            trace.persist()
+            return trace
+        }
+
         fun findBySlug(slug: String): Trace? = find("slug = ?1", slug).firstResult()
 
         fun findByPublicId(publicId: UUID): Trace? = find("publicId = ?1", publicId).firstResult()
@@ -193,6 +215,97 @@ class TraceGrant : PanacheEntityBase {
         ): TraceGrant? = find("trace.id = ?1 and grantee.id = ?2", traceId, granteeId).firstResult()
 
         fun findByTrace(traceId: Long): List<TraceGrant> = list("trace.id = ?1", traceId)
+    }
+}
+
+enum class ImportState {
+    RUNNING,
+    SUCCEEDED,
+    FAILED,
+}
+
+/** Where an import has got, with only what each state guarantees. */
+sealed interface ImportProgress {
+    data class Running(val since: Instant) : ImportProgress
+
+    data class Succeeded(val at: Instant) : ImportProgress
+
+    data class Failed(
+        val at: Instant,
+        val reason: String,
+    ) : ImportProgress
+}
+
+/** A trace this server is fetching from a URL, kept so its owner can see what became of it. */
+@Entity
+@Table(name = "trace_imports")
+class TraceImport : PanacheEntityBase {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    var id: Long = 0
+
+    var publicId: UUID = UUID.randomUUID()
+
+    @OneToOne(fetch = FetchType.LAZY, optional = false)
+    lateinit var trace: Trace
+
+    @Enumerated(EnumType.STRING)
+    var state: ImportState = ImportState.RUNNING
+
+    var failure: String = ""
+
+    lateinit var createdAt: Instant
+
+    var finishedAt: Instant? = null
+
+    val progress: ImportProgress
+        get() =
+            when (state) {
+                ImportState.RUNNING -> ImportProgress.Running(createdAt)
+                ImportState.SUCCEEDED -> ImportProgress.Succeeded(checkNotNull(finishedAt) { "a finished import records when" })
+                ImportState.FAILED -> ImportProgress.Failed(checkNotNull(finishedAt) { "a finished import records when" }, failure)
+            }
+
+    fun succeed(at: Instant) {
+        check(state == ImportState.RUNNING) { "import $publicId has already finished" }
+        state = ImportState.SUCCEEDED
+        finishedAt = at
+    }
+
+    fun fail(
+        at: Instant,
+        reason: String,
+    ) {
+        check(state == ImportState.RUNNING) { "import $publicId has already finished" }
+        state = ImportState.FAILED
+        failure = reason.take(MAX_FAILURE_LENGTH)
+        finishedAt = at
+    }
+
+    companion object : PanacheCompanion<TraceImport> {
+        private const val MAX_FAILURE_LENGTH = 2048
+
+        @Language("JPAQL")
+        private const val OF_OWNER = """
+            SELECT i FROM TraceImport i
+            JOIN FETCH i.trace t
+            WHERE t.owner.id = ?1
+            ORDER BY i.createdAt DESC
+        """
+
+        fun findOwnedBy(ownerId: Long): List<TraceImport> = list(OF_OWNER, ownerId)
+
+        fun findByPublicId(publicId: UUID): TraceImport? = find("publicId = ?1", publicId).firstResult()
+
+        fun lockByPublicId(publicId: UUID): TraceImport? =
+            find("publicId = ?1", publicId).withLock(LockModeType.PESSIMISTIC_WRITE).firstResult()
+
+        fun findByTrace(traceId: Long): TraceImport? = find("trace.id = ?1", traceId).firstResult()
+
+        fun isRunningFor(traceId: Long): Boolean = count("trace.id = ?1 and state = ?2", traceId, ImportState.RUNNING) > 0
+
+        /** Imports still running that were started before [cutoff]. */
+        fun findRunningSince(cutoff: Instant): List<TraceImport> = list("state = ?1 and createdAt < ?2", ImportState.RUNNING, cutoff)
     }
 }
 

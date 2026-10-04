@@ -20,7 +20,7 @@
  * SOFTWARE.
  */
 
-package org.opendc.web.server.service
+package org.opendc.web.server.traces
 
 import org.opendc.sdk.model.experiment.ExperimentSpec
 import org.opendc.sdk.model.resource.NamedReference

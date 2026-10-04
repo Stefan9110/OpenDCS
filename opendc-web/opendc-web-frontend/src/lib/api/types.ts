@@ -137,6 +137,20 @@ export interface Trace {
     createdAt: string
 }
 
+export type ImportProgress =
+    | { type: "running"; since: string }
+    | { type: "succeeded"; at: string }
+    | { type: "failed"; at: string; reason: string }
+
+/** A trace the server is fetching from URLs, which joins the library once every table has landed. */
+export interface TraceImport {
+    id: Id
+    traceId: Id
+    slug: string
+    kind: TraceKind
+    progress: ImportProgress
+}
+
 /** Which tables a kind of trace is made of, so an upload form need not carry its own copy. */
 export interface TraceKindTables {
     kind: TraceKind

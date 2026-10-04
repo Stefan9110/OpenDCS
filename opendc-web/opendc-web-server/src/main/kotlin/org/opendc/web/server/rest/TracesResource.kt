@@ -48,11 +48,11 @@ import org.opendc.web.server.model.TraceKind
 import org.opendc.web.server.model.TraceOrigin
 import org.opendc.web.server.model.TracePart
 import org.opendc.web.server.model.UserAccount
-import org.opendc.web.server.service.TraceDisposal
-import org.opendc.web.server.service.TraceIngest
 import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.UploadTarget
 import org.opendc.web.server.storage.traceKey
+import org.opendc.web.server.traces.TraceDisposal
+import org.opendc.web.server.traces.TraceIngest
 import java.io.InputStream
 import java.time.Instant
 
@@ -253,26 +253,8 @@ class TracesResource(
         // upload in storage, and getting that far only to refuse the request would leave one open
         // that nothing is ever going to finish or clear away.
         val sizes = declaredSizes(kind, request.files)
-        val existing = Trace.findBySlug(slug)
-        if (existing != null) {
-            // An upload that never finished holds a name nobody can see, so nothing would ever
-            // free it. Since it is invisible and unusable, starting again simply takes it over.
-            if (existing.owner?.id != owner.id || tablesOf(listOf(existing.id)).holdsAll(existing)) {
-                throw conflict("You already have a trace called $slug")
-            }
-            disposal.discard(existing)
-        }
-
-        val now = Instant.now()
-        val trace = Trace()
-        trace.slug = slug
-        trace.kind = kind
-        trace.origin = TraceOrigin.UPLOADED
-        trace.owner = owner
-        trace.description = request.description.cleaned()
-        trace.createdAt = now
-        trace.updatedAt = now
-        trace.persist()
+        disposal.claim(slug, owner)
+        val trace = Trace.unfinished(slug, kind, owner, request.description.cleaned(), Instant.now())
 
         val uploads = kind.tables.map { table -> slotFor(trace, table, sizes.getValue(table)) }
         return Response.status(201).entity(RegisteredTrace(trace.toWire(TraceAccessWire.OWNED), uploads)).build()
@@ -322,18 +304,7 @@ class TracesResource(
             throw conflict("The bytes for ${missing.joinToString(", ")} never arrived")
         }
 
-        for (table in trace.kind.tables) {
-            val facts = ingest.inspect(trace.kind, table, traceKey(trace.publicId, table))
-            val part =
-                TracePart.find(trace.id, table) ?: TracePart().also {
-                    it.trace = trace
-                    it.tableName = table
-                    it.persist()
-                }
-            part.sizeBytes = facts.sizeBytes
-            part.rowCount = facts.rowCount
-        }
-        trace.updatedAt = Instant.now()
+        ingest.record(trace)
         return trace.toWire(TraceAccessWire.OWNED)
     }
 
@@ -522,7 +493,7 @@ class TracesResource(
 
 // A kind nobody serves is a mistake in the request, not an empty library: answering [] would tell a
 // caller who misspelled "carbon" that they simply have no carbon traces.
-private fun traceKind(raw: String): TraceKind =
+fun traceKind(raw: String): TraceKind =
     when (raw) {
         "workload" -> TraceKind.WORKLOAD
         "carbon" -> TraceKind.CARBON
@@ -560,7 +531,7 @@ private fun declaredSizes(
 // owner's handle and a separating slash are added around it, and are not the caller's to supply.
 private val TRACE_NAME = Regex("[a-z0-9][a-z0-9._-]{0,99}")
 
-private fun traceName(raw: String): String {
+fun traceName(raw: String): String {
     val name = raw.trim().lowercase()
     if (!TRACE_NAME.matches(name)) {
         throw invalidDocument(
@@ -571,9 +542,9 @@ private fun traceName(raw: String): String {
     return name
 }
 
-private fun String?.cleaned(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
+fun String?.cleaned(): String? = this?.trim()?.takeIf { it.isNotEmpty() }
 
-private fun TraceKind.toWire(): TraceKindWire =
+fun TraceKind.toWire(): TraceKindWire =
     when (this) {
         TraceKind.WORKLOAD -> TraceKindWire.WORKLOAD
         TraceKind.CARBON -> TraceKindWire.CARBON
