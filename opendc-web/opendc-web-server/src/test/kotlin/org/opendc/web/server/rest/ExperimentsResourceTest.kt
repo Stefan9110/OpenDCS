@@ -24,6 +24,10 @@ package org.opendc.web.server.rest
 
 import io.quarkus.test.junit.QuarkusTest
 import io.restassured.response.Response
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import org.hamcrest.Matchers.equalTo
 import org.hamcrest.Matchers.greaterThan
 import org.hamcrest.Matchers.hasItems
@@ -231,6 +235,22 @@ class ExperimentsResourceTest {
             .post("/api/v1/experiments")
             .then()
             .statusCode(400)
+    }
+
+    @Test
+    fun aTopologyWithBothShapesIsRejectedAtItsPlaceInTheExperiment() {
+        val spec = ApiTest.fixtureElement("minimal-experiment.json").jsonObject
+        val topology = spec.getValue("topologies").jsonArray.single().jsonObject
+        val both =
+            JsonObject(topology + ("clusters" to topology.getValue("datacenters").jsonArray.single().jsonObject.getValue("clusters")))
+        val document = JsonObject(spec + ("topologies" to JsonArray(listOf(both))))
+
+        ApiTest.requestJson()
+            .body("""{"projectId":"$projectId","name":"Both","spec":$document}""")
+            .post("/api/v1/experiments")
+            .then()
+            .statusCode(400)
+            .body("issues[0].path", equalTo("topologies[0].clusters"))
     }
 
     @Test

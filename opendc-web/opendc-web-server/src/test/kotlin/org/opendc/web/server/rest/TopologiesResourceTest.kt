@@ -189,6 +189,57 @@ class TopologiesResourceTest {
             .body("issues[0].path", equalTo("clusters"))
     }
 
+    // Data centers beside the clusters they would be converted from are two topologies in one
+    // document, and storing either would quietly discard the other.
+    @Test
+    fun dataCentersBesideClustersAreRejectedAtClusters() {
+        ApiTest.requestJson()
+            .body(
+                """{"projectId":"$projectId","name":"Both","topology":""" +
+                    """{"datacenters":[{"clusters":${clusters("2.5 GHz")}}],"clusters":${clusters("3 GHz")}}}""",
+            )
+            .post("/api/v1/topologies")
+            .then()
+            .statusCode(400)
+            .body("issues[0].path", equalTo("clusters"))
+    }
+
+    // An editor sending back the null it was given has not written clusters.
+    @Test
+    fun aNullClustersBesideDataCentersIsAccepted() {
+        ApiTest.requestJson()
+            .body(
+                """{"projectId":"$projectId","name":"Null","topology":{"datacenters":[{"clusters":${clusters(
+                    "2.5 GHz",
+                )}}],"clusters":null}}""",
+            )
+            .post("/api/v1/topologies")
+            .then()
+            .statusCode(201)
+    }
+
+    // A cluster's own power source is where documents kept it before data centers existed. Stored
+    // as it came, the topology would carry two answers to where that cluster's power comes from.
+    @Test
+    fun aClustersOnlyDocumentIsStoredAsDataCentersAlone() {
+        val legacy =
+            """{"clusters":[{"name":"C0","powerSource":{"name":"Grid"},""" +
+                """"hosts":[{"name":"H0","cpu":{"coreCount":4,"coreSpeed":"2.5 GHz"},"memory":{"size":"16 GiB"}}]}]}"""
+
+        val created =
+            ApiTest.requestJson()
+                .body("""{"projectId":"$projectId","name":"Legacy","topology":$legacy}""")
+                .post("/api/v1/topologies")
+
+        created
+            .then()
+            .statusCode(201)
+            .body("topology.clusters", nullValue())
+            .body("topology.datacenters[0].powerSource.name", equalTo("Grid"))
+            .body("topology.datacenters[0].clusters[0].name", equalTo("C0"))
+            .body("topology.datacenters[0].clusters[0].powerSource", nullValue())
+    }
+
     @Test
     fun unknownTopologyKeyIsRejectedByStrictParsing() {
         ApiTest.requestJson()

@@ -26,7 +26,10 @@ import jakarta.enterprise.inject.Produces
 import jakarta.inject.Singleton
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import org.opendc.sdk.model.experiment.ExperimentSpec
@@ -62,10 +65,27 @@ class SpecCodec {
     @Singleton
     fun wireJson(): Json = Json(from = json) { encodeDefaults = false }
 
-    fun decodeExperiment(document: JsonElement): ExperimentSpec =
-        decode("experiment") { strict.decodeFromJsonElement<ExperimentSpec>(document) }
+    /** An experiment whose topologies are held in their data-center form only, as [decodeTopology] holds one. */
+    fun decodeExperiment(document: JsonElement): ExperimentSpec {
+        ((document as? JsonObject)?.get("topologies") as? JsonArray)?.forEachIndexed { index, topology ->
+            requireDataCenterForm(topology, "topologies[$index].")
+        }
+        val spec = decode("experiment") { strict.decodeFromJsonElement<ExperimentSpec>(document) }
+        return spec.copy(topologies = spec.topologies.map { dataCenterForm(it) }.toSet())
+    }
 
-    fun decodeTopology(document: JsonElement): TopologySpec = decode("topology") { strict.decodeFromJsonElement<TopologySpec>(document) }
+    /**
+     * A topology as data centers alone.
+     *
+     * A document written before data centers existed is converted by the SDK, which is lossy past the
+     * first cluster's power source, and then forgets the clusters it was converted from. Nothing
+     * reads them any more, and keeping them would leave two answers to where a cluster's power comes
+     * from.
+     */
+    fun decodeTopology(document: JsonElement): TopologySpec {
+        requireDataCenterForm(document, "")
+        return dataCenterForm(decode("topology") { strict.decodeFromJsonElement<TopologySpec>(document) })
+    }
 
     fun canonical(spec: ExperimentSpec): String = json.encodeToString(ExperimentSpec.serializer(), spec)
 
@@ -79,6 +99,37 @@ class SpecCodec {
         MessageDigest.getInstance("SHA-256").digest(canonical.encodeToByteArray()).joinToString("") { byte ->
             "%02x".format(byte)
         }
+
+    /**
+     * Refuses the two shapes the SDK's conversion cannot make sense of: data centers next to the
+     * clusters they would be built from, which leaves two topologies in one document, and an empty
+     * cluster list, which the conversion indexes into. A null `clusters` is the same as none.
+     */
+    private fun requireDataCenterForm(
+        document: JsonElement,
+        path: String,
+    ) {
+        val topology = document as? JsonObject ?: return
+        val clusters = topology["clusters"]?.takeUnless { it is JsonNull } ?: return
+        val dataCenters = topology["datacenters"]?.takeUnless { it is JsonNull }
+        val message =
+            if (dataCenters != null) {
+                "must be absent when datacenters is given"
+            } else if (clusters is JsonArray && clusters.isEmpty()) {
+                "must not be empty"
+            } else {
+                return
+            }
+        throw invalidDocument("The topology document is invalid", listOf(DocumentIssue("${path}clusters", message)))
+    }
+
+    private fun dataCenterForm(spec: TopologySpec): TopologySpec =
+        TopologySpec(
+            datacenters =
+                spec.datacenters?.map { dataCenter ->
+                    dataCenter.copy(clusters = dataCenter.clusters.map { it.copy(powerSource = null, battery = null) })
+                },
+        )
 
     // The unit parsers inside sdk-model throw bare RuntimeExceptions for unparseable quantities
     // (e.g. "3 lightyears"), not SerializationExceptions, so the net here is deliberately wide;
