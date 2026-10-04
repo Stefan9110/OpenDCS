@@ -4,10 +4,8 @@ import { TopologyTable } from "@/components/project/TopologyTable"
 import { newTopology } from "@/components/topology/defaults"
 import { openNamePrompt } from "@/components/util/NamePrompt"
 import { notifyProblem } from "@/components/util/feedback"
-import { ApiError, problemFromZod } from "@/lib/api/client"
 import { useCreateTopology } from "@/lib/api/topologies"
 import type { Id, TopologyTemplate } from "@/lib/api/types"
-import { topologySpecSchema } from "@/lib/topology/spec"
 import { Button, FileButton, Group, Paper, Stack, Title } from "@mantine/core"
 import { IconPlus, IconUpload } from "@tabler/icons-react"
 
@@ -22,17 +20,16 @@ export function TopologySection({ projectId, templates }: { projectId: Id; templ
             onSubmit: (name) => create.mutate({ name, topology: newTopology() }, { onError: notifyProblem }),
         })
 
+    // The server is the validator: it converts a legacy document with the simulator's own conversion
+    // and answers anything else with issues that name where the problem is.
     const importFile = async (file: File | null) => {
         if (!file) return
         try {
-            const parsed = topologySpecSchema.safeParse(JSON.parse(await file.text()))
-            if (!parsed.success) {
-                throw new ApiError(problemFromZod(parsed.error, `${file.name} is not a valid topology`))
+            const document: unknown = JSON.parse(await file.text())
+            if (typeof document !== "object" || document === null || Array.isArray(document)) {
+                throw new Error(`${file.name} does not hold a topology`)
             }
-            create.mutate(
-                { name: file.name.replace(/\.json$/i, ""), topology: parsed.data },
-                { onError: notifyProblem },
-            )
+            create.mutate({ name: file.name.replace(/\.json$/i, ""), topology: document }, { onError: notifyProblem })
         } catch (error) {
             notifyProblem(error)
         }

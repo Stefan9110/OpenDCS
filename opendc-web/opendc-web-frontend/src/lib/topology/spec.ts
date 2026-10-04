@@ -11,7 +11,7 @@ export const resourceReferenceSchema = z.discriminatedUnion("type", [
 
 export const distributionPolicySchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("maxMinFairness") }).passthrough(),
-    z.object({ type: z.literal("bestEffort"), updateIntervalMs: z.number().optional() }).passthrough(),
+    z.object({ type: z.literal("bestEffort"), updateInterval: z.number().optional() }).passthrough(),
     z.object({ type: z.literal("equalShare") }).passthrough(),
     z.object({ type: z.literal("firstFit") }).passthrough(),
     z.object({ type: z.literal("fixedShare"), shareRatio: z.number().optional() }).passthrough(),
@@ -122,12 +122,24 @@ export const clusterSpecSchema = z
         name: z.string().optional(),
         count: z.number().optional(),
         hosts: z.array(hostSpecSchema),
+    })
+    .passthrough()
+
+/** Power, battery and carbon belong to the data center: its clusters share one supply. */
+export const dataCenterSpecSchema = z
+    .object({
+        name: z.string().optional(),
+        clusters: z.array(clusterSpecSchema),
         powerSource: powerSourceSpecSchema.optional(),
         battery: batterySpecSchema.nullish(),
     })
     .passthrough()
 
-export const topologySpecSchema = z.object({ clusters: z.array(clusterSpecSchema) }).passthrough()
+/**
+ * Only the data-center form. The server converts a legacy `clusters` document once, with the
+ * simulator's own conversion, so a copy of that conversion here could only drift from it.
+ */
+export const topologySpecSchema = z.object({ datacenters: z.array(dataCenterSpecSchema) }).passthrough()
 
 export type ResourceReference = z.infer<typeof resourceReferenceSchema>
 export type DistributionPolicy = z.infer<typeof distributionPolicySchema>
@@ -141,8 +153,19 @@ export type HostSpec = z.infer<typeof hostSpecSchema>
 export type PowerSourceSpec = z.infer<typeof powerSourceSpecSchema>
 export type BatterySpec = z.infer<typeof batterySpecSchema>
 export type ClusterSpec = z.infer<typeof clusterSpecSchema>
+export type DataCenterSpec = z.infer<typeof dataCenterSpecSchema>
 export type TopologySpec = z.infer<typeof topologySpecSchema>
 
+export interface ClusterAddress {
+    dataCenter: number
+    cluster: number
+}
+
+export interface HostAddress extends ClusterAddress {
+    host: number
+}
+
+export const DEFAULT_DATA_CENTER_NAME = "DC"
 export const DEFAULT_CLUSTER_NAME = "Cluster"
 export const DEFAULT_HOST_NAME = "Host"
 export const DEFAULT_COUNT = 1
@@ -162,6 +185,10 @@ export function cpuCount(cpu: CpuSpec): number {
 
 export function gpuCount(gpu: GpuSpec): number {
     return gpu.count ?? DEFAULT_COUNT
+}
+
+export function dataCenterName(dataCenter: DataCenterSpec): string {
+    return dataCenter.name ?? DEFAULT_DATA_CENTER_NAME
 }
 
 export function clusterName(cluster: ClusterSpec): string {

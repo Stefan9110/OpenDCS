@@ -1,37 +1,49 @@
 "use client"
 
-import { ClusterPowerFields } from "@/components/topology/inspector/ClusterPowerFields"
+import { DataCenterSelect } from "@/components/topology/inspector/DataCenterSelect"
 import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
 import { HostGroupList } from "@/components/topology/inspector/HostGroupList"
 import { HostInspector } from "@/components/topology/inspector/HostInspector"
+import { IssueList } from "@/components/topology/inspector/IssueList"
 import type { DocumentIssue } from "@/lib/api/types"
 import { clusterCapacity } from "@/lib/topology/capacity"
 import type { TopologyPlan } from "@/lib/topology/edits"
-import { addHost, duplicateHost, removeHost, updateCluster, updateHost } from "@/lib/topology/edits"
-import { type ClusterSpec, type HostSpec, clusterCount, clusterName } from "@/lib/topology/spec"
-import { issuesUnder } from "@/lib/topology/validation"
-import { Alert, Badge, Box, Group, NumberInput, ScrollArea, Stack, Tabs, Text, TextInput } from "@mantine/core"
-import { IconAlertTriangle } from "@tabler/icons-react"
+import { addHost, duplicateHost, removeHost, updateClusters, updateHost } from "@/lib/topology/edits"
+import { type ClusterAddress, type ClusterSpec, type HostSpec, clusterCount, clusterName } from "@/lib/topology/spec"
+import { clusterPath, issuesUnder } from "@/lib/topology/validation"
+import { Badge, Box, Group, NumberInput, ScrollArea, Stack, Tabs, Text, TextInput } from "@mantine/core"
+import { useEffect, useState } from "react"
 
 export function ClusterInspector({
     cluster,
-    index,
+    at,
     selectedHost,
+    dataCenterNames,
     issues,
     onSelectHost,
+    onMove,
     apply,
 }: {
     cluster: ClusterSpec
-    index: number
+    at: ClusterAddress
     selectedHost: number
+    dataCenterNames: string[]
     issues: DocumentIssue[]
-    onSelectHost: (cluster: number, host: number) => void
+    onSelectHost: (host: number) => void
+    onMove: (dataCenter: number) => void
     apply: (change: (plan: TopologyPlan) => TopologyPlan) => void
 }) {
+    const [tab, setTab] = useState(selectedHost >= 0 ? "hosts" : "cluster")
+    const path = clusterPath(at)
     const capacity = clusterCapacity(cluster)
-    const clusterIssues = issuesUnder(issues, `clusters[${index}]`)
     const host = cluster.hosts[selectedHost]
-    const patch = (change: Partial<ClusterSpec>) => apply((current) => updateCluster(current, index, change))
+    const patch = (change: Partial<ClusterSpec>) =>
+        apply((current) => updateClusters(current, at.dataCenter, [at.cluster], change))
+
+    // Opening a host group, from the floor or the tree, is asking to see it.
+    useEffect(() => {
+        if (selectedHost >= 0) setTab("hosts")
+    }, [selectedHost])
 
     return (
         <Stack h="100%" gap={0}>
@@ -46,24 +58,20 @@ export function ClusterInspector({
                 </Group>
             </Box>
 
-            <Tabs defaultValue="cluster" style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+            <Tabs
+                value={tab}
+                onChange={(next) => next && setTab(next)}
+                style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}
+            >
                 <Tabs.List px="sm">
                     <Tabs.Tab value="cluster">Cluster</Tabs.Tab>
                     <Tabs.Tab value="hosts">Hosts ({cluster.hosts.length})</Tabs.Tab>
                 </Tabs.List>
 
                 <ScrollArea style={{ flex: 1, minHeight: 0 }}>
-                    {clusterIssues.length > 0 && (
-                        <Alert color="red" icon={<IconAlertTriangle size={16} />} m="sm" p="xs" radius="sm">
-                            <Stack gap={2}>
-                                {clusterIssues.map((issue) => (
-                                    <Text key={`${issue.path}-${issue.message}`} size="xs">
-                                        {issue.path.replace(`clusters[${index}].`, "")} {issue.message}
-                                    </Text>
-                                ))}
-                            </Stack>
-                        </Alert>
-                    )}
+                    <Box px="sm" pt="sm">
+                        <IssueList issues={issuesUnder(issues, path)} prefix={`${path}.`} />
+                    </Box>
 
                     <Tabs.Panel value="cluster" p="md">
                         <Stack gap="sm">
@@ -85,7 +93,12 @@ export function ClusterInspector({
                                 value={clusterCount(cluster)}
                                 onChange={(value) => patch({ count: typeof value === "number" ? value : 1 })}
                             />
-                            <ClusterPowerFields cluster={cluster} onChange={patch} />
+                            <DataCenterSelect
+                                label="Data center"
+                                names={dataCenterNames}
+                                value={at.dataCenter}
+                                onChange={(to) => to !== at.dataCenter && onMove(to)}
+                            />
                         </Stack>
                     </Tabs.Panel>
 
@@ -94,19 +107,23 @@ export function ClusterInspector({
                             <HostGroupList
                                 cluster={cluster}
                                 selectedHost={selectedHost}
-                                onSelectHost={(chosen) => onSelectHost(index, chosen)}
-                                onAddHost={(added: HostSpec) => apply((current) => addHost(current, index, added))}
-                                onRemoveHost={(chosen) => apply((current) => removeHost(current, index, chosen))}
-                                onDuplicateHost={(chosen) => apply((current) => duplicateHost(current, index, chosen))}
+                                onSelectHost={onSelectHost}
+                                onAddHost={(added: HostSpec) => apply((current) => addHost(current, at, added))}
+                                onRemoveHost={(chosen) =>
+                                    apply((current) => removeHost(current, { ...at, host: chosen }))
+                                }
+                                onDuplicateHost={(chosen) =>
+                                    apply((current) => duplicateHost(current, { ...at, host: chosen }))
+                                }
                                 onCountChange={(chosen, count) =>
-                                    apply((current) => updateHost(current, index, chosen, { count }))
+                                    apply((current) => updateHost(current, { ...at, host: chosen }, { count }))
                                 }
                             />
                             {host && (
                                 <HostInspector
                                     host={host}
                                     onChange={(next) =>
-                                        apply((current) => updateHost(current, index, selectedHost, next))
+                                        apply((current) => updateHost(current, { ...at, host: selectedHost }, next))
                                     }
                                 />
                             )}

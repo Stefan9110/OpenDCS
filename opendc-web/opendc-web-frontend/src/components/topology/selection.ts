@@ -1,66 +1,131 @@
+import type { ClusterAddress, HostAddress, TopologySpec } from "@/lib/topology/spec"
+
 export type Selection =
     | { kind: "topology" }
-    | { kind: "clusters"; indices: number[] }
-    | { kind: "host"; cluster: number; host: number }
+    | { kind: "dataCenter"; dataCenter: number }
+    | { kind: "clusters"; dataCenter: number; clusters: number[] }
+    | { kind: "host"; dataCenter: number; cluster: number; host: number }
+
+/** What the builder shows: one data center's floor, and a selection the floor follows. */
+export interface BuilderView {
+    floor: number
+    selection: Selection
+}
 
 export const WHOLE_TOPOLOGY: Selection = { kind: "topology" }
 
-export function selectCluster(index: number): Selection {
-    return { kind: "clusters", indices: [index] }
+export const INITIAL_VIEW: BuilderView = { floor: 0, selection: WHOLE_TOPOLOGY }
+
+export function selectDataCenter(dataCenter: number): Selection {
+    return { kind: "dataCenter", dataCenter }
 }
 
-export function selectHost(cluster: number, host: number): Selection {
-    return { kind: "host", cluster, host }
+export function selectCluster(at: ClusterAddress): Selection {
+    return { kind: "clusters", dataCenter: at.dataCenter, clusters: [at.cluster] }
+}
+
+export function selectHost(at: HostAddress): Selection {
+    return { kind: "host", dataCenter: at.dataCenter, cluster: at.cluster, host: at.host }
 }
 
 /**
  * Opens a host group, or closes it if it is the one already open. Without the second half there is
- * no way back out of a group short of Escape, which drops the cluster as well and throws the
- * inspector back to the whole topology.
+ * no way back out of a group short of Escape, which drops the cluster as well.
  */
-export function toggleHost(selection: Selection, cluster: number, host: number): Selection {
-    const open = selection.kind === "host" && selection.cluster === cluster && selection.host === host
-    return open ? selectCluster(cluster) : selectHost(cluster, host)
+export function toggleHost(selection: Selection, at: HostAddress): Selection {
+    const open =
+        selection.kind === "host" &&
+        selection.dataCenter === at.dataCenter &&
+        selection.cluster === at.cluster &&
+        selection.host === at.host
+    return open ? selectCluster(at) : selectHost(at)
 }
 
-export function selectedClusters(selection: Selection): number[] {
-    if (selection.kind === "clusters") return selection.indices
-    if (selection.kind === "host") return [selection.cluster]
-    return []
+/** The selected clusters of one data center, in index order. */
+export function selectedClusters(selection: Selection, dataCenter: number): number[] {
+    switch (selection.kind) {
+        case "topology":
+        case "dataCenter":
+            return []
+        case "clusters":
+            return selection.dataCenter === dataCenter ? selection.clusters : []
+        case "host":
+            return selection.dataCenter === dataCenter ? [selection.cluster] : []
+    }
 }
 
-export function isClusterSelected(selection: Selection, index: number): boolean {
-    return selectedClusters(selection).includes(index)
+/** Adds or removes a cluster. One in another data center starts a new selection there. */
+export function extendToCluster(selection: Selection, at: ClusterAddress): Selection {
+    const current = selectedClusters(selection, at.dataCenter)
+    if (current.length === 0) return selectCluster(at)
+    const next = current.includes(at.cluster)
+        ? current.filter((entry) => entry !== at.cluster)
+        : [...current, at.cluster]
+    return withClusters(at.dataCenter, next)
 }
 
-export function extendToCluster(selection: Selection, index: number): Selection {
-    const current = selectedClusters(selection)
-    const next = current.includes(index) ? current.filter((entry) => entry !== index) : [...current, index]
-    return next.length === 0 ? WHOLE_TOPOLOGY : { kind: "clusters", indices: next.sort(ascending) }
+/** The floor follows the selection; selecting the whole topology keeps the floor on screen. */
+export function focus(view: BuilderView, selection: Selection): BuilderView {
+    switch (selection.kind) {
+        case "topology":
+            return { floor: view.floor, selection }
+        case "dataCenter":
+        case "clusters":
+        case "host":
+            return { floor: selection.dataCenter, selection }
+    }
 }
 
-export function afterRemoval(selection: Selection, removed: number[]): Selection {
+/** Shifts the surviving clusters down, and falls back to their data center when none survive. */
+export function afterClusterRemoval(view: BuilderView, dataCenter: number, removed: number[]): BuilderView {
+    const { selection } = view
+    if (selection.kind !== "clusters" && selection.kind !== "host") return view
+    if (selection.dataCenter !== dataCenter) return view
     const gone = new Set(removed)
     if (selection.kind === "host") {
-        if (gone.has(selection.cluster)) return WHOLE_TOPOLOGY
-        return { kind: "host", cluster: shift(selection.cluster, removed), host: selection.host }
+        if (gone.has(selection.cluster)) return { ...view, selection: selectDataCenter(dataCenter) }
+        return { ...view, selection: { ...selection, cluster: shift(selection.cluster, removed) } }
     }
-    if (selection.kind !== "clusters") return selection
-    const kept = selection.indices.filter((index) => !gone.has(index)).map((index) => shift(index, removed))
-    return kept.length === 0 ? WHOLE_TOPOLOGY : { kind: "clusters", indices: kept }
+    const kept = selection.clusters.filter((index) => !gone.has(index)).map((index) => shift(index, removed))
+    return { ...view, selection: withClusters(dataCenter, kept) }
 }
 
-export function clampToClusterCount(selection: Selection, clusters: number): Selection {
-    if (selection.kind === "host") return selection.cluster < clusters ? selection : WHOLE_TOPOLOGY
-    if (selection.kind !== "clusters") return selection
-    const kept = selection.indices.filter((index) => index < clusters)
-    return kept.length === 0 ? WHOLE_TOPOLOGY : { kind: "clusters", indices: kept }
+export function afterDataCenterRemoval(view: BuilderView, dataCenter: number): BuilderView {
+    const floor = view.floor > dataCenter || (view.floor === dataCenter && dataCenter > 0) ? view.floor - 1 : view.floor
+    const { selection } = view
+    if (selection.kind === "topology") return { floor, selection }
+    if (selection.dataCenter === dataCenter) return { floor, selection: WHOLE_TOPOLOGY }
+    const moved = selection.dataCenter > dataCenter ? selection.dataCenter - 1 : selection.dataCenter
+    return { floor, selection: { ...selection, dataCenter: moved } }
+}
+
+/** Drops whatever an undo, redo or import left pointing past the end of the topology. */
+export function clampToTopology(view: BuilderView, topology: TopologySpec): BuilderView {
+    const floor = Math.max(0, Math.min(view.floor, topology.datacenters.length - 1))
+    const { selection } = view
+    if (selection.kind === "topology") return { floor, selection }
+    const dataCenter = topology.datacenters[selection.dataCenter]
+    if (!dataCenter) return { floor, selection: WHOLE_TOPOLOGY }
+    switch (selection.kind) {
+        case "dataCenter":
+            return { floor, selection }
+        case "clusters": {
+            const kept = selection.clusters.filter((index) => index < dataCenter.clusters.length)
+            return { floor, selection: withClusters(selection.dataCenter, kept) }
+        }
+        case "host": {
+            const cluster = dataCenter.clusters[selection.cluster]
+            if (!cluster) return { floor, selection: selectDataCenter(selection.dataCenter) }
+            return { floor, selection: cluster.hosts[selection.host] ? selection : selectCluster(selection) }
+        }
+    }
+}
+
+function withClusters(dataCenter: number, clusters: number[]): Selection {
+    if (clusters.length === 0) return selectDataCenter(dataCenter)
+    return { kind: "clusters", dataCenter, clusters: [...clusters].sort((left, right) => left - right) }
 }
 
 function shift(index: number, removed: number[]): number {
     return index - removed.filter((entry) => entry < index).length
-}
-
-function ascending(left: number, right: number): number {
-    return left - right
 }

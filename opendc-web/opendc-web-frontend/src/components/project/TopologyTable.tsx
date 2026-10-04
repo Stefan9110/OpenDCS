@@ -25,6 +25,7 @@ export function TopologyTable({ projectId, templates }: { projectId: Id; templat
                 <Table.Thead>
                     <Table.Tr>
                         <Table.Th>Name</Table.Th>
+                        <Table.Th>Data centers</Table.Th>
                         <Table.Th>Clusters</Table.Th>
                         <Table.Th>Hosts</Table.Th>
                         <Table.Th>Cores</Table.Th>
@@ -53,6 +54,7 @@ function TopologyRow({ projectId, template }: { projectId: Id; template: Topolog
                     {template.name}
                 </Anchor>
             </Table.Td>
+            <Table.Td>{formatCount(capacity.dataCenters)}</Table.Td>
             <Table.Td>{formatCount(capacity.clusters)}</Table.Td>
             <Table.Td>{formatCount(capacity.hosts)}</Table.Td>
             <Table.Td>{formatCount(capacity.cores)}</Table.Td>

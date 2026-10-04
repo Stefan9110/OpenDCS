@@ -9,7 +9,7 @@ import type {
     WorkloadSpec,
 } from "@/lib/experiment/spec"
 import { topologyCapacity } from "@/lib/topology/capacity"
-import type { ResourceReference, TopologySpec } from "@/lib/topology/spec"
+import { type ResourceReference, type TopologySpec, dataCenterName } from "@/lib/topology/spec"
 import { formatWire } from "@/lib/units"
 
 export const AXIS_LABELS: Record<AxisKey, string> = {
@@ -70,8 +70,9 @@ export function axisEntryLabels(axes: ExperimentAxes, key: AxisKey): string[] {
 
 export function topologyLabel(topology: TopologySpec): string {
     const capacity = topologyCapacity(topology)
-    const first = topology.clusters[0]
-    const name = topology.clusters.length === 1 && first?.name ? first.name : `${topology.clusters.length} clusters`
+    const [only] = topology.datacenters
+    const name =
+        topology.datacenters.length === 1 && only ? dataCenterName(only) : `${topology.datacenters.length} data centers`
     return `${name} (${formatCount(capacity.hosts)} hosts)`
 }
 

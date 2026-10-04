@@ -1,137 +1,93 @@
 "use client"
 
-import { formatCount, formatMemory, formatPower } from "@/components/format"
-import { ShortcutGuide } from "@/components/topology/ShortcutGuide"
+import { BulkClusterInspector } from "@/components/topology/inspector/BulkClusterInspector"
 import { ClusterInspector } from "@/components/topology/inspector/ClusterInspector"
+import { DataCenterInspector } from "@/components/topology/inspector/DataCenterInspector"
+import { TopologyOverview } from "@/components/topology/inspector/TopologyOverview"
 import type { Selection } from "@/components/topology/selection"
 import type { DocumentIssue } from "@/lib/api/types"
-import { topologyCapacity, topologyPowerBudget } from "@/lib/topology/capacity"
 import type { TopologyPlan } from "@/lib/topology/edits"
-import { updateClusters } from "@/lib/topology/edits"
-import { clusterName } from "@/lib/topology/spec"
-import { Alert, Divider, Group, NumberInput, ScrollArea, Stack, Text } from "@mantine/core"
-import { IconAlertTriangle } from "@tabler/icons-react"
+import { updateDataCenter } from "@/lib/topology/edits"
+import { type HostAddress, dataCenterName } from "@/lib/topology/spec"
 
 export interface InspectorProps {
     plan: TopologyPlan
     selection: Selection
     issues: DocumentIssue[]
-    onSelectHost: (cluster: number, host: number) => void
     apply: (change: (plan: TopologyPlan) => TopologyPlan) => void
+    onSelectHost: (at: HostAddress) => void
+    onMoveClusters: (from: number, clusters: number[], to: number) => void
+    onDuplicateDataCenter: (dataCenter: number) => void
+    onRemoveDataCenter: (dataCenter: number) => void
 }
 
 export function TopologyInspector(props: InspectorProps) {
-    const { plan, selection, issues } = props
+    const { plan, selection, issues, apply } = props
+    const overview = <TopologyOverview topology={plan.topology} issues={issues} />
+    if (selection.kind === "topology") return overview
 
-    if (selection.kind === "clusters" && selection.indices.length > 1) {
-        return <BulkInspector plan={plan} indices={selection.indices} apply={props.apply} />
-    }
+    const dataCenter = plan.topology.datacenters[selection.dataCenter]
+    if (!dataCenter) return overview
+    const names = plan.topology.datacenters.map(dataCenterName)
 
-    const index =
-        selection.kind === "clusters" ? selection.indices[0] : selection.kind === "host" ? selection.cluster : undefined
-    const cluster = index === undefined ? undefined : plan.topology.clusters[index]
-
-    if (cluster === undefined || index === undefined) return <TopologyOverview plan={plan} issues={issues} />
-
-    return (
-        <ClusterInspector
-            cluster={cluster}
-            index={index}
-            selectedHost={selection.kind === "host" ? selection.host : -1}
-            issues={issues}
-            onSelectHost={props.onSelectHost}
-            apply={props.apply}
-        />
-    )
-}
-
-function TopologyOverview({ plan, issues }: { plan: TopologyPlan; issues: DocumentIssue[] }) {
-    const capacity = topologyCapacity(plan.topology)
-    const budget = topologyPowerBudget(plan.topology)
-    const overBudget = budget.status === "limited" && capacity.peakPowerW > budget.watts
-
-    return (
-        <ScrollArea h="100%" p="md">
-            <Stack gap="sm">
-                <Text fw={600}>Topology</Text>
-                <Stack gap={4}>
-                    <Stat label="Clusters" value={formatCount(capacity.clusters)} />
-                    <Stat label="Hosts" value={formatCount(capacity.hosts)} />
-                    <Stat label="Cores" value={formatCount(capacity.cores)} />
-                    {capacity.gpus > 0 && <Stat label="GPUs" value={formatCount(capacity.gpus)} />}
-                    <Stat label="Memory" value={formatMemory(capacity.memoryMiB)} />
-                    <Stat label="Peak draw" value={formatPower(capacity.peakPowerW)} warn={overBudget} />
-                    {budget.status === "limited" && <Stat label="Supply limit" value={formatPower(budget.watts)} />}
-                </Stack>
-
-                {issues.length > 0 && (
-                    <Alert color="red" icon={<IconAlertTriangle size={16} />} title={`${issues.length} problems`}>
-                        <Stack gap={2}>
-                            {issues.slice(0, 8).map((issue) => (
-                                <Text key={`${issue.path}-${issue.message}`} size="xs">
-                                    {issue.path} {issue.message}
-                                </Text>
-                            ))}
-                        </Stack>
-                    </Alert>
-                )}
-
-                <Divider />
-                <ShortcutGuide />
-            </Stack>
-        </ScrollArea>
-    )
-}
-
-function Stat({ label, value, warn = false }: { label: string; value: string; warn?: boolean }) {
-    return (
-        <Group justify="space-between">
-            <Text size="sm" c="dimmed">
-                {label}
-            </Text>
-            <Text size="sm" fw={500} c={warn ? "red" : undefined}>
-                {value}
-            </Text>
-        </Group>
-    )
-}
-
-function BulkInspector({
-    plan,
-    indices,
-    apply,
-}: {
-    plan: TopologyPlan
-    indices: number[]
-    apply: (change: (plan: TopologyPlan) => TopologyPlan) => void
-}) {
-    const names = indices
-        .map((index) => plan.topology.clusters[index])
-        .filter((cluster) => cluster !== undefined)
-        .map((cluster) => clusterName(cluster))
-
-    return (
-        <ScrollArea h="100%" p="md">
-            <Stack gap="sm">
-                <Text fw={600}>{indices.length} clusters selected</Text>
-                <Text size="xs" c="dimmed" lineClamp={2}>
-                    {names.join(", ")}
-                </Text>
-                <Divider label="Applies to all" />
-                <NumberInput
-                    label="Copies"
-                    size="xs"
-                    min={1}
-                    placeholder="Set for every selected cluster"
-                    onChange={(value) =>
-                        typeof value === "number" &&
-                        value >= 1 &&
-                        apply((current) => updateClusters(current, indices, { count: value }))
-                    }
+    switch (selection.kind) {
+        case "dataCenter":
+            return (
+                <DataCenterInspector
+                    dataCenter={dataCenter}
+                    index={selection.dataCenter}
+                    removable={plan.topology.datacenters.length > 1}
+                    issues={issues}
+                    onChange={(patch) => apply((current) => updateDataCenter(current, selection.dataCenter, patch))}
+                    onDuplicate={() => props.onDuplicateDataCenter(selection.dataCenter)}
+                    onRemove={() => props.onRemoveDataCenter(selection.dataCenter)}
                 />
-                <Divider />
-                <ShortcutGuide />
-            </Stack>
-        </ScrollArea>
-    )
+            )
+        case "clusters": {
+            const [first] = selection.clusters
+            const cluster = first === undefined ? undefined : dataCenter.clusters[first]
+            if (selection.clusters.length > 1 || first === undefined || !cluster) {
+                return (
+                    <BulkClusterInspector
+                        dataCenter={dataCenter}
+                        index={selection.dataCenter}
+                        clusters={selection.clusters}
+                        dataCenterNames={names}
+                        apply={apply}
+                        onMove={(to) => props.onMoveClusters(selection.dataCenter, selection.clusters, to)}
+                    />
+                )
+            }
+            const at = { dataCenter: selection.dataCenter, cluster: first }
+            return (
+                <ClusterInspector
+                    cluster={cluster}
+                    at={at}
+                    selectedHost={-1}
+                    dataCenterNames={names}
+                    issues={issues}
+                    onSelectHost={(host) => props.onSelectHost({ ...at, host })}
+                    onMove={(to) => props.onMoveClusters(at.dataCenter, [at.cluster], to)}
+                    apply={apply}
+                />
+            )
+        }
+        case "host": {
+            const cluster = dataCenter.clusters[selection.cluster]
+            if (!cluster) return overview
+            const at = { dataCenter: selection.dataCenter, cluster: selection.cluster }
+            return (
+                <ClusterInspector
+                    cluster={cluster}
+                    at={at}
+                    selectedHost={selection.host}
+                    dataCenterNames={names}
+                    issues={issues}
+                    onSelectHost={(host) => props.onSelectHost({ ...at, host })}
+                    onMove={(to) => props.onMoveClusters(at.dataCenter, [at.cluster], to)}
+                    apply={apply}
+                />
+            )
+        }
+    }
 }

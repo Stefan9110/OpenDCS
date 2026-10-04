@@ -2,27 +2,31 @@
 
 import { BuilderPanes } from "@/components/topology/BuilderPanes"
 import { BuilderToolbar } from "@/components/topology/BuilderToolbar"
+import { DataCenterTabs } from "@/components/topology/DataCenterTabs"
 import { useResizableWidth } from "@/components/topology/ResizeHandle"
 import { TopologyTree } from "@/components/topology/TopologyTree"
+import { builderActions } from "@/components/topology/builderActions"
 import type { ZoomCommand } from "@/components/topology/canvas/FloorStage"
-import { newCluster } from "@/components/topology/defaults"
 import { TopologyInspector } from "@/components/topology/inspector/TopologyInspector"
 import {
     WHOLE_TOPOLOGY,
-    afterRemoval,
     extendToCluster,
     selectCluster,
+    selectDataCenter,
     selectHost,
     selectedClusters,
     toggleHost,
 } from "@/components/topology/selection"
+import { selectionFor } from "@/components/topology/tree"
 import { useTopologyEditor } from "@/components/topology/useTopologyEditor"
 import { EntityBreadcrumbs } from "@/components/util/EntityBreadcrumbs"
 import { openNamePrompt } from "@/components/util/NamePrompt"
 import { useProject } from "@/lib/api/projects"
 import type { Id, TopologyTemplate } from "@/lib/api/types"
-import { addCluster, duplicateCluster, moveCluster, removeClusters } from "@/lib/topology/edits"
-import type { FloorCell, FloorLayout } from "@/lib/topology/layout"
+import { dataCenterHeadroom, isOverBudget } from "@/lib/topology/capacity"
+import { placeCluster } from "@/lib/topology/edits"
+import { dataCenterName } from "@/lib/topology/spec"
+import { brokenClusters, brokenDataCenters } from "@/lib/topology/validation"
 import { ActionIcon, Box, Skeleton, Stack } from "@mantine/core"
 import { useDisclosure, useHotkeys, useMediaQuery } from "@mantine/hooks"
 import { IconPencil } from "@tabler/icons-react"
@@ -43,36 +47,20 @@ export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
     const compact = useMediaQuery("(max-width: 75em)", false, { getInitialValueInEffect: true })
     const [treeOpened, tree] = useDisclosure(false)
     const [inspectorOpened, inspectorDrawer] = useDisclosure(false)
-    const { plan, selection } = editor
-
-    const createAt = (cell: FloorCell) => {
-        const index = plan.topology.clusters.length
-        editor.apply((current) => addCluster(current, newCluster(index + 1), cell))
-        editor.select(selectCluster(index))
-    }
-
-    const duplicateSelected = () => {
-        const chosen = selectedClusters(selection)
-        const first = chosen[0]
-        if (first === undefined) return
-        editor.apply((current) => duplicateCluster(current, first))
-        editor.select(selectCluster(first + 1))
-    }
-
-    const deleteSelected = () => {
-        const chosen = selectedClusters(selection)
-        if (chosen.length === 0) return
-        editor.apply((current) => removeClusters(current, chosen))
-        editor.select(afterRemoval(selection, chosen))
-    }
+    const { plan, view, issues } = editor
+    const { selection, floor: shown } = view
+    const actions = builderActions(editor)
+    const dataCenters = plan.topology.datacenters
+    const dataCenter = dataCenters[shown]
+    const floor = plan.layout.floors[shown]
 
     useHotkeys([
         ["mod+z", editor.undo],
         ["mod+shift+Z", editor.redo],
         ["mod+s", editor.saveNow],
-        ["mod+d", duplicateSelected],
-        ["Delete", deleteSelected],
-        ["Backspace", deleteSelected],
+        ["mod+d", actions.duplicateSelected],
+        ["Delete", actions.deleteSelected],
+        ["Backspace", actions.deleteSelected],
         ["Escape", () => editor.select(WHOLE_TOPOLOGY)],
     ])
 
@@ -102,11 +90,10 @@ export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
                 }}
                 tree={
                     <TopologyTree
-                        plan={plan}
+                        topology={plan.topology}
                         selection={selection}
-                        issues={editor.issues}
-                        onSelectCluster={(index) => editor.select(selectCluster(index))}
-                        onSelectHost={(cluster, host) => editor.select(toggleHost(selection, cluster, host))}
+                        issues={issues}
+                        onSelect={(target) => editor.select(selectionFor(target, selection))}
                     />
                 }
                 canvas={
@@ -121,23 +108,41 @@ export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
                             onExport={() => downloadTopology(editor.name, plan.topology)}
                             {...(compact ? { onOpenTree: tree.open, onOpenInspector: inspectorDrawer.open } : {})}
                         />
+                        <DataCenterTabs
+                            names={dataCenters.map(dataCenterName)}
+                            broken={brokenDataCenters(issues, dataCenters.length)}
+                            active={shown}
+                            onSelect={(index) => editor.select(selectDataCenter(index))}
+                            onAdd={actions.addDataCenter}
+                        />
                         <Box flex={1} mih={0}>
-                            <FloorStage
-                                plan={plan}
-                                selection={selection}
-                                issues={editor.issues}
-                                zoom={zoom}
-                                onCreate={createAt}
-                                onSelect={(index, additive) =>
-                                    editor.select(additive ? extendToCluster(selection, index) : selectCluster(index))
-                                }
-                                onClearSelection={() => editor.select(WHOLE_TOPOLOGY)}
-                                onMove={(index, cell) => editor.apply((current) => moveCluster(current, index, cell))}
-                                onOpen={(index) => {
-                                    editor.select(selectHost(index, 0))
-                                    if (compact) inspectorDrawer.open()
-                                }}
-                            />
+                            {dataCenter && floor && (
+                                <FloorStage
+                                    key={shown}
+                                    floor={floor}
+                                    clusters={dataCenter.clusters}
+                                    supply={dataCenterHeadroom(dataCenter).budget}
+                                    overBudget={isOverBudget(dataCenterHeadroom(dataCenter))}
+                                    selected={selectedClusters(selection, shown)}
+                                    broken={brokenClusters(issues, shown, dataCenter.clusters.length)}
+                                    zoom={zoom}
+                                    onCreate={actions.createAt}
+                                    onSelect={(cluster, additive) => {
+                                        const at = { dataCenter: shown, cluster }
+                                        editor.select(additive ? extendToCluster(selection, at) : selectCluster(at))
+                                    }}
+                                    onClearSelection={() => editor.select(selectDataCenter(shown))}
+                                    onPlace={(cluster, cell) =>
+                                        editor.apply((current) =>
+                                            placeCluster(current, { dataCenter: shown, cluster }, cell),
+                                        )
+                                    }
+                                    onOpen={(cluster) => {
+                                        editor.select(selectHost({ dataCenter: shown, cluster, host: 0 }))
+                                        if (compact) inspectorDrawer.open()
+                                    }}
+                                />
+                            )}
                         </Box>
                     </>
                 }
@@ -145,9 +150,12 @@ export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
                     <TopologyInspector
                         plan={plan}
                         selection={selection}
-                        issues={editor.issues}
-                        onSelectHost={(cluster, host) => editor.select(toggleHost(selection, cluster, host))}
+                        issues={issues}
                         apply={editor.apply}
+                        onSelectHost={(at) => editor.select(toggleHost(selection, at))}
+                        onMoveClusters={actions.moveClusters}
+                        onDuplicateDataCenter={actions.duplicateDataCenter}
+                        onRemoveDataCenter={actions.removeDataCenter}
                     />
                 }
             />

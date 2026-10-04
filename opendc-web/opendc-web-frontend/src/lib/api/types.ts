@@ -1,6 +1,5 @@
 import type { ExperimentSpec } from "@/lib/experiment/spec"
 import type { ExperimentState, ProgressReport, ScenarioExecutionState } from "@/lib/experiment/status"
-import type { FloorLayout } from "@/lib/topology/layout"
 import type { HostSpec, TopologySpec } from "@/lib/topology/spec"
 
 export interface DocumentIssue {
@@ -106,7 +105,8 @@ export interface TopologyTemplate {
     name: string
     topology: TopologySpec
     topologyHash: string
-    layout?: FloorLayout
+    /** Opaque to the server and validated by the editor, which lays out afresh what it cannot read. */
+    layout?: unknown
     createdAt: string
     updatedAt: string
 }

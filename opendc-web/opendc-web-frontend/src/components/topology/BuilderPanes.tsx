@@ -36,7 +36,7 @@ export function BuilderPanes({
                     opened={drawers.treeOpened}
                     onClose={drawers.closeTree}
                     position="left"
-                    title="Clusters"
+                    title="Topology"
                     size="80%"
                 >
                     {tree}

@@ -1,6 +1,6 @@
 import { apiRequest } from "@/lib/api/client"
 import type { Id, TopologyTemplate } from "@/lib/api/types"
-import type { FloorLayout } from "@/lib/topology/layout"
+import type { FloorPlan } from "@/lib/topology/layout"
 import type { TopologySpec } from "@/lib/topology/spec"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
@@ -10,9 +10,13 @@ export const topologyKeys = {
     detail: (templateId: Id) => ["topologies", templateId] as const,
 }
 
-export interface TopologyChange {
+/**
+ * What a new topology is created from. The server is the validator and converts a legacy document
+ * itself, so an imported file is sent as it was read.
+ */
+export interface TopologyDraft {
     name: string
-    topology: TopologySpec
+    topology: unknown
 }
 
 export function useTopologies(projectId: Id) {
@@ -34,10 +38,10 @@ export function useTopology(templateId: Id) {
 export function useCreateTopology(projectId: Id) {
     const queryClient = useQueryClient()
     return useMutation({
-        mutationFn: (change: TopologyChange) =>
+        mutationFn: (draft: TopologyDraft) =>
             apiRequest<TopologyTemplate>("api/v1/topologies", {
                 method: "POST",
-                body: { projectId, name: change.name, topology: change.topology },
+                body: { projectId, name: draft.name, topology: draft.topology },
             }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: topologyKeys.list(projectId) }),
     })
@@ -54,9 +58,11 @@ export function useDeleteTopology(projectId: Id) {
     })
 }
 
-export interface TopologySave extends TopologyChange {
+export interface TopologySave {
     templateId: Id
-    layout: FloorLayout
+    name: string
+    topology: TopologySpec
+    layout: FloorPlan
 }
 
 export function useSaveTopology(projectId: Id) {

@@ -35,10 +35,14 @@ function experiment(state: ExperimentState): Experiment {
         spec: {
             topologies: [
                 {
-                    clusters: [
+                    datacenters: [
                         {
-                            name: "a",
-                            hosts: [{ cpu: { coreCount: 8, coreSpeed: "3 GHz" }, memory: { size: "64 GiB" } }],
+                            clusters: [
+                                {
+                                    name: "a",
+                                    hosts: [{ cpu: { coreCount: 8, coreSpeed: "3 GHz" }, memory: { size: "64 GiB" } }],
+                                },
+                            ],
                         },
                     ],
                 },

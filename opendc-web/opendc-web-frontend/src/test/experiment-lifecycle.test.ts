@@ -17,7 +17,8 @@ import type { TopologySpec } from "@/lib/topology/spec"
 import { describe, expect, it } from "vitest"
 
 function topology(name: string): TopologySpec {
-    return { clusters: [{ name, hosts: [{ cpu: { coreCount: 8, coreSpeed: "3 GHz" }, memory: { size: "64 GiB" } }] }] }
+    const hosts = [{ cpu: { coreCount: 8, coreSpeed: "3 GHz" }, memory: { size: "64 GiB" } }]
+    return { datacenters: [{ name: "DC", clusters: [{ name, hosts }] }] }
 }
 
 function trace(name: string) {

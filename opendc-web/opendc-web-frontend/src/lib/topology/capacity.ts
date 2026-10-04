@@ -1,5 +1,6 @@
 import {
     type ClusterSpec,
+    type DataCenterSpec,
     type HostSpec,
     type TopologySpec,
     clusterCount,
@@ -10,6 +11,7 @@ import {
 import { type Quantity, parseQuantity } from "@/lib/units"
 
 export interface Capacity {
+    dataCenters: number
     clusters: number
     hosts: number
     cores: number
@@ -25,16 +27,34 @@ export interface PowerHeadroom {
     budget: PowerBudget
 }
 
-const EMPTY: Capacity = { clusters: 0, hosts: 0, cores: 0, gpus: 0, memoryMiB: 0, peakPowerW: 0 }
+/** What one cluster draws, and what part of its data center's supply that is. */
+export type SupplyShare =
+    | { status: "unlimited"; drawW: number }
+    | { status: "limited"; drawW: number; fraction: number }
+
+/**
+ * The simulator's default supply is `Long.MAX_VALUE` W, which is written as
+ * "9223372036854776.000000 KWatts" and reads back as exactly this.
+ */
+export const UNLIMITED_SUPPLY_W = 2 ** 63
+
+const WATTS_PER_KW = 1000
+
+const EMPTY: Capacity = { dataCenters: 0, clusters: 0, hosts: 0, cores: 0, gpus: 0, memoryMiB: 0, peakPowerW: 0 }
 
 export function topologyCapacity(topology: TopologySpec): Capacity {
-    return topology.clusters.map(clusterCapacity).reduce(addCapacity, EMPTY)
+    return topology.datacenters.map(dataCenterCapacity).reduce(addCapacity, EMPTY)
+}
+
+export function dataCenterCapacity(dataCenter: DataCenterSpec): Capacity {
+    return { ...dataCenter.clusters.map(clusterCapacity).reduce(addCapacity, EMPTY), dataCenters: 1 }
 }
 
 export function clusterCapacity(cluster: ClusterSpec): Capacity {
     const instances = clusterCount(cluster)
     const perInstance = cluster.hosts.map(hostCapacity).reduce(addCapacity, EMPTY)
     return {
+        dataCenters: 0,
         clusters: instances,
         hosts: perInstance.hosts * instances,
         cores: perInstance.cores * instances,
@@ -50,6 +70,7 @@ export function hostCapacity(host: HostSpec): Capacity {
     const cpuPower = watts(host.cpuPowerModel?.maxPower)
     const gpuPower = host.gpu ? watts(host.gpuPowerModel?.maxPower) : 0
     return {
+        dataCenters: 0,
         clusters: 0,
         hosts: instances,
         cores: host.cpu.coreCount * cpuCount(host.cpu) * instances,
@@ -59,32 +80,45 @@ export function hostCapacity(host: HostSpec): Capacity {
     }
 }
 
-export function clusterPowerBudget(cluster: ClusterSpec): PowerBudget {
-    const declared = cluster.powerSource?.maxPower
+/** Absent, unreadable, or the simulator's own unlimited default all mean no limit. */
+export function supplyOf(dataCenter: DataCenterSpec): PowerBudget {
+    const declared = dataCenter.powerSource?.maxPower
     if (declared === undefined) return { status: "unlimited" }
-    return { status: "limited", watts: measure("power", declared) * clusterCount(cluster) }
+    const parsed = parseQuantity("power", declared)
+    if (parsed.status !== "ok" || parsed.base >= UNLIMITED_SUPPLY_W) return { status: "unlimited" }
+    return { status: "limited", watts: parsed.base }
 }
 
-export function topologyPowerBudget(topology: TopologySpec): PowerBudget {
-    let total = 0
-    for (const cluster of topology.clusters) {
-        const budget = clusterPowerBudget(cluster)
-        if (budget.status === "unlimited") return { status: "unlimited" }
-        total += budget.watts
-    }
-    return { status: "limited", watts: total }
+export function dataCenterHeadroom(dataCenter: DataCenterSpec): PowerHeadroom {
+    return { usedW: dataCenterCapacity(dataCenter).peakPowerW, budget: supplyOf(dataCenter) }
 }
 
-export function clusterPowerHeadroom(cluster: ClusterSpec): PowerHeadroom {
-    return { usedW: clusterCapacity(cluster).peakPowerW, budget: clusterPowerBudget(cluster) }
+export function clusterShare(cluster: ClusterSpec, supply: PowerBudget): SupplyShare {
+    const drawW = clusterCapacity(cluster).peakPowerW
+    if (supply.status === "unlimited") return { status: "unlimited", drawW }
+    const fraction = supply.watts > 0 ? drawW / supply.watts : drawW > 0 ? Number.POSITIVE_INFINITY : 0
+    return { status: "limited", drawW, fraction }
 }
 
 export function isOverBudget(headroom: PowerHeadroom): boolean {
     return headroom.budget.status === "limited" && headroom.usedW > headroom.budget.watts
 }
 
+export function overBudgetDataCenters(topology: TopologySpec): number[] {
+    return topology.datacenters.flatMap((dataCenter, index) =>
+        isOverBudget(dataCenterHeadroom(dataCenter)) ? [index] : [],
+    )
+}
+
+/** The peak draw rounded up to a whole kilowatt, and never less than one. */
+export function suggestedSupplyW(dataCenter: DataCenterSpec): number {
+    const peak = dataCenterCapacity(dataCenter).peakPowerW
+    return Math.max(WATTS_PER_KW, Math.ceil(peak / WATTS_PER_KW) * WATTS_PER_KW)
+}
+
 function addCapacity(left: Capacity, right: Capacity): Capacity {
     return {
+        dataCenters: left.dataCenters + right.dataCenters,
         clusters: left.clusters + right.clusters,
         hosts: left.hosts + right.hosts,
         cores: left.cores + right.cores,

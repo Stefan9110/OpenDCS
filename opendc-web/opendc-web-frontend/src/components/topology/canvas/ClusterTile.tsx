@@ -4,7 +4,7 @@ import { formatMemory, formatPower } from "@/components/format"
 import { TILE_INSET, TILE_SIZE, cellOrigin } from "@/components/topology/canvas/geometry"
 import type { CanvasPalette } from "@/components/topology/canvas/palette"
 import type { HardwareIcons } from "@/components/topology/canvas/useHardwareIcons"
-import { clusterCapacity, clusterPowerHeadroom, isOverBudget } from "@/lib/topology/capacity"
+import { type PowerBudget, clusterCapacity, clusterShare } from "@/lib/topology/capacity"
 import type { FloorCell } from "@/lib/topology/layout"
 import { type ClusterSpec, clusterCount, clusterName } from "@/lib/topology/spec"
 import type { KonvaEventObject } from "konva/lib/Node"
@@ -22,31 +22,35 @@ const FOOTER_HEIGHT = 20
 const METER_HEIGHT = 6
 const PERCENT_WIDTH = 30
 
+/**
+ * One cluster on its data center's floor. The meter shows this cluster's share of the supply its
+ * data center's clusters share, and turns red when the data center as a whole draws more than it.
+ */
 export interface ClusterTileProps {
     cluster: ClusterSpec
     index: number
     cell: FloorCell
+    supply: PowerBudget
+    overBudget: boolean
     selected: boolean
     invalid: boolean
     palette: CanvasPalette
     icons: HardwareIcons
     onSelect: (index: number, additive: boolean) => void
     onOpen: (index: number) => void
-    onMove: (index: number, cell: FloorCell) => void
+    onPlace: (index: number, cell: FloorCell) => void
 }
 
 export function ClusterTile(props: ClusterTileProps) {
-    const { cluster, index, cell, selected, invalid, palette, icons } = props
+    const { cluster, index, cell, overBudget, selected, invalid, palette, icons } = props
     const origin = cellOrigin(cell)
     const capacity = clusterCapacity(cluster)
-    const headroom = clusterPowerHeadroom(cluster)
-    const overBudget = isOverBudget(headroom)
+    const share = clusterShare(cluster, props.supply)
     const repeats = clusterCount(cluster)
-    const budget = headroom.budget
 
-    const limited = budget.status === "limited" && budget.watts > 0
-    const usage = limited && budget.status === "limited" ? Math.min(1, headroom.usedW / budget.watts) : 0
-    const powerLabel = limited ? `${Math.round(usage * 100)}%` : formatPower(capacity.peakPowerW)
+    const limited = share.status === "limited"
+    const usage = share.status === "limited" ? Math.min(1, share.fraction) : 0
+    const powerLabel = share.status === "limited" ? `${Math.round(share.fraction * 100)}%` : formatPower(share.drawW)
 
     const rows = [
         { icon: icons.space, label: `${capacity.hosts} hosts` },
@@ -62,7 +66,7 @@ export function ClusterTile(props: ClusterTileProps) {
             y: Math.round((node.y() - TILE_INSET) / TILE_SIZE),
         }
         node.position({ x: origin.x + TILE_INSET, y: origin.y + TILE_INSET })
-        props.onMove(index, dropped)
+        props.onPlace(index, dropped)
     }
 
     return (

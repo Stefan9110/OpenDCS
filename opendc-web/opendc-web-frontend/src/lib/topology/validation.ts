@@ -1,26 +1,68 @@
 import type { DocumentIssue } from "@/lib/api/types"
-import type { ClusterSpec, CpuSpec, HostSpec, PowerSpec, TopologySpec } from "@/lib/topology/spec"
+import type {
+    ClusterAddress,
+    ClusterSpec,
+    CpuSpec,
+    DataCenterSpec,
+    HostAddress,
+    HostSpec,
+    PowerSpec,
+    TopologySpec,
+} from "@/lib/topology/spec"
 import { hostCount } from "@/lib/topology/spec"
 import { type Quantity, type QuantityKind, parseQuantity } from "@/lib/units"
 
+export function dataCenterPath(dataCenter: number): string {
+    return `datacenters[${dataCenter}]`
+}
+
+export function clusterPath(at: ClusterAddress): string {
+    return `${dataCenterPath(at.dataCenter)}.clusters[${at.cluster}]`
+}
+
+export function hostPath(at: HostAddress): string {
+    return `${clusterPath(at)}.hosts[${at.host}]`
+}
+
+/** The same paths the simulator's own validation reports, so the server's issues land in the same places. */
 export function validateTopology(topology: TopologySpec): DocumentIssue[] {
     const issues: DocumentIssue[] = []
-    if (topology.clusters.length === 0) issues.push({ path: "clusters", message: "must not be empty" })
-    topology.clusters.forEach((cluster, index) => issues.push(...validateCluster(cluster, `clusters[${index}]`)))
+    if (topology.datacenters.length === 0) issues.push({ path: "datacenters", message: "must not be empty" })
+    topology.datacenters.forEach((dataCenter, index) => issues.push(...validateDataCenter(dataCenter, index)))
     return issues
 }
 
-export function validateCluster(cluster: ClusterSpec, path: string): DocumentIssue[] {
+/** The data centers with an issue anywhere inside them. */
+export function brokenDataCenters(issues: DocumentIssue[], count: number): number[] {
+    return indices(count).filter((index) => issuesUnder(issues, dataCenterPath(index)).length > 0)
+}
+
+/** The clusters of one data center with an issue anywhere inside them. */
+export function brokenClusters(issues: DocumentIssue[], dataCenter: number, count: number): number[] {
+    return indices(count).filter((cluster) => issuesUnder(issues, clusterPath({ dataCenter, cluster })).length > 0)
+}
+
+function validateDataCenter(dataCenter: DataCenterSpec, index: number): DocumentIssue[] {
+    const path = dataCenterPath(index)
     const issues: DocumentIssue[] = []
-    if (cluster.hosts.length === 0) issues.push({ path: `${path}.hosts`, message: "must not be empty" })
-    cluster.hosts.forEach((host, index) => issues.push(...validateHost(host, `${path}.hosts[${index}]`)))
-    if (cluster.powerSource?.maxPower !== undefined) {
-        issues.push(...measurement("power", cluster.powerSource.maxPower, `${path}.powerSource.maxPower`))
+    if (dataCenter.clusters.length === 0) issues.push({ path: `${path}.clusters`, message: "must not be empty" })
+    dataCenter.clusters.forEach((cluster, at) =>
+        issues.push(...validateCluster(cluster, clusterPath({ dataCenter: index, cluster: at }))),
+    )
+    if (dataCenter.powerSource?.maxPower !== undefined) {
+        issues.push(...measurement("power", dataCenter.powerSource.maxPower, `${path}.powerSource.maxPower`))
     }
     return issues
 }
 
-export function validateHost(host: HostSpec, path: string): DocumentIssue[] {
+function validateCluster(cluster: ClusterSpec, path: string): DocumentIssue[] {
+    const issues: DocumentIssue[] = []
+    if (cluster.hosts.length === 0) issues.push({ path: `${path}.hosts`, message: "must not be empty" })
+    cluster.hosts.forEach((host, index) => issues.push(...validateHost(host, `${path}.hosts[${index}]`)))
+    return issues
+}
+
+function validateHost(host: HostSpec, path: string): DocumentIssue[] {
     const issues: DocumentIssue[] = []
     if (hostCount(host) <= 0) issues.push({ path: `${path}.count`, message: "must be > 0" })
     issues.push(...validateCpu(host.cpu, `${path}.cpu`))
@@ -72,4 +114,8 @@ function measurement(kind: QuantityKind, value: Quantity, path: string): Documen
 
 export function issuesUnder(issues: DocumentIssue[], prefix: string): DocumentIssue[] {
     return issues.filter((issue) => issue.path === prefix || issue.path.startsWith(`${prefix}.`))
+}
+
+function indices(count: number): number[] {
+    return Array.from({ length: count }, (_, index) => index)
 }

@@ -13,11 +13,9 @@ import {
 } from "@/components/topology/canvas/geometry"
 import { useCanvasPalette } from "@/components/topology/canvas/palette"
 import { useHardwareIcons } from "@/components/topology/canvas/useHardwareIcons"
-import { type Selection, isClusterSelected } from "@/components/topology/selection"
-import type { DocumentIssue } from "@/lib/api/types"
-import type { TopologyPlan } from "@/lib/topology/edits"
-import type { FloorCell } from "@/lib/topology/layout"
-import { issuesUnder } from "@/lib/topology/validation"
+import type { PowerBudget } from "@/lib/topology/capacity"
+import type { FloorCell, FloorLayout } from "@/lib/topology/layout"
+import type { ClusterSpec } from "@/lib/topology/spec"
 import { useElementSize } from "@mantine/hooks"
 import type Konva from "konva"
 import type { KonvaEventObject } from "konva/lib/Node"
@@ -33,20 +31,24 @@ export interface ZoomCommand {
     nonce: number
 }
 
+/** One data center's floor. The builder binds which data center the callbacks act on. */
 export interface FloorStageProps {
-    plan: TopologyPlan
-    selection: Selection
-    issues: DocumentIssue[]
+    floor: FloorLayout
+    clusters: ClusterSpec[]
+    supply: PowerBudget
+    overBudget: boolean
+    selected: number[]
+    broken: number[]
     zoom: ZoomCommand
     onCreate: (cell: FloorCell) => void
-    onSelect: (index: number, additive: boolean) => void
+    onSelect: (cluster: number, additive: boolean) => void
     onClearSelection: () => void
-    onMove: (index: number, cell: FloorCell) => void
-    onOpen: (index: number) => void
+    onPlace: (cluster: number, cell: FloorCell) => void
+    onOpen: (cluster: number) => void
 }
 
 export function FloorStage(props: FloorStageProps) {
-    const { plan, selection, issues } = props
+    const { floor: layout, clusters } = props
     const palette = useCanvasPalette()
     const icons = useHardwareIcons()
     const { ref, width, height } = useElementSize()
@@ -56,8 +58,8 @@ export function FloorStage(props: FloorStageProps) {
     const [origin, setOrigin] = useState({ x: 0, y: 0 })
     const [hovered, setHovered] = useState<FloorCell | undefined>(undefined)
 
-    const layoutRef = useRef(plan.layout)
-    layoutRef.current = plan.layout
+    const layoutRef = useRef(layout)
+    layoutRef.current = layout
 
     const fit = useCallback((viewport: { width: number; height: number }) => {
         const view = fitToContent(layoutRef.current, viewport)
@@ -70,9 +72,13 @@ export function FloorStage(props: FloorStageProps) {
         fit({ width, height })
     }, [width, height, fit])
 
+    // A command is carried out once. One issued before this stage mounted, on another floor, or
+    // already carried out before a resize, is not replayed.
     const { action, nonce } = props.zoom
+    const handled = useRef(nonce)
     useEffect(() => {
-        if (nonce === 0) return
+        if (nonce === handled.current) return
+        handled.current = nonce
         if (action === "fit") fit({ width, height })
         else setScale((current) => clampScale(action === "in" ? current * SCALE_STEP : current / SCALE_STEP))
     }, [nonce, action, fit, width, height])
@@ -87,7 +93,7 @@ export function FloorStage(props: FloorStageProps) {
 
     const handleMouseMove = () => {
         const cell = pointerCell()
-        setHovered(cell && withinFloor(cell, plan.layout) ? cell : undefined)
+        setHovered(cell && withinFloor(cell, layout) ? cell : undefined)
     }
 
     const handleStageClick = (event: KonvaEventObject<MouseEvent>) => {
@@ -98,7 +104,7 @@ export function FloorStage(props: FloorStageProps) {
                 Math.abs(event.evt.clientY - start.y) > DRAG_TOLERANCE)
         if (moved || event.target !== event.target.getStage()) return
         const cell = pointerCell()
-        if (cell && withinFloor(cell, plan.layout)) props.onCreate(cell)
+        if (cell && withinFloor(cell, layout)) props.onCreate(cell)
         else props.onClearSelection()
     }
 
@@ -107,8 +113,8 @@ export function FloorStage(props: FloorStageProps) {
         setScale((current) => clampScale(event.evt.deltaY > 0 ? current / SCALE_STEP : current * SCALE_STEP))
     }
 
-    const floor = floorPixelSize(plan.layout)
-    const occupied = new Set(plan.layout.cells.map((cell) => `${cell.x},${cell.y}`))
+    const floor = floorPixelSize(layout)
+    const occupied = new Set(layout.cells.map((cell) => `${cell.x},${cell.y}`))
     const hoverFree = hovered !== undefined && !occupied.has(`${hovered.x},${hovered.y}`)
 
     return (
@@ -137,12 +143,12 @@ export function FloorStage(props: FloorStageProps) {
             >
                 <Layer listening={false}>
                     <Rect width={floor.width} height={floor.height} fill={palette.surface} cornerRadius={8} />
-                    <FloorGrid columns={plan.layout.size.width} rows={plan.layout.size.height} color={palette.grid} />
+                    <FloorGrid columns={layout.size.width} rows={layout.size.height} color={palette.grid} />
                     {hoverFree && <HoverCell cell={hovered} color={palette.hover} />}
                 </Layer>
                 <Layer>
-                    {plan.topology.clusters.map((cluster, index) => {
-                        const cell = plan.layout.cells[index]
+                    {clusters.map((cluster, index) => {
+                        const cell = layout.cells[index]
                         if (!cell) return undefined
                         return (
                             <ClusterTile
@@ -150,13 +156,15 @@ export function FloorStage(props: FloorStageProps) {
                                 cluster={cluster}
                                 index={index}
                                 cell={cell}
-                                selected={isClusterSelected(selection, index)}
-                                invalid={issuesUnder(issues, `clusters[${index}]`).length > 0}
+                                supply={props.supply}
+                                overBudget={props.overBudget}
+                                selected={props.selected.includes(index)}
+                                invalid={props.broken.includes(index)}
                                 palette={palette}
                                 icons={icons}
                                 onSelect={props.onSelect}
                                 onOpen={props.onOpen}
-                                onMove={props.onMove}
+                                onPlace={props.onPlace}
                             />
                         )
                     })}

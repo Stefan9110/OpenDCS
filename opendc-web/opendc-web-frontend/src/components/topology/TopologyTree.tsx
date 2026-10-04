@@ -1,73 +1,43 @@
 "use client"
 
-import { type Selection, isClusterSelected } from "@/components/topology/selection"
+import { TreeRow } from "@/components/topology/TreeRow"
+import type { Selection } from "@/components/topology/selection"
+import { ROOT_VALUE, type TreeTarget, buildTree, isActive, targetPath } from "@/components/topology/tree"
 import type { DocumentIssue } from "@/lib/api/types"
-import type { TopologyPlan } from "@/lib/topology/edits"
-import { clusterCount, clusterName, hostCount, hostName } from "@/lib/topology/spec"
+import type { TopologySpec } from "@/lib/topology/spec"
 import { issuesUnder } from "@/lib/topology/validation"
-import { Group, ScrollArea, Text, Tree, type TreeNodeData, useTree } from "@mantine/core"
-import { IconAlertTriangle, IconChevronDown, IconChevronRight, IconServer, IconStack2 } from "@tabler/icons-react"
+import { Group, ScrollArea, Tree, getTreeExpandedState, useTree } from "@mantine/core"
 import { useMemo } from "react"
 
 export function TopologyTree({
-    plan,
+    topology,
     selection,
     issues,
-    onSelectCluster,
-    onSelectHost,
+    onSelect,
 }: {
-    plan: TopologyPlan
+    topology: TopologySpec
     selection: Selection
     issues: DocumentIssue[]
-    onSelectCluster: (index: number) => void
-    onSelectHost: (cluster: number, host: number) => void
+    onSelect: (target: TreeTarget) => void
 }) {
-    const tree = useTree()
-
-    const data: TreeNodeData[] = useMemo(
-        () =>
-            plan.topology.clusters.map((cluster, index) => ({
-                value: `cluster:${index}`,
-                label: `${clusterName(cluster)}${clusterCount(cluster) > 1 ? ` x${clusterCount(cluster)}` : ""}`,
-                children: cluster.hosts.map((host, hostIndex) => ({
-                    value: `host:${index}:${hostIndex}`,
-                    label: `${hostName(host)} x${hostCount(host)}`,
-                })),
-            })),
-        [plan.topology.clusters],
-    )
-
-    if (data.length === 0) {
-        return (
-            <Text size="sm" c="dimmed" p="md">
-                No clusters yet. Click an empty tile on the floor to add one.
-            </Text>
-        )
-    }
+    const model = useMemo(() => buildTree(topology), [topology])
+    const tree = useTree({
+        initialExpandedState: getTreeExpandedState(model.data, [
+            ROOT_VALUE,
+            ...topology.datacenters.map((_, index) => `dc-${index}`),
+        ]),
+    })
 
     return (
         <ScrollArea h="100%" p="xs">
             <Tree
-                data={data}
+                data={model.data}
                 tree={tree}
                 levelOffset={16}
                 renderNode={({ node, expanded, hasChildren, elementProps }) => {
-                    const parts = node.value.split(":")
-                    const clusterIndex = Number(parts[1])
-                    const isCluster = parts[0] === "cluster"
-                    const broken =
-                        issuesUnder(
-                            issues,
-                            isCluster
-                                ? `clusters[${clusterIndex}]`
-                                : `clusters[${clusterIndex}].hosts[${Number(parts[2])}]`,
-                        ).length > 0
-                    const active = isCluster
-                        ? isClusterSelected(selection, clusterIndex) && selection.kind === "clusters"
-                        : selection.kind === "host" &&
-                          selection.cluster === clusterIndex &&
-                          selection.host === Number(parts[2])
-
+                    const target = model.targets.get(node.value)
+                    if (!target) return null
+                    const path = targetPath(target)
                     return (
                         <Group
                             {...elementProps}
@@ -76,24 +46,17 @@ export function TopologyTree({
                             py={3}
                             onClick={(event) => {
                                 elementProps.onClick(event)
-                                if (isCluster) onSelectCluster(clusterIndex)
-                                else onSelectHost(clusterIndex, Number(parts[2]))
+                                onSelect(target)
                             }}
                         >
-                            {hasChildren ? (
-                                expanded ? (
-                                    <IconChevronDown size={14} />
-                                ) : (
-                                    <IconChevronRight size={14} />
-                                )
-                            ) : (
-                                <IconServer size={14} />
-                            )}
-                            {isCluster && <IconStack2 size={14} />}
-                            <Text size="sm" fw={active ? 600 : 400} lineClamp={1}>
-                                {node.label}
-                            </Text>
-                            {broken && <IconAlertTriangle size={13} color="var(--mantine-color-red-6)" />}
+                            <TreeRow
+                                target={target}
+                                label={String(node.label)}
+                                expanded={expanded}
+                                hasChildren={hasChildren}
+                                active={isActive(target, selection)}
+                                broken={path === "" ? issues.length > 0 : issuesUnder(issues, path).length > 0}
+                            />
                         </Group>
                     )
                 }}
