@@ -33,6 +33,7 @@ import org.opendc.web.server.model.UserAccount
 import org.opendc.web.server.rest.DocumentIssue
 import org.opendc.web.server.rest.conflict
 import org.opendc.web.server.rest.validName
+import org.opendc.web.server.service.openWindows
 import java.time.Instant
 
 /**
@@ -81,6 +82,7 @@ fun provisionAccount(
     account.createdAt = now
     account.persist()
     UserAccount.flush()
+    openWindows(account, now)
     return account
 }
 

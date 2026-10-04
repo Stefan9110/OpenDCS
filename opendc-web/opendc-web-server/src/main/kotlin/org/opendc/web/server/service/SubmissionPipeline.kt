@@ -48,8 +48,10 @@ import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.ExecutionState
 import org.opendc.web.server.model.Experiment
 import org.opendc.web.server.model.ExperimentResource
+import org.opendc.web.server.model.HeldCores
 import org.opendc.web.server.model.Project
 import org.opendc.web.server.model.RunUnit
+import org.opendc.web.server.model.Submission
 import org.opendc.web.server.model.TraceKind
 import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.model.UserAccount
@@ -185,6 +187,10 @@ class SubmissionPipeline(
             throw invalidDocument("Some scenarios cannot run on this deployment", unfit)
         }
 
+        val now = Instant.now()
+        val quotes = scenarios.associate { it.id to quoteOf(it) }
+        admit(submitter, scenarios.sumOf { it.runs * quotes.getValue(it.id) }, now)
+
         extractResources(experiment, spec)
         // Only the work is written here. How it is shaped into executions depends on the slot a
         // dispatcher offers and on what earlier attempts did, neither of which is known yet.
@@ -197,13 +203,17 @@ class SubmissionPipeline(
                 unit.seed = (scenario.initialSeed + run).toLong()
                 unit.state = UnitState.QUEUED
                 unit.totalTasks = tasks
+                unit.quotedSeconds = quotes.getValue(scenario.id)
                 unit.persist()
             }
         }
-        val now = Instant.now()
-        experiment.submittedAt = now
+        experiment.markSubmitted(submitter, now)
         experiment.updatedAt = now
     }
+
+    /** What one run of [scenario] is expected to cost, before any deployment's correction. */
+    private fun quoteOf(scenario: ScenarioSpec): Double =
+        TraceSizeEstimator(config.estimator().toCoefficients()).estimate(scenario, traceExtentOf(scenario.workload)).cpuSeconds
 
     /**
      * Stops everything the experiment still has to do, for good.
@@ -265,6 +275,11 @@ class SubmissionPipeline(
         if (units.any { !it.state.isTerminal }) {
             throw conflict("This scenario is still running")
         }
+        // Whoever submitted the experiment pays for it, retries included.
+        when (val submission = experiment.submission) {
+            Submission.Draft -> {}
+            is Submission.Submitted -> admit(submission.by, units.sumOf { it.quotedSeconds }, Instant.now())
+        }
         // What the earlier attempt measured is about to be overwritten where it lies, so anything
         // still holding it would go on showing a result that no longer has a file behind it.
         results.forget(experiment.publicId, units)
@@ -293,13 +308,27 @@ class SubmissionPipeline(
      */
     @Transactional
     fun delete(experiment: Experiment) {
+        chargeHeld(Execution.heldByExperiment(experiment.id))
         discard(Execution.onPlatformOfExperiment(experiment.id), listOf(experiment.publicId))
         experiment.delete()
     }
 
     /** Arranges for every experiment of [project], about to be deleted in the caller's transaction, to leave nothing behind. */
     fun discardAll(project: Project) {
+        chargeHeld(Execution.heldByProject(project.id))
         discard(Execution.onPlatformOfProject(project.id), Experiment.publicIdsOfProject(project.id))
+    }
+
+    /**
+     * Charges for what running executions have used so far. They are about to go with their
+     * experiment, and settling them later finds nothing, so without this deleting would dodge the bill.
+     */
+    private fun chargeHeld(held: List<HeldCores>) {
+        val now = Instant.now()
+        for (cores in held) {
+            val payer = UserAccount.findById(cores.payerId) ?: continue
+            charge(payer, coreSeconds(cores.since, now, cores.cores), now)
+        }
     }
 
     /**

@@ -133,7 +133,17 @@ class RunUnit : PanacheEntityBase {
 
     var completedTasks: Int = 0
 
+    /** What this run was estimated to cost when it was admitted, which its submitter holds in reserve. */
+    var quotedSeconds: Double = 0.0
+
     companion object : PanacheCompanion<RunUnit> {
+        @Language("JPAQL")
+        private const val RESERVED_BY = """
+            SELECT COALESCE(SUM(u.quotedSeconds), 0.0) FROM RunUnit u
+            WHERE u.experiment.submittedBy.id = ?1
+              AND u.state IN (org.opendc.web.server.model.UnitState.QUEUED, org.opendc.web.server.model.UnitState.CARRIED)
+        """
+
         @Language("JPAQL")
         private const val BY_EXPERIMENT = """
             SELECT u FROM RunUnit u
@@ -164,6 +174,13 @@ class RunUnit : PanacheEntityBase {
         /** The queued units of one experiment, locked, so a claim and a cancel cannot both take them. */
         fun lockQueued(experimentId: Long): List<RunUnit> =
             find(QUEUED_OF_EXPERIMENT, experimentId).withLock(LockModeType.PESSIMISTIC_WRITE).list()
+
+        /** The quotes of everything [userId] submitted that has not finished yet. */
+        fun reservedBy(userId: Long): Double =
+            getEntityManager()
+                .createQuery(RESERVED_BY, Double::class.javaObjectType)
+                .setParameter(1, userId)
+                .singleResult
     }
 }
 
@@ -389,7 +406,30 @@ class Execution : PanacheEntityBase {
               )
         """
 
+        @Language("JPAQL")
+        private const val HELD_OF_EXPERIMENT = """
+            SELECT new org.opendc.web.server.model.HeldCores(e.experiment.submittedBy.id, e.platformStartedAt, e.parallelism)
+            FROM Execution e
+            WHERE e.experiment.id = ?1
+              AND e.platformSpan = org.opendc.web.server.model.SpanKind.STARTED
+        """
+
+        @Language("JPAQL")
+        private const val HELD_OF_PROJECT = """
+            SELECT new org.opendc.web.server.model.HeldCores(e.experiment.submittedBy.id, e.platformStartedAt, e.parallelism)
+            FROM Execution e
+            WHERE e.experiment.project.id = ?1
+              AND e.platformSpan = org.opendc.web.server.model.SpanKind.STARTED
+        """
+
         fun findByExperiment(experimentId: Long): List<Execution> = list(BY_EXPERIMENT, experimentId)
+
+        /** The cores running executions of one experiment hold, read without loading them, as below. */
+        fun heldByExperiment(experimentId: Long): List<HeldCores> =
+            getEntityManager().createQuery(HELD_OF_EXPERIMENT, HeldCores::class.java).setParameter(1, experimentId).resultList
+
+        fun heldByProject(projectId: Long): List<HeldCores> =
+            getEntityManager().createQuery(HELD_OF_PROJECT, HeldCores::class.java).setParameter(1, projectId).resultList
 
         /** Executions this server believes a platform is holding. */
         fun findOnPlatform(): List<Execution> = list(ON_PLATFORM)
@@ -421,6 +461,13 @@ class Execution : PanacheEntityBase {
         private const val TOKEN_BYTES = 24
     }
 }
+
+/** The cores a running execution holds, since when, and whose budget pays for them. */
+data class HeldCores(
+    val payerId: Long,
+    val since: Instant,
+    val cores: Int,
+)
 
 /** How one unit of an execution ended, as recorded on its row. */
 sealed interface UnitVerdict {

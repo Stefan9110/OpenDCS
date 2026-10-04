@@ -36,9 +36,14 @@ import kotlinx.serialization.Serializable
 import org.opendc.web.server.auth.Identity
 import org.opendc.web.server.auth.changeProfile
 import org.opendc.web.server.auth.deactivate
+import org.opendc.web.server.model.BudgetPeriod
+import org.opendc.web.server.model.BudgetWindow
 import org.opendc.web.server.model.HandleKind
+import org.opendc.web.server.model.Invoice
 import org.opendc.web.server.model.PlanTier
 import org.opendc.web.server.model.ProjectMember
+import org.opendc.web.server.model.RunUnit
+import org.opendc.web.server.model.SimulationCap
 import org.opendc.web.server.model.UserAccount
 import org.opendc.web.server.service.TraceDisposal
 import java.time.Instant
@@ -76,12 +81,16 @@ class MeResource(
         return Response.noContent().build()
     }
 
+    /** The caller's invoices, newest first. Read-only: they are issued outside this server. */
     @GET
     @Path("billing")
-    fun billing(): Billing {
-        identity.currentUser()
-        return Billing(invoices = emptyList())
-    }
+    fun billing(): Billing =
+        Billing(
+            invoices =
+                Invoice.findByUser(identity.currentUser().id).map {
+                    InvoiceWire(it.publicId.toString(), it.issuedAt.toString(), it.amountEur.toDouble(), it.paid)
+                },
+        )
 }
 
 private fun UserAccount.toProfile(): UserProfile =
@@ -95,11 +104,36 @@ private fun UserAccount.toProfile(): UserProfile =
         plan = planTier.toWire(),
         isAdmin = isAdmin,
         projectCount = ProjectMember.count("user.id = ?1", id).toInt(),
-        // Anonymous mode meters nothing, so the account is charged against no window at all.
-        // Reporting an uncapped one instead would draw a bar that can never move and a reset
-        // time that never arrives, which says less than saying nothing.
-        budgets = emptyList(),
+        budgets = budgetsOf(this, Instant.now()),
     )
+
+/**
+ * Where an account stands in each window. One with no windows, like the local account of anonymous
+ * mode, is not metered and reports none: an uncapped bar that can never move says less than nothing.
+ */
+private fun budgetsOf(
+    user: UserAccount,
+    now: Instant,
+): List<BudgetWindowWire> {
+    val windows = BudgetWindow.findByUser(user.id)
+    if (windows.isEmpty()) {
+        return emptyList()
+    }
+    val reserved = RunUnit.reservedBy(user.id)
+    return windows.map { window ->
+        BudgetWindowWire(
+            period =
+                when (window.period) {
+                    BudgetPeriod.SESSION -> WireBudgetPeriod.SESSION
+                    BudgetPeriod.WEEK -> WireBudgetPeriod.WEEK
+                },
+            usedSeconds = window.usedAt(now),
+            reservedSeconds = reserved,
+            cap = window.cap,
+            resetsAt = (if (now.isBefore(window.resetsAt)) window.resetsAt else now.plus(window.period.length)).toString(),
+        )
+    }
+}
 
 @Serializable
 data class ProfileChange(
@@ -152,25 +186,9 @@ enum class WireBudgetPeriod {
     WEEK,
 }
 
-/**
- * How much simulation an accounting window allows. Unlimited is a deliberate grant, held by
- * accounts raised by hand, rather than the absence of a limit, so it is its own variant instead of
- * a missing number.
- */
-@Serializable
-sealed interface SimulationCap {
-    @Serializable
-    @SerialName("limited")
-    data class Limited(val seconds: Double) : SimulationCap
-
-    @Serializable
-    @SerialName("unlimited")
-    data object Unlimited : SimulationCap
-}
-
 /** One accounting window of simulation budget. */
 @Serializable
-data class BudgetWindow(
+data class BudgetWindowWire(
     val period: WireBudgetPeriod,
     val usedSeconds: Double,
     val reservedSeconds: Double,
@@ -185,11 +203,11 @@ data class UserProfile(
     val plan: WirePlan,
     val isAdmin: Boolean,
     val projectCount: Int,
-    val budgets: List<BudgetWindow>,
+    val budgets: List<BudgetWindowWire>,
 )
 
 @Serializable
-data class Invoice(
+data class InvoiceWire(
     val id: String,
     val issuedAt: String,
     val amountEur: Double,
@@ -199,5 +217,5 @@ data class Invoice(
 // renewsAt and paymentMethod join once a billing provider exists; absent fields stay absent.
 @Serializable
 data class Billing(
-    val invoices: List<Invoice>,
+    val invoices: List<InvoiceWire>,
 )

@@ -38,8 +38,11 @@ import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.ExecutionState
 import org.opendc.web.server.model.ExecutionUnit
 import org.opendc.web.server.model.NO_EXIT_CODE
+import org.opendc.web.server.model.Submission
 import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.model.UnitVerdict
+import org.opendc.web.server.service.charge
+import org.opendc.web.server.service.chargedSeconds
 import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.logKey
 import org.opendc.web.server.storage.manifestKey
@@ -68,7 +71,9 @@ private class Pending(
  * process's reason. Work a different grant could fix goes round again; anything else ends.
  *
  * The store is read and written outside any transaction, and the database written under the
- * execution's lock, so a remote call never holds a row and a cancel racing the settle is seen.
+ * execution's lock, so a remote call never holds a row and a cancel racing the settle is seen. The
+ * experiment's submitter is charged for the cores the platform ran it with, in the same transaction,
+ * taking the execution's lock before their budget's.
  */
 @ApplicationScoped
 class Settlement(
@@ -159,7 +164,12 @@ class Settlement(
         if (execution.state.isTerminal) {
             return
         }
-        execution.settle(stateFor(outcome.reason), outcome, Instant.now())
+        val now = Instant.now()
+        execution.settle(stateFor(outcome.reason), outcome, now)
+        when (val submission = execution.experiment.submission) {
+            Submission.Draft -> {}
+            is Submission.Submitted -> charge(submission.by, chargedSeconds(outcome.reason, outcome.span, execution.parallelism), now)
+        }
 
         val retries = mutableMapOf<ExitReason, MutableList<ExecutionUnit>>()
         for (row in ExecutionUnit.findByExecution(execution.id)) {

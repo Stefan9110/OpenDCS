@@ -25,6 +25,8 @@ package org.opendc.web.server.model
 import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanion
 import io.quarkus.hibernate.orm.panache.kotlin.PanacheEntityBase
 import jakarta.persistence.Entity
+import jakarta.persistence.EnumType
+import jakarta.persistence.Enumerated
 import jakarta.persistence.FetchType
 import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
@@ -80,6 +82,21 @@ class TopologyTemplate : SpecDocument() {
     }
 }
 
+/** Whether an experiment is still being written or has been frozen and queued. */
+enum class ExperimentStage {
+    DRAFT,
+    SUBMITTED,
+}
+
+sealed interface Submission {
+    data object Draft : Submission
+
+    data class Submitted(
+        val at: Instant,
+        val by: UserAccount,
+    ) : Submission
+}
+
 @Entity
 @Table(name = "experiments")
 class Experiment : SpecDocument() {
@@ -94,10 +111,38 @@ class Experiment : SpecDocument() {
 
     var estimatedBudgetSeconds: Double = 0.0
 
+    @Enumerated(EnumType.STRING)
+    var stage: ExperimentStage = ExperimentStage.DRAFT
+
+    /** When the stage became [ExperimentStage.SUBMITTED], which a check constraint ties it to. */
     var submittedAt: Instant? = null
 
+    /** Who submitted it, and so who pays for its runs. Set with [submittedAt]. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    var submittedBy: UserAccount? = null
+
     val isDraft: Boolean
-        get() = submittedAt == null
+        get() = stage == ExperimentStage.DRAFT
+
+    val submission: Submission
+        get() =
+            when (stage) {
+                ExperimentStage.DRAFT -> Submission.Draft
+                ExperimentStage.SUBMITTED ->
+                    Submission.Submitted(
+                        at = checkNotNull(submittedAt) { "a submitted experiment records when" },
+                        by = checkNotNull(submittedBy) { "a submitted experiment records by whom" },
+                    )
+            }
+
+    fun markSubmitted(
+        by: UserAccount,
+        at: Instant,
+    ) {
+        stage = ExperimentStage.SUBMITTED
+        submittedBy = by
+        submittedAt = at
+    }
 
     companion object : PanacheCompanion<Experiment> {
         fun findByProject(projectId: Long): List<Experiment> = list("project.id = ?1 order by createdAt", projectId)
