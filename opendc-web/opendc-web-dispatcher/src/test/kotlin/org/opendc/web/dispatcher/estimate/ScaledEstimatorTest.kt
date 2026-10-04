@@ -31,6 +31,7 @@ import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.scheduler.PrefabAllocationPolicySpec
 import org.opendc.sdk.model.topology.ClusterSpec
 import org.opendc.sdk.model.topology.CpuSpec
+import org.opendc.sdk.model.topology.DataCenterSpec
 import org.opendc.sdk.model.topology.HostSpec
 import org.opendc.sdk.model.topology.MemorySpec
 import org.opendc.sdk.model.topology.TopologySpec
@@ -49,8 +50,19 @@ class ScaledEstimatorTest {
             topology =
                 TopologySpec(
                     listOf(
-                        ClusterSpec(
-                            hosts = listOf(HostSpec(cpu = CpuSpec(coreCount = 8, coreSpeed = 3.ghz), memory = MemorySpec(size = 64.gib))),
+                        DataCenterSpec(
+                            clusters =
+                                listOf(
+                                    ClusterSpec(
+                                        hosts =
+                                            listOf(
+                                                HostSpec(
+                                                    cpu = CpuSpec(coreCount = 8, coreSpeed = 3.ghz),
+                                                    memory = MemorySpec(size = 64.gib),
+                                                ),
+                                            ),
+                                    ),
+                                ),
                         ),
                     ),
                 ),

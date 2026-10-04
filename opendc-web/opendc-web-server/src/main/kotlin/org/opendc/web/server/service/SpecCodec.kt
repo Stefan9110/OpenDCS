@@ -24,6 +24,7 @@ package org.opendc.web.server.service
 
 import jakarta.enterprise.inject.Produces
 import jakarta.inject.Singleton
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -68,7 +69,7 @@ class SpecCodec {
 
     fun canonical(spec: ExperimentSpec): String = json.encodeToString(ExperimentSpec.serializer(), spec)
 
-    fun canonical(spec: TopologySpec): String = json.encodeToString(TopologySpec.serializer(), spec)
+    fun canonical(spec: TopologySpec): String = json.encodeToString<TopologySpec>(spec)
 
     fun toElement(spec: ExperimentSpec): JsonElement = json.encodeToJsonElement(spec)
 

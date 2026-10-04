@@ -29,12 +29,13 @@ import org.opendc.sdk.model.dsl.ghz
 import org.opendc.sdk.model.dsl.gib
 import org.opendc.sdk.model.dsl.minutes
 import org.opendc.sdk.model.experiment.ScenarioSpec
-import org.opendc.sdk.model.export.ExportSpec
-import org.opendc.sdk.model.export.OutputFileSpec
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.scheduler.PrefabAllocationPolicySpec
+import org.opendc.sdk.model.telemetry.ExportSpec
+import org.opendc.sdk.model.telemetry.OutputFileSpec
 import org.opendc.sdk.model.topology.ClusterSpec
 import org.opendc.sdk.model.topology.CpuSpec
+import org.opendc.sdk.model.topology.DataCenterSpec
 import org.opendc.sdk.model.topology.HostSpec
 import org.opendc.sdk.model.topology.MemorySpec
 import org.opendc.sdk.model.topology.TopologySpec
@@ -69,13 +70,18 @@ class TraceSizeEstimatorTest {
         topology =
             TopologySpec(
                 listOf(
-                    ClusterSpec(
-                        hosts =
+                    DataCenterSpec(
+                        clusters =
                             listOf(
-                                HostSpec(
-                                    count = hosts,
-                                    cpu = CpuSpec(coreCount = 8, coreSpeed = 3.ghz),
-                                    memory = MemorySpec(size = 64.gib),
+                                ClusterSpec(
+                                    hosts =
+                                        listOf(
+                                            HostSpec(
+                                                count = hosts,
+                                                cpu = CpuSpec(coreCount = 8, coreSpeed = 3.ghz),
+                                                memory = MemorySpec(size = 64.gib),
+                                            ),
+                                        ),
                                 ),
                             ),
                     ),

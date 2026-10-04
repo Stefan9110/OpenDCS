@@ -34,6 +34,7 @@ import org.opendc.sdk.model.resource.UriReference
 import org.opendc.sdk.model.scheduler.PrefabAllocationPolicySpec
 import org.opendc.sdk.model.topology.ClusterSpec
 import org.opendc.sdk.model.topology.CpuSpec
+import org.opendc.sdk.model.topology.DataCenterSpec
 import org.opendc.sdk.model.topology.HostSpec
 import org.opendc.sdk.model.topology.MemorySpec
 import org.opendc.sdk.model.topology.TopologySpec
@@ -83,12 +84,17 @@ class LocalDispatcherTest {
                             topology =
                                 TopologySpec(
                                     listOf(
-                                        ClusterSpec(
-                                            hosts =
+                                        DataCenterSpec(
+                                            clusters =
                                                 listOf(
-                                                    HostSpec(
-                                                        cpu = CpuSpec(coreCount = 4, coreSpeed = 3.ghz),
-                                                        memory = MemorySpec(size = 16.gib),
+                                                    ClusterSpec(
+                                                        hosts =
+                                                            listOf(
+                                                                HostSpec(
+                                                                    cpu = CpuSpec(coreCount = 4, coreSpeed = 3.ghz),
+                                                                    memory = MemorySpec(size = 16.gib),
+                                                                ),
+                                                            ),
                                                     ),
                                                 ),
                                         ),

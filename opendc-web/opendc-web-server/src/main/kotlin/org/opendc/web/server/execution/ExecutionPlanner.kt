@@ -29,6 +29,7 @@ import org.opendc.sdk.model.failure.TraceBasedFailureSpec
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.resource.ResourceReference
 import org.opendc.sdk.model.resource.UriReference
+import org.opendc.sdk.model.workload.EfficientTraceWorkloadSpec
 import org.opendc.sdk.model.workload.InlineWorkloadSpec
 import org.opendc.sdk.model.workload.TraceWorkloadSpec
 import org.opendc.sdk.model.workload.WorkloadSpec
@@ -142,14 +143,19 @@ class ExecutionPlanner(
         val workload = scenario.workload
         val failure = scenario.failureModel
         return scenario.copy(
-            workload = if (workload is TraceWorkloadSpec) workload.copy(source = located(workload.source)) else workload,
+            workload =
+                when (workload) {
+                    is TraceWorkloadSpec -> workload.copy(source = located(workload.source))
+                    is EfficientTraceWorkloadSpec -> workload.copy(source = located(workload.source))
+                    is InlineWorkloadSpec -> workload
+                },
             failureModel = if (failure is TraceBasedFailureSpec) failure.copy(source = located(failure.source)) else failure,
             topology =
                 scenario.topology.copy(
-                    clusters =
-                        scenario.topology.clusters.map { cluster ->
-                            val carbon = cluster.powerSource.carbon ?: return@map cluster
-                            cluster.copy(powerSource = cluster.powerSource.copy(carbon = located(carbon)))
+                    datacenters =
+                        scenario.topology.datacenters?.map { dataCenter ->
+                            val carbon = dataCenter.powerSource.carbon ?: return@map dataCenter
+                            dataCenter.copy(powerSource = dataCenter.powerSource.copy(carbon = located(carbon)))
                         },
                 ),
         )
@@ -187,12 +193,15 @@ fun traceExtentOf(workload: WorkloadSpec): TraceExtent =
                 fragmentCount = workload.tasks.sumOf { it.fragments.size }.toLong(),
             )
 
-        is TraceWorkloadSpec -> {
-            val trace = (workload.source as? NamedReference)?.let { Trace.findBySlug(it.name) }
-            val parts = trace?.let { TracePart.findByTrace(it.id).associateBy { part -> part.tableName } }.orEmpty()
-            TraceExtent(
-                taskCount = parts[TABLE_TASKS]?.rowCount ?: 0,
-                fragmentCount = parts[TABLE_FRAGMENTS]?.rowCount ?: 0,
-            )
-        }
+        is TraceWorkloadSpec -> storedExtentOf(workload.source)
+        is EfficientTraceWorkloadSpec -> storedExtentOf(workload.source)
     }
+
+private fun storedExtentOf(source: ResourceReference): TraceExtent {
+    val trace = (source as? NamedReference)?.let { Trace.findBySlug(it.name) }
+    val parts = trace?.let { TracePart.findByTrace(it.id).associateBy { part -> part.tableName } }.orEmpty()
+    return TraceExtent(
+        taskCount = parts[TABLE_TASKS]?.rowCount ?: 0,
+        fragmentCount = parts[TABLE_FRAGMENTS]?.rowCount ?: 0,
+    )
+}

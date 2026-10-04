@@ -23,10 +23,13 @@
 package org.opendc.web.dispatcher.estimate
 
 import org.opendc.sdk.model.experiment.ScenarioSpec
-import org.opendc.sdk.model.export.OutputFileSpec
 import org.opendc.sdk.model.failure.NoFailureSpec
+import org.opendc.sdk.model.telemetry.OutputFileSpec
 import org.opendc.sdk.model.topology.TopologySpec
+import org.opendc.sdk.model.workload.EfficientTraceWorkloadSpec
+import org.opendc.sdk.model.workload.InlineWorkloadSpec
 import org.opendc.sdk.model.workload.TraceWorkloadSpec
+import org.opendc.sdk.model.workload.WorkloadSpec
 
 /** The named terms of [TraceSizeEstimator], kept in config so a deployment can retune them. */
 data class EstimatorCoefficients(
@@ -54,6 +57,14 @@ data class EstimatorCoefficients(
     val checkpointOverhead: Double,
 )
 
+/** How much of [workload]'s trace is actually simulated. A workload written into the document runs whole. */
+fun sampledShare(workload: WorkloadSpec): Double =
+    when (workload) {
+        is TraceWorkloadSpec -> workload.sampleFraction.coerceIn(0.0, 1.0)
+        is EfficientTraceWorkloadSpec -> workload.sampleFraction.coerceIn(0.0, 1.0)
+        is InlineWorkloadSpec -> 1.0
+    }
+
 /**
  * Estimates a run from the number of rows it has to hold and get through.
  *
@@ -75,7 +86,7 @@ class TraceSizeEstimator(private val coefficients: EstimatorCoefficients) : Reso
         val hosts = hostCount(scenario.topology)
         val fragments = workload.fragmentCount / MILLION
         val tasks = workload.taskCount / MILLION
-        val sampled = sampleFraction(scenario)
+        val sampled = sampledShare(scenario.workload)
 
         val memory =
             coefficients.baseMemoryMb +
@@ -94,13 +105,6 @@ class TraceSizeEstimator(private val coefficients: EstimatorCoefficients) : Reso
             cpuSeconds = seconds * exportMultiplier(scenario, hosts) * modelMultiplier(scenario),
         )
     }
-
-    /** How much of the trace's work is actually simulated. */
-    private fun sampleFraction(scenario: ScenarioSpec): Double =
-        when (val workload = scenario.workload) {
-            is TraceWorkloadSpec -> workload.sampleFraction.coerceIn(0.0, 1.0)
-            else -> 1.0
-        }
 
     /**
      * How much the run is slowed by writing the host table.
@@ -126,7 +130,9 @@ class TraceSizeEstimator(private val coefficients: EstimatorCoefficients) : Reso
     }
 
     private fun hostCount(topology: TopologySpec): Int =
-        topology.clusters.sumOf { cluster -> cluster.count * cluster.hosts.sumOf { it.count } }
+        topology.datacenters.orEmpty().sumOf { dataCenter ->
+            dataCenter.clusters.sumOf { cluster -> cluster.count * cluster.hosts.sumOf { it.count } }
+        }
 
     private companion object {
         const val MILLION = 1_000_000.0

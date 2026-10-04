@@ -33,9 +33,11 @@ import org.opendc.sdk.model.experiment.expand
 import org.opendc.sdk.model.failure.TraceBasedFailureSpec
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.resource.ResourceReference
+import org.opendc.sdk.model.workload.EfficientTraceWorkloadSpec
 import org.opendc.sdk.model.workload.TraceWorkloadSpec
 import org.opendc.web.dispatcher.Dispatcher
 import org.opendc.web.dispatcher.estimate.TraceSizeEstimator
+import org.opendc.web.dispatcher.estimate.sampledShare
 import org.opendc.web.server.execution.ExecutionConfig
 import org.opendc.web.server.execution.toCoefficients
 import org.opendc.web.server.execution.traceExtentOf
@@ -270,9 +272,7 @@ class SubmissionPipeline(
      * rather than on it. Every other run, which is nearly all of them, lands exactly on it.
      */
     private fun plannedTaskCount(scenario: ScenarioSpec): Int {
-        val workload = scenario.workload
-        val tasks = traceExtentOf(workload).taskCount
-        val sampled = if (workload is TraceWorkloadSpec) tasks * workload.sampleFraction.coerceIn(0.0, 1.0) else tasks.toDouble()
+        val sampled = traceExtentOf(scenario.workload).taskCount * sampledShare(scenario.workload)
         return sampled.toLong().coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
     }
 
@@ -299,10 +299,11 @@ class SubmissionPipeline(
     ) {
         val references =
             spec.workloads.filterIsInstance<TraceWorkloadSpec>().map { TraceKind.WORKLOAD to it.source } +
+                spec.workloads.filterIsInstance<EfficientTraceWorkloadSpec>().map { TraceKind.WORKLOAD to it.source } +
                 spec.failureModels.filterIsInstance<TraceBasedFailureSpec>().map { TraceKind.FAILURE to it.source } +
                 spec.topologies.flatMap { topology ->
-                    topology.clusters.mapNotNull { cluster ->
-                        cluster.powerSource.carbon?.let { TraceKind.CARBON to it }
+                    topology.datacenters.orEmpty().mapNotNull { dataCenter ->
+                        dataCenter.powerSource.carbon?.let { TraceKind.CARBON to it }
                     }
                 }
         for ((kind, reference) in references) {
