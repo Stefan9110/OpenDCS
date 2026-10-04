@@ -4,6 +4,8 @@ clikt = "4.2.1"
 clikt5 = "5.0.3"
 commons-math3 = "3.6.1"
 dokka = "2.2.0"
+# Follows the version the Quarkus BOM manages, which the server enforces.
+fabric8 = "7.5.2"
 hadoop = "3.3.6"
 jackson = "2.16.1"
 jandex-gradle = "1.1.0"
@@ -96,6 +98,12 @@ restassured-core = { module = "io.rest-assured:rest-assured" }
 aws-bom = { module = "software.amazon.awssdk:bom", version.ref = "aws-sdk" }
 aws-s3 = { module = "software.amazon.awssdk:s3" }
 aws-url-connection-client = { module = "software.amazon.awssdk:url-connection-client" }
+
+# Kubernetes. The JDK HTTP client rather than the default Vert.x one, so the server does not start a
+# second Vert.x beside Quarkus' own; the mock server runs a cluster API in process for tests.
+fabric8-kubernetes-client = { module = "io.fabric8:kubernetes-client", version.ref = "fabric8" }
+fabric8-kubernetes-httpclient-jdk = { module = "io.fabric8:kubernetes-httpclient-jdk", version.ref = "fabric8" }
+fabric8-kubernetes-server-mock = { module = "io.fabric8:kubernetes-server-mock", version.ref = "fabric8" }
 
 # Calcite (SQL)
 calcite-core = { module = "org.apache.calcite:calcite-core", version.ref = "calcite" }

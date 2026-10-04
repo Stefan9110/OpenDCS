@@ -31,4 +31,12 @@ dependencies {
     // The launcher owns the manifest this module writes.
     api(projects.opendcWeb.opendcWebLauncher)
     implementation(libs.kotlinx.serialization.json)
+
+    implementation(libs.fabric8.kubernetes.client) {
+        exclude(group = "io.fabric8", module = "kubernetes-httpclient-vertx")
+    }
+    implementation(libs.fabric8.kubernetes.httpclient.jdk)
+    implementation(libs.slf4j.api)
+
+    testImplementation(libs.fabric8.kubernetes.server.mock)
 }
