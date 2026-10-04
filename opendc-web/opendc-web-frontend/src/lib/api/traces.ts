@@ -1,4 +1,4 @@
-import { ApiError, apiRequest } from "@/lib/api/client"
+import { ApiError, apiRequest, apiUrl, credentials } from "@/lib/api/client"
 import type {
     CatalogEntry,
     RegisteredTrace,
@@ -8,7 +8,6 @@ import type {
     TraceShare,
     UploadPart,
 } from "@/lib/api/types"
-import { config } from "@/lib/config"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 export const traceKeys = {
@@ -182,9 +181,9 @@ export function useRevokeShare(traceId: string) {
     })
 }
 
-/** Where the browser should send a table, which for a signed target is nowhere near this API. */
-export function downloadUrl(traceId: string): string {
-    return `${config.apiBaseUrl}/api/v1/traces/${traceId}/content`
+/** Where the server signs a link to a trace's tables, as one zip. */
+export function traceContentLink(traceId: string): string {
+    return `api/v1/traces/${traceId}/content/link`
 }
 
 /**
@@ -213,12 +212,13 @@ async function inParallel(
  * got. A trace of a few hundred megabytes takes minutes, and a spinner that never changes is
  * indistinguishable from one that has hung.
  */
-function putPart(transfer: Transfer, onSent: (bytes: number) => void, signal: AbortSignal): Promise<void> {
+async function putPart(transfer: Transfer, onSent: (bytes: number) => void, signal: AbortSignal): Promise<void> {
     const { part, file, table, direct } = transfer
     // A signed target carries its own absolute URL and its own authorization; anything else is a
-    // path on this API. No content type is set either way, because a signed target only accepts
-    // the headers it was signed for.
-    const url = direct ? part.url : `${config.apiBaseUrl}/${part.url}`
+    // path on this API, which needs the caller's. No content type is set either way, because a
+    // signed target only accepts the headers it was signed for.
+    const url = direct ? part.url : apiUrl(part.url)
+    const headers = direct ? {} : await credentials()
 
     return new Promise((resolve, reject) => {
         const failed = (status: number, message: string) =>
@@ -237,6 +237,7 @@ function putPart(transfer: Transfer, onSent: (bytes: number) => void, signal: Ab
 
         const request = new XMLHttpRequest()
         request.open("PUT", url)
+        for (const [name, value] of Object.entries(headers)) request.setRequestHeader(name, value)
         // Stopping the transfer is the point: a cancelled upload of half a gigabyte should not
         // carry on to storage in the background after the reader has walked away from it.
         signal.addEventListener("abort", () => request.abort(), { once: true })

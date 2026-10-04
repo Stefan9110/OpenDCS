@@ -14,7 +14,9 @@ import {
 } from "@/components/experiment/results/resultsView"
 import { PanelGhost } from "@/components/util/Ghost"
 import { QueryState } from "@/components/util/QueryState"
-import { resultsArchiveUrl, useExperimentResults } from "@/lib/api/experiments"
+import { notifyProblem } from "@/components/util/feedback"
+import { startDownload } from "@/lib/api/downloads"
+import { resultsArchiveLink, useExperimentResults } from "@/lib/api/experiments"
 import type { Experiment } from "@/lib/api/types"
 import {
     type ExperimentResults,
@@ -131,8 +133,8 @@ function LoadedResults({ experiment, results }: { experiment: Experiment; result
 /**
  * The two ways of taking results away: the chart's own numbers, and everything the runs wrote.
  *
- * The archive is a link rather than a fetch, so a multi-gigabyte experiment streams to disk instead
- * of being assembled in the tab first.
+ * The archive is followed as a signed link rather than fetched, so a multi-gigabyte experiment
+ * streams to disk instead of being assembled in the tab first.
  */
 function ResultDownloads({ experiment, results }: { experiment: Experiment; results: ExperimentResults }) {
     return (
@@ -147,10 +149,9 @@ function ResultDownloads({ experiment, results }: { experiment: Experiment; resu
                 </Button>
             )}
             <Button
-                component="a"
-                href={resultsArchiveUrl(experiment.id)}
                 variant="default"
                 leftSection={<IconFileZip size={16} />}
+                onClick={() => startDownload(resultsArchiveLink(experiment.id)).catch(notifyProblem)}
             >
                 Download all results
             </Button>

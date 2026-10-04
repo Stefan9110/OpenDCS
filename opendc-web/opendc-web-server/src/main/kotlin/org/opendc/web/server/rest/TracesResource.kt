@@ -35,9 +35,11 @@ import jakarta.ws.rs.Produces
 import jakarta.ws.rs.QueryParam
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
-import jakarta.ws.rs.core.StreamingOutput
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.opendc.web.server.auth.Download
+import org.opendc.web.server.auth.DownloadLink
+import org.opendc.web.server.auth.DownloadLinks
 import org.opendc.web.server.auth.Identity
 import org.opendc.web.server.model.ExperimentResource
 import org.opendc.web.server.model.Trace
@@ -53,9 +55,6 @@ import org.opendc.web.server.storage.UploadTarget
 import org.opendc.web.server.storage.traceKey
 import java.io.InputStream
 import java.time.Instant
-import java.util.zip.Deflater
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 
 @Serializable
 enum class TraceKindWire {
@@ -188,6 +187,7 @@ class TracesResource(
     private val store: ObjectStore,
     private val ingest: TraceIngest,
     private val disposal: TraceDisposal,
+    private val links: DownloadLinks,
 ) {
     /**
      * The caller's library: what the deployment ships, what they uploaded, what others shared.
@@ -390,29 +390,19 @@ class TracesResource(
     @Produces("application/zip")
     fun content(
         @PathParam("id") id: String,
-    ): Response {
+    ): Response = traceContentResponse(visible(id), store)
+
+    /** A link a browser can follow to the trace's content; see the experiment archive's. */
+    @POST
+    @Path("{id}/content/link")
+    fun contentLink(
+        @PathParam("id") id: String,
+    ): DownloadLink {
         val trace = visible(id)
-        val tables = TracePart.findByTrace(trace.id).map { it.tableName }
-        if (tables.isEmpty()) {
+        if (TracePart.findByTrace(trace.id).isEmpty()) {
             throw notFound("Trace content")
         }
-        val fileName = trace.slug.substringAfterLast('/')
-        val publicId = trace.publicId
-        val body =
-            StreamingOutput { out ->
-                ZipOutputStream(out).use { zip ->
-                    zip.setLevel(Deflater.NO_COMPRESSION)
-                    for (table in tables) {
-                        zip.putNextEntry(ZipEntry("$fileName/$table.parquet"))
-                        store.open(traceKey(publicId, table)).use { it.copyTo(zip) }
-                        zip.closeEntry()
-                    }
-                }
-            }
-        return Response
-            .ok(body)
-            .header("Content-Disposition", "attachment; filename=\"$fileName.zip\"")
-            .build()
+        return links.sign(Download.TraceContent(trace.publicId.toString()), Instant.now())
     }
 
     @GET

@@ -1,12 +1,12 @@
 import { ResultsPanel } from "@/components/experiment/results/ResultsPanel"
-import { resultsArchiveUrl } from "@/lib/api/experiments"
+import { resultsArchiveLink } from "@/lib/api/experiments"
 import type { Experiment } from "@/lib/api/types"
 import type { ExperimentResults } from "@/lib/experiment/results"
 import type { ExperimentState } from "@/lib/experiment/status"
 import { theme } from "@/theme/theme"
 import { MantineProvider } from "@mantine/core"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { cleanup, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 const EXPERIMENT_ID = "8f2b6b3e-58cd-4c04-9a8e-1b8f4b1a2c33"
@@ -57,17 +57,19 @@ function experiment(state: ExperimentState): Experiment {
     }
 }
 
-function show(state: ExperimentState, results: ExperimentResults) {
-    vi.stubGlobal(
-        "fetch",
-        vi.fn(
-            async () =>
-                new Response(JSON.stringify(results), {
-                    status: 200,
-                    headers: { "Content-Type": "application/json" },
-                }),
-        ),
+const SIGNED = { url: "api/v1/downloads/ticket.signature", expiresAt: "2026-08-01T00:05:00Z" }
+
+function json(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
+}
+
+function show(state: ExperimentState, results: ExperimentResults, archive: Response = json(SIGNED)) {
+    const assign = vi.fn()
+    vi.stubGlobal("location", { ...window.location, assign })
+    const fetch = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
+        String(input).endsWith("/archive/link") ? archive : json(results),
     )
+    vi.stubGlobal("fetch", fetch)
     render(
         <QueryClientProvider client={new QueryClient()}>
             <MantineProvider theme={theme} defaultColorScheme="light">
@@ -75,6 +77,7 @@ function show(state: ExperimentState, results: ExperimentResults) {
             </MantineProvider>
         </QueryClientProvider>,
     )
+    return { assign, fetch }
 }
 
 afterEach(() => {
@@ -84,22 +87,37 @@ afterEach(() => {
 
 /**
  * The parquet an experiment produces is the result; the chart is a reduction of it. Taking the files
- * away has to be reachable from the results view, and has to be a link so the archive streams to disk
- * rather than being assembled in the tab.
+ * away has to be reachable from the results view, and has to be followed as a link so the archive
+ * streams to disk rather than being assembled in the tab. A plain link cannot carry an access token,
+ * so the server signs one first.
  */
 describe("downloading an experiment's results", () => {
-    it("offers the whole output tree as a link, so a large archive never passes through memory", async () => {
-        show("succeeded", RESULTS)
+    it("follows a link the server signs, so a large archive never passes through memory", async () => {
+        const { assign, fetch } = show("succeeded", RESULTS)
 
-        const link = await screen.findByRole("link", { name: "Download all results" })
+        fireEvent.click(await screen.findByRole("button", { name: "Download all results" }))
 
-        expect(link).toHaveAttribute("href", resultsArchiveUrl(EXPERIMENT_ID))
+        await waitFor(() => expect(assign).toHaveBeenCalledWith(`/${SIGNED.url}`))
+        const [url, init] = fetch.mock.calls.find(([input]) => String(input).endsWith("/archive/link")) ?? []
+        expect(String(url)).toBe(`/${resultsArchiveLink(EXPERIMENT_ID)}`)
+        expect(init).toMatchObject({ method: "POST" })
+    })
+
+    it("goes nowhere when the server has nothing to download", async () => {
+        const { assign, fetch } = show("succeeded", RESULTS, json({ status: 404, title: "Results not found" }, 404))
+
+        fireEvent.click(await screen.findByRole("button", { name: "Download all results" }))
+
+        await waitFor(() =>
+            expect(fetch.mock.calls.some(([input]) => String(input).endsWith("/archive/link"))).toBe(true),
+        )
+        expect(assign).not.toHaveBeenCalled()
     })
 
     it("offers the archive before any samples have arrived, since the files land run by run", async () => {
         show("running", { ...RESULTS, complete: false, scenarios: [] })
 
-        expect(await screen.findByRole("link", { name: "Download all results" })).toBeInTheDocument()
+        expect(await screen.findByRole("button", { name: "Download all results" })).toBeInTheDocument()
         expect(screen.queryByRole("button", { name: "Export CSV" })).not.toBeInTheDocument()
     })
 
@@ -107,12 +125,12 @@ describe("downloading an experiment's results", () => {
         show("queued", { ...RESULTS, complete: false, scenarios: [] })
 
         await screen.findByText(/Waiting for the first samples/)
-        expect(screen.queryByRole("link", { name: "Download all results" })).not.toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Download all results" })).not.toBeInTheDocument()
     })
 
     it("does not offer results for a draft, which has never run", () => {
         show("draft", RESULTS)
 
-        expect(screen.queryByRole("link", { name: "Download all results" })).not.toBeInTheDocument()
+        expect(screen.queryByRole("button", { name: "Download all results" })).not.toBeInTheDocument()
     })
 })

@@ -83,6 +83,17 @@ class Auth0ModeTest {
         given().get("/api/v1/projects").then().statusCode(401).body("title", equalTo("Sign in to continue"))
     }
 
+    // A download link is followed by a browser that cannot attach a token, so it is checked on its
+    // own: a bad one is a missing download, never a demand to sign in.
+    @Test
+    fun `a download link needs no token`() {
+        given()
+            .get("/api/v1/downloads/not.signed")
+            .then()
+            .statusCode(404)
+            .body("title", equalTo("This download link is invalid or has expired"))
+    }
+
     @Test
     fun `a token for another audience is refused`() {
         given().auth().oauth2(token("auth0|${UUID.randomUUID()}", audience = "https://elsewhere")).get("/api/v1/me").then().statusCode(401)

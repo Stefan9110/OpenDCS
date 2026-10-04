@@ -7,7 +7,6 @@ import type {
     Id,
     ScenarioStatus,
 } from "@/lib/api/types"
-import { config } from "@/lib/config"
 import { type ExperimentResults, isLiveResults } from "@/lib/experiment/results"
 import type { ExperimentSpec } from "@/lib/experiment/spec"
 import { isTerminalExperiment } from "@/lib/experiment/status"
@@ -69,14 +68,9 @@ export function useExperimentResults(experimentId: Id) {
     })
 }
 
-/**
- * Where the browser fetches everything an experiment's runs produced, as one zip.
- *
- * A link rather than a request: the server streams the archive, and an experiment of many scenarios
- * is far larger than anything worth holding in a tab before writing it to disk.
- */
-export function resultsArchiveUrl(experimentId: Id): string {
-    return `${config.apiBaseUrl}/api/v1/experiments/${experimentId}/archive`
+/** Where the server signs a link to everything an experiment's runs produced, as one zip. */
+export function resultsArchiveLink(experimentId: Id): string {
+    return `api/v1/experiments/${experimentId}/archive/link`
 }
 
 export function useCreateExperiment(projectId: Id) {

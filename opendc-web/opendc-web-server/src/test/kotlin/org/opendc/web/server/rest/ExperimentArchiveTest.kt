@@ -24,6 +24,7 @@ package org.opendc.web.server.rest
 
 import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
+import io.restassured.RestAssured.given
 import jakarta.inject.Inject
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
@@ -119,12 +120,28 @@ class ExperimentArchiveTest {
     }
 
     @Test
-    fun `an experiment that has produced nothing has no archive to give`() {
-        ApiTest
-            .requestJson()
-            .get("/api/v1/experiments/${submitted("Empty")}/archive")
-            .then()
-            .statusCode(404)
+    fun `an experiment that has produced nothing has no archive to give, nor a link to one`() {
+        val experiment = submitted("Empty")
+
+        ApiTest.requestJson().get("/api/v1/experiments/$experiment/archive").then().statusCode(404)
+        ApiTest.requestJson().post("/api/v1/experiments/$experiment/archive/link").then().statusCode(404)
+    }
+
+    // A browser downloads by following a link, which cannot carry an access token, so the link it is
+    // given has to fetch the archive with nothing else.
+    @Test
+    fun `a signed link fetches the archive with no credentials at all`() {
+        val experiment = submitted("Linked")
+        write(experiment, "0/seed=0/host.parquet", "linked")
+        finished(experiment, failing = emptySet())
+
+        val url =
+            ApiTest.requestJson().post(
+                "/api/v1/experiments/$experiment/archive/link",
+            ).then().statusCode(200).extract().path<String>("url")
+        val bytes = given().get("/$url").then().statusCode(200).extract().asByteArray()
+
+        assertEquals(listOf("linked/raw-output/0/seed=0/host.parquet"), unzip(bytes).keys.toList())
     }
 
     @Test
@@ -185,6 +202,10 @@ class ExperimentArchiveTest {
                 .header("Content-Disposition", org.hamcrest.Matchers.containsString(".zip"))
                 .extract()
                 .asByteArray()
+        return unzip(bytes)
+    }
+
+    private fun unzip(bytes: ByteArray): Map<String, String> {
         val entries = LinkedHashMap<String, String>()
         ZipInputStream(bytes.inputStream()).use { zip ->
             var entry = zip.nextEntry

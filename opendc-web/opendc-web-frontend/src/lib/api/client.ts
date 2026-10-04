@@ -6,7 +6,30 @@ export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 export interface RequestOptions {
     method?: HttpMethod
     body?: unknown
-    token?: string
+}
+
+/** Where a request's credentials come from: an access token in Auth0 mode, nothing otherwise. */
+export type AuthHeaders = () => Promise<Record<string, string>>
+
+let authHeaders: AuthHeaders = async () => ({})
+
+/** Registers the source of every request's credentials, once the session knows how to sign in. */
+export function setAuthHeaders(source: AuthHeaders): void {
+    authHeaders = source
+}
+
+/** A server path as the browser reaches it, which is the same origin unless a build says otherwise. */
+export function apiUrl(path: string): string {
+    return `${config.apiBaseUrl}/${path}`
+}
+
+/** The headers that prove who is asking. A token that cannot be had is a signed-out caller. */
+export async function credentials(): Promise<Record<string, string>> {
+    try {
+        return await authHeaders()
+    } catch {
+        throw new ApiError({ status: 401, title: "Sign in to continue", issues: [] })
+    }
 }
 
 export class ApiError extends Error {
@@ -26,12 +49,14 @@ export function problemOf(error: unknown): ApiProblem {
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-    const { method = "GET", body, token } = options
-    const headers: Record<string, string> = { "Content-Type": "application/json" }
-    if (token) {
-        headers.Authorization = `Bearer ${token}`
+    const { method = "GET", body } = options
+    // A content type only with a body: the server matches a bodyless request with one against
+    // endpoints that expect JSON and refuses it.
+    const headers: Record<string, string> = {
+        ...(await credentials()),
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
     }
-    const response = await fetch(`${config.apiBaseUrl}/${path}`, {
+    const response = await fetch(apiUrl(path), {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),

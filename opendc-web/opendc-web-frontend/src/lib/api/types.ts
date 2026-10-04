@@ -190,8 +190,8 @@ export type PlanTier = "free" | "education" | "enterprise"
 
 export type BudgetPeriod = "session" | "week"
 
-// Unlimited is a deliberate grant, held by developer mode and by accounts raised by hand, rather
-// than the absence of a limit.
+// Unlimited is a deliberate grant, held by accounts raised by hand, rather than the absence of a
+// limit.
 export type SimulationCap = { type: "limited"; seconds: number } | { type: "unlimited" }
 
 export interface BudgetWindow {
@@ -219,6 +219,44 @@ export interface Billing {
 
 /** The name other people see, or that there is none yet: a first sign-in has to choose one. */
 export type Handle = { type: "provisional" } | { type: "chosen"; name: string }
+
+/** How this deployment signs people in, which the app learns at runtime rather than at build. */
+export type AuthSettings = { type: "auth0"; domain: string; clientId: string; audience: string } | { type: "anonymous" }
+
+export interface DeploymentConfig {
+    auth: AuthSettings
+}
+
+export interface UserProfile {
+    displayName: string
+    handle: Handle
+    plan: PlanTier
+    isAdmin: boolean
+    projectCount: number
+    budgets: BudgetWindow[]
+}
+
+export type TokenUse = { type: "unused" } | { type: "used"; at: string }
+
+export interface AccessToken {
+    id: string
+    name: string
+    prefix: string
+    createdAt: string
+    lastUse: TokenUse
+}
+
+/** A token as it is minted, the only time its secret is ever shown. */
+export interface MintedToken {
+    token: AccessToken
+    secret: string
+}
+
+/** A short-lived link a browser follows to download something without an access token. */
+export interface DownloadLink {
+    url: string
+    expiresAt: string
+}
 
 export interface Account {
     plan: PlanTier

@@ -1,6 +1,6 @@
 import { ApiError, apiRequest, problemOf } from "@/lib/api/client"
-import type { Account, ApiProblem, Billing, Handle } from "@/lib/api/types"
-import { type UseQueryResult, useQuery } from "@tanstack/react-query"
+import type { Account, ApiProblem, Billing, Handle, UserProfile } from "@/lib/api/types"
+import { useQuery } from "@tanstack/react-query"
 
 export interface AuthSession {
     userName: string
@@ -11,62 +11,55 @@ export interface AuthSession {
 
 export type AuthState =
     | { status: "loading" }
-    | { status: "unavailable"; problem: ApiProblem; retry: () => void }
+    | { status: "unavailable"; problem: ApiProblem }
     | { status: "signedOut" }
+    | { status: "deactivated" }
+    | { status: "needsHandle"; profile: UserProfile }
     | { status: "signedIn"; session: AuthSession }
-
-function isUnauthorized(error: unknown): boolean {
-    return error instanceof ApiError && error.problem.status === 401
-}
-
-function refetch(...queries: UseQueryResult[]): void {
-    for (const query of queries) {
-        void query.refetch()
-    }
-}
-
-interface UserProfile {
-    displayName: string
-    handle: Handle
-    plan: Account["plan"]
-    isAdmin: boolean
-    projectCount: number
-    budgets: Account["budgets"]
-}
 
 const AVATAR_URL = "/img/avatar.svg"
 
-export function useAuth(): AuthState {
+/**
+ * Where the person stands, read off their profile request. A refusal of /me itself can only mean a
+ * deactivated account, which has to be told apart from one that is signed out; anything else that
+ * goes wrong is its own state, or the whole app would sit on a spinner after one failed request.
+ */
+export function authStateOf(profile: UserProfile | undefined, error: unknown): AuthState {
+    if (error !== null && error !== undefined) {
+        const status = error instanceof ApiError ? error.problem.status : 0
+        if (status === 401) return { status: "signedOut" }
+        if (status === 403) return { status: "deactivated" }
+        return { status: "unavailable", problem: problemOf(error) }
+    }
+    if (profile === undefined) return { status: "loading" }
+    switch (profile.handle.type) {
+        case "provisional":
+            return { status: "needsHandle", profile }
+        case "chosen":
+            return {
+                status: "signedIn",
+                session: {
+                    userName: profile.displayName,
+                    avatarUrl: AVATAR_URL,
+                    handle: profile.handle,
+                    account: {
+                        plan: profile.plan,
+                        isAdmin: profile.isAdmin,
+                        projectCount: profile.projectCount,
+                        budgets: profile.budgets,
+                    },
+                },
+            }
+    }
+}
+
+export function useAuth(): AuthState & { retry: () => void } {
     const profile = useQuery({
         queryKey: ["me"],
         queryFn: () => apiRequest<UserProfile>("api/v1/me"),
-        enabled: true,
         retry: false,
     })
-
-    // A failure has to be its own state. Reading "no data yet" as loading would leave the whole
-    // application on a spinner for good after one unreachable request.
-    const failure = profile.error
-    if (failure !== null && !isUnauthorized(profile.error))
-        return { status: "unavailable", problem: problemOf(failure), retry: () => refetch(profile) }
-
-    if (isUnauthorized(profile.error)) return { status: "signedOut" }
-    if (profile.data === undefined) return { status: "loading" }
-
-    return {
-        status: "signedIn",
-        session: {
-            userName: profile.data.displayName,
-            avatarUrl: AVATAR_URL,
-            handle: profile.data.handle,
-            account: {
-                plan: profile.data.plan,
-                isAdmin: profile.data.isAdmin,
-                projectCount: profile.data.projectCount,
-                budgets: profile.data.budgets,
-            },
-        },
-    }
+    return { ...authStateOf(profile.data, profile.error), retry: () => void profile.refetch() }
 }
 
 export function useBilling(enabled: boolean) {

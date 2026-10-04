@@ -35,11 +35,13 @@ import jakarta.ws.rs.Produces
 import jakarta.ws.rs.QueryParam
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
-import jakarta.ws.rs.core.StreamingOutput
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import org.opendc.web.dispatcher.ExitReason
+import org.opendc.web.server.auth.Download
+import org.opendc.web.server.auth.DownloadLink
+import org.opendc.web.server.auth.DownloadLinks
 import org.opendc.web.server.auth.Identity
 import org.opendc.web.server.auth.ProjectPermission
 import org.opendc.web.server.auth.experimentFor
@@ -56,11 +58,7 @@ import org.opendc.web.server.service.SpecCodec
 import org.opendc.web.server.service.SubmissionPipeline
 import org.opendc.web.server.service.SubmissionPreview
 import org.opendc.web.server.storage.ObjectStore
-import org.opendc.web.server.storage.resultKey
-import org.opendc.web.server.storage.runKey
-import java.util.zip.Deflater
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
+import java.time.Instant
 import org.opendc.web.server.model.Experiment as ExperimentEntity
 
 @Serializable
@@ -216,10 +214,6 @@ data class PreviewRequest(
 // passes through unfolded and a month of parquet does not arrive a point at a time.
 private const val MAX_BUCKETS = 2048
 
-private val WHITESPACE = Regex("\\s+")
-
-private val UNSAFE_IN_A_PATH = Regex("[^a-z0-9_-]")
-
 @Path("experiments")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
@@ -229,6 +223,7 @@ class ExperimentsResource(
     private val pipeline: SubmissionPipeline,
     private val results: ResultsReader,
     private val store: ObjectStore,
+    private val links: DownloadLinks,
 ) {
     @GET
     fun list(
@@ -428,48 +423,22 @@ class ExperimentsResource(
         @PathParam("id") id: String,
     ): Response {
         val experiment = readable(id)
-        val prefix = resultKey(experiment.publicId)
-        // Only what a unit certified: an attempt cut off partway can have published some of its
-        // files, and those must never be readable as a result.
-        val keys =
-            RunUnit
-                .findByExperiment(experiment.id)
-                .filter { it.state == UnitState.SUCCEEDED }
-                .flatMap { store.list(runKey(experiment.publicId, it.scenarioIndex, it.seed)) }
-        if (keys.isEmpty()) {
-            throw notFound("Results")
-        }
-        val name = archiveName(experiment.name)
-        val body =
-            StreamingOutput { out ->
-                ZipOutputStream(out).use { zip ->
-                    // Parquet is compressed already, so deflating it again buys nothing and costs
-                    // the server the whole archive's worth of work on the way out.
-                    zip.setLevel(Deflater.NO_COMPRESSION)
-                    for (key in keys) {
-                        zip.putNextEntry(ZipEntry("$name/raw-output/${key.removePrefix("$prefix/")}"))
-                        store.open(key).use { it.copyTo(zip) }
-                        zip.closeEntry()
-                    }
-                }
-            }
-        return Response.ok(body).header("Content-Disposition", "attachment; filename=\"$name.zip\"").build()
+        return archiveResponse(experiment, archiveKeys(experiment, store), store)
     }
 
     /**
-     * An experiment's name as somewhere to unpack it.
-     *
-     * Names are written by people and end up in a header and in every entry path, so anything that
-     * could be read as a directory of its own, or as the end of the header, is dropped rather than
-     * escaped.
+     * A link a browser can follow to the archive, which a plain link could not do while it needs an
+     * access token. Refused here, rather than when it is followed, when there is nothing to download.
      */
-    private fun archiveName(name: String): String =
-        name
-            .lowercase()
-            .replace(WHITESPACE, "-")
-            .replace(UNSAFE_IN_A_PATH, "")
-            .trim('-')
-            .ifEmpty { "experiment" }
+    @POST
+    @Path("{id}/archive/link")
+    fun archiveLink(
+        @PathParam("id") id: String,
+    ): DownloadLink {
+        val experiment = readable(id)
+        archiveKeys(experiment, store)
+        return links.sign(Download.Archive(experiment.publicId.toString()), Instant.now())
+    }
 
     /** How often the simulation samples, taking the finest of the export models the spec offers. */
     private fun exportIntervalOf(experiment: ExperimentEntity): Long =

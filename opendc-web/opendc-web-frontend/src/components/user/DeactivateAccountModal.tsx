@@ -1,37 +1,51 @@
 "use client"
 
-import { notifyComingSoon } from "@/components/util/feedback"
-import { Alert, Button, Group, Modal, Stack, Text, TextInput } from "@mantine/core"
+import { useDeactivateAccount } from "@/lib/api/account"
+import { ApiError } from "@/lib/api/client"
+import { Alert, Button, Group, List, Modal, Stack, Text, TextInput } from "@mantine/core"
 import { IconAlertTriangle } from "@tabler/icons-react"
 import { useState } from "react"
 
+/**
+ * Deactivating signs the person out for good: their tokens stop working and they leave every
+ * project somebody else works in. Nothing is deleted, and projects they work in alone stay as they
+ * are. The sole owner of a shared project is told to hand it over first.
+ */
 export function DeactivateAccountModal({
     userName,
     opened,
     onClose,
-}: Readonly<{ userName: string; opened: boolean; onClose: () => void }>) {
+    onDeactivated,
+}: Readonly<{ userName: string; opened: boolean; onClose: () => void; onDeactivated: () => void }>) {
     const [confirmation, setConfirmation] = useState("")
+    const deactivate = useDeactivateAccount()
+    const refusal = deactivate.error instanceof ApiError ? deactivate.error.problem : undefined
 
     function close() {
         setConfirmation("")
+        deactivate.reset()
         onClose()
-    }
-
-    function deactivate() {
-        notifyComingSoon("Deactivating an account")
-        close()
     }
 
     return (
         <Modal opened={opened} onClose={close} title="Deactivate account" size="md" centered>
             <Stack gap="md">
                 <Alert color="red" variant="light" icon={<IconAlertTriangle size="md" />}>
-                    Your projects, topologies and experiment results are deleted <b>permanently</b>. This cannot be
-                    undone.
+                    You lose access to OpenDC for good: your access tokens stop working and you leave every project
+                    others work in. Nothing is deleted, and projects only you work in stay as they are.
                 </Alert>
+                {refusal && (
+                    <Alert color="red" title={refusal.title}>
+                        <List size="sm">
+                            {refusal.issues.map((issue) => (
+                                <List.Item key={issue.message}>{issue.message}</List.Item>
+                            ))}
+                        </List>
+                    </Alert>
+                )}
                 <TextInput
                     label={
-                        <Text size={"xs"}>
+                        <Text size="xs">
                             Type <i>{userName}</i> to confirm
                         </Text>
                     }
@@ -42,7 +56,12 @@ export function DeactivateAccountModal({
                     <Button variant="default" onClick={close}>
                         Cancel
                     </Button>
-                    <Button color="red" disabled={confirmation !== userName} onClick={deactivate}>
+                    <Button
+                        color="red"
+                        disabled={confirmation !== userName}
+                        loading={deactivate.isPending}
+                        onClick={() => deactivate.mutate(undefined, { onSuccess: onDeactivated })}
+                    >
                         Deactivate
                     </Button>
                 </Group>

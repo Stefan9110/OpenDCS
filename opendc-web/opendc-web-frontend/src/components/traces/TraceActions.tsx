@@ -3,7 +3,8 @@
 import { openEditTrace } from "@/components/traces/EditTraceModal"
 import { openShareTrace } from "@/components/traces/ShareTraceModal"
 import { notifyProblem } from "@/components/util/feedback"
-import { downloadUrl, useDeleteTrace } from "@/lib/api/traces"
+import { startDownload } from "@/lib/api/downloads"
+import { traceContentLink, useDeleteTrace } from "@/lib/api/traces"
 import type { Trace } from "@/lib/api/types"
 import { ActionIcon, Menu } from "@mantine/core"
 import { modals } from "@mantine/modals"
@@ -21,7 +22,10 @@ export function TraceActions({ trace }: { trace: Trace }) {
                 </ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
-                <Menu.Item component="a" href={downloadUrl(trace.id)} leftSection={<IconDownload size={14} />}>
+                <Menu.Item
+                    leftSection={<IconDownload size={14} />}
+                    onClick={() => startDownload(traceContentLink(trace.id)).catch(notifyProblem)}
+                >
                     Download
                 </Menu.Item>
                 {mine && (
