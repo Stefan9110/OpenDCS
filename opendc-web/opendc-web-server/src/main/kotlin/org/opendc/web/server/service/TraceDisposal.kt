@@ -66,13 +66,11 @@ class TraceDisposal(private val store: ObjectStore) {
     fun sweepAbandoned() {
         val cutoff = Instant.now().minus(ABANDONED_AFTER)
         val stale = Trace.list("origin = ?1 and updatedAt < ?2", TraceOrigin.UPLOADED, cutoff)
-        for (trace in stale.filter { it.isIncomplete() }) {
+        for (trace in stale.filterNot { it.isComplete() }) {
             LOG.info("Removing {}, registered {} ago and never finished", trace.slug, ABANDONED_AFTER)
             discard(trace)
         }
     }
-
-    private fun Trace.isIncomplete(): Boolean = !TracePart.findByTrace(id).map { it.tableName }.containsAll(kind.tables)
 
     private companion object {
         val ABANDONED_AFTER: Duration = Duration.ofHours(24)

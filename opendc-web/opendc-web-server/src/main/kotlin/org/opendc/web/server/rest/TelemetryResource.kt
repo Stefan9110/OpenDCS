@@ -22,22 +22,24 @@
 
 package org.opendc.web.server.rest
 
+import io.quarkus.security.identity.SecurityIdentity
+import jakarta.annotation.security.RolesAllowed
 import jakarta.transaction.Transactional
 import jakarta.ws.rs.Consumes
-import jakarta.ws.rs.HeaderParam
 import jakarta.ws.rs.POST
 import jakarta.ws.rs.Path
 import jakarta.ws.rs.Produces
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import org.opendc.web.launcher.TelemetryReport
+import org.opendc.web.server.auth.EXECUTION_ATTRIBUTE
+import org.opendc.web.server.auth.Roles
 import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.ExecutionUnit
 import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.telemetry.RunKey
 import org.opendc.web.server.telemetry.TelemetryStore
-
-private const val BEARER = "Bearer "
+import java.util.UUID
 
 /**
  * Where launchers say how far they have got.
@@ -51,16 +53,18 @@ private const val BEARER = "Bearer "
  * here are only ever overwritten, never accumulated.
  */
 @Path("telemetry")
+@RolesAllowed(Roles.EXECUTION)
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
-class TelemetryResource(private val store: TelemetryStore) {
+class TelemetryResource(
+    private val store: TelemetryStore,
+    private val caller: SecurityIdentity,
+) {
     @POST
     @Transactional
-    fun report(
-        @HeaderParam("Authorization") authorization: String?,
-        report: TelemetryReport,
-    ): Response {
-        val execution = Execution.findByToken(bearer(authorization)) ?: throw notAuthenticated()
+    fun report(report: TelemetryReport): Response {
+        val id = caller.getAttribute<UUID>(EXECUTION_ATTRIBUTE) ?: throw notAuthenticated()
+        val execution = Execution.findByPublicId(id) ?: throw notAuthenticated()
         if (execution.state.isTerminal) {
             throw conflict("This execution has already finished")
         }
@@ -82,12 +86,5 @@ class TelemetryResource(private val store: TelemetryStore) {
             store.write(RunKey(experimentId, run.scenarioIndex, run.seed), run.series)
         }
         return Response.status(204).build()
-    }
-
-    private fun bearer(authorization: String?): String {
-        if (authorization == null || !authorization.startsWith(BEARER)) {
-            throw notAuthenticated()
-        }
-        return authorization.removePrefix(BEARER).trim()
     }
 }

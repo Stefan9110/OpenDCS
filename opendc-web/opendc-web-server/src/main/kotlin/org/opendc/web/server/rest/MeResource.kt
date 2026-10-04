@@ -22,59 +22,101 @@
 
 package org.opendc.web.server.rest
 
+import jakarta.transaction.Transactional
 import jakarta.ws.rs.Consumes
+import jakarta.ws.rs.DELETE
 import jakarta.ws.rs.GET
+import jakarta.ws.rs.PUT
 import jakarta.ws.rs.Path
 import jakarta.ws.rs.Produces
 import jakarta.ws.rs.core.MediaType
-import kotlinx.serialization.EncodeDefault
+import jakarta.ws.rs.core.Response
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import org.opendc.web.server.auth.AuthSettings
 import org.opendc.web.server.auth.Identity
+import org.opendc.web.server.auth.changeProfile
+import org.opendc.web.server.auth.deactivate
+import org.opendc.web.server.model.HandleKind
 import org.opendc.web.server.model.PlanTier
 import org.opendc.web.server.model.ProjectMember
+import org.opendc.web.server.model.UserAccount
+import org.opendc.web.server.service.TraceDisposal
+import java.time.Instant
 
 /**
- * What a frontend has to know about this deployment before it can show anything, chiefly how to
- * sign in. Served rather than built into the frontend, so one export serves every deployment.
+ * The caller's own account: who they are, the handle they go by, and leaving.
+ *
+ * These are the only endpoints an account still choosing its handle may use, since choosing one is
+ * what they are for.
  */
-@Path("config")
-@Produces(MediaType.APPLICATION_JSON)
-class ConfigResource(private val auth: AuthSettings) {
-    @GET
-    fun config(): DeploymentConfig = DeploymentConfig(auth)
-}
-
-@Serializable
-data class DeploymentConfig(val auth: AuthSettings)
-
-/** The current user's identity, account shape and billing. */
 @Path("me")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
-class MeResource(private val identity: Identity) {
+class MeResource(
+    private val identity: Identity,
+    private val disposal: TraceDisposal,
+) {
     @GET
-    fun me(): UserProfile {
-        val user = identity.currentUser()
-        return UserProfile(
-            subject = user.subject,
-            displayName = user.displayName,
-            email = user.email,
-            handle = user.handle,
-            plan = user.planTier.toWire(),
-            isAdmin = user.isAdmin,
-            projectCount = ProjectMember.count("user.id = ?1", user.id).toInt(),
-            // Anonymous mode meters nothing, so the account is charged against no window at all.
-            // Reporting an uncapped one instead would draw a bar that can never move and a reset
-            // time that never arrives, which says less than saying nothing.
-            budgets = emptyList(),
-        )
+    fun me(): UserProfile = identity.account().toProfile()
+
+    @PUT
+    @Path("profile")
+    @Transactional
+    fun updateProfile(change: ProfileChange): UserProfile {
+        val account = identity.account()
+        changeProfile(account, change.handle, change.displayName, disposal::discard)
+        return account.toProfile()
+    }
+
+    /** Signs the caller out for good; see [deactivate] for what that leaves behind. */
+    @DELETE
+    @Transactional
+    fun deactivateAccount(): Response {
+        deactivate(identity.account(), Instant.now())
+        return Response.noContent().build()
     }
 
     @GET
     @Path("billing")
-    fun billing(): Billing = Billing(invoices = emptyList())
+    fun billing(): Billing {
+        identity.currentUser()
+        return Billing(invoices = emptyList())
+    }
+}
+
+private fun UserAccount.toProfile(): UserProfile =
+    UserProfile(
+        displayName = displayName,
+        handle =
+            when (handleKind) {
+                HandleKind.PROVISIONAL -> HandleWire.Provisional
+                HandleKind.CHOSEN -> HandleWire.Chosen(handle)
+            },
+        plan = planTier.toWire(),
+        isAdmin = isAdmin,
+        projectCount = ProjectMember.count("user.id = ?1", id).toInt(),
+        // Anonymous mode meters nothing, so the account is charged against no window at all.
+        // Reporting an uncapped one instead would draw a bar that can never move and a reset
+        // time that never arrives, which says less than saying nothing.
+        budgets = emptyList(),
+    )
+
+@Serializable
+data class ProfileChange(
+    val handle: String,
+    val displayName: String,
+)
+
+/** The name other people see, or that there is none yet: a first sign-in has to choose one. */
+@Serializable
+sealed interface HandleWire {
+    @Serializable
+    @SerialName("provisional")
+    data object Provisional : HandleWire
+
+    @Serializable
+    @SerialName("chosen")
+    data class Chosen(val name: String) : HandleWire
 }
 
 @Serializable
@@ -89,7 +131,12 @@ enum class WirePlan {
     ENTERPRISE,
 }
 
-fun PlanTier.toWire(): WirePlan = WirePlan.valueOf(this.name)
+fun PlanTier.toWire(): WirePlan =
+    when (this) {
+        PlanTier.FREE -> WirePlan.FREE
+        PlanTier.EDUCATION -> WirePlan.EDUCATION
+        PlanTier.ENTERPRISE -> WirePlan.ENTERPRISE
+    }
 
 /**
  * The windows an account can be metered over. Both exist because `budget_windows` is keyed
@@ -107,8 +154,8 @@ enum class WireBudgetPeriod {
 
 /**
  * How much simulation an accounting window allows. Unlimited is a deliberate grant, held by
- * anonymous mode and by accounts raised by hand, rather than the absence of a limit, so it is its
- * own variant instead of a missing number.
+ * accounts raised by hand, rather than the absence of a limit, so it is its own variant instead of
+ * a missing number.
  */
 @Serializable
 sealed interface SimulationCap {
@@ -133,12 +180,8 @@ data class BudgetWindow(
 
 @Serializable
 data class UserProfile(
-    val subject: String,
     val displayName: String,
-    // Omitted from the wire when the account has none, rather than sent as an explicit null.
-    @EncodeDefault(EncodeDefault.Mode.NEVER)
-    val email: String? = null,
-    val handle: String,
+    val handle: HandleWire,
     val plan: WirePlan,
     val isAdmin: Boolean,
     val projectCount: Int,

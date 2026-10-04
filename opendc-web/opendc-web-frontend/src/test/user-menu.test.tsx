@@ -13,6 +13,7 @@ const noop = () => {}
 function mockSession() {
     const profile = {
         displayName: "Developer",
+        handle: { type: "chosen", name: "local" },
         plan: "free",
         isAdmin: true,
         projectCount: 0,
@@ -30,7 +31,7 @@ function mockSession() {
         "fetch",
         vi.fn(async (input: RequestInfo | URL) => {
             const url = String(input)
-            const body = url.endsWith("/config") ? { authMode: "developer" } : profile
+            const body = url.endsWith("/config") ? { auth: { type: "anonymous" } } : profile
             return new Response(JSON.stringify(body), {
                 status: 200,
                 headers: { "Content-Type": "application/json" },

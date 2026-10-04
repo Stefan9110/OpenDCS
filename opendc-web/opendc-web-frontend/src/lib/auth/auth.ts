@@ -1,12 +1,11 @@
 import { ApiError, apiRequest, problemOf } from "@/lib/api/client"
-import type { Account, ApiProblem, Billing } from "@/lib/api/types"
+import type { Account, ApiProblem, Billing, Handle } from "@/lib/api/types"
 import { type UseQueryResult, useQuery } from "@tanstack/react-query"
 
 export interface AuthSession {
     userName: string
     avatarUrl: string
-    email?: string
-    handle: string
+    handle: Handle
     account: Account
 }
 
@@ -28,7 +27,7 @@ function refetch(...queries: UseQueryResult[]): void {
 
 interface UserProfile {
     displayName: string
-    handle: string
+    handle: Handle
     plan: Account["plan"]
     isAdmin: boolean
     projectCount: number

@@ -66,6 +66,8 @@ dependencies {
     implementation(libs.quarkus.rest)
     implementation(libs.quarkus.rest.kotlin.serialization)
     implementation(libs.quarkus.smallrye.openapi)
+    implementation(libs.quarkus.oidc)
+    implementation(libs.quarkus.security)
 
     implementation(libs.quarkus.hibernate.orm.panache.kotlin)
     implementation(libs.quarkus.hibernate.validator)
@@ -86,6 +88,7 @@ dependencies {
     testImplementation(libs.quarkus.junit5.core)
     testImplementation(libs.quarkus.jacoco)
     testImplementation(libs.restassured.core)
+    testImplementation(libs.quarkus.test.oidc.server)
 }
 
 // The local dispatcher runs the launcher as a separate program, so the launcher's own distribution
@@ -96,6 +99,9 @@ tasks.named("quarkusDev") {
 
 tasks.test {
     dependsOn(":opendc-web:opendc-web-launcher:installDist")
+    // Each test profile starts an application of its own in this one JVM, one after another, which
+    // outgrows Gradle's default 512 MB heap.
+    maxHeapSize = "1g"
 }
 
 // The application plugin generates the start scripts; the Quarkus fast-jar launcher carries its

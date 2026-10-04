@@ -41,10 +41,7 @@ import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.dispatcher.Grant
 import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.launcher.PeakMemory
-import java.security.MessageDigest
-import java.security.SecureRandom
 import java.time.Instant
-import java.util.Base64
 import java.util.UUID
 
 /** Lifecycle of one dispatched execution. */
@@ -342,8 +339,8 @@ class Execution : PanacheEntityBase {
      * credential that no longer resolves.
      */
     private fun grantToken(): String {
-        val token = "$TOKEN_PREFIX${Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(TOKEN_BYTES).also(RANDOM::nextBytes))}"
-        tokenHash = hash(token)
+        val token = newSecret(EXECUTION_TOKEN_PREFIX, TOKEN_BYTES)
+        tokenHash = sha256Hex(token)
         return token
     }
 
@@ -418,17 +415,10 @@ class Execution : PanacheEntityBase {
             find("publicId = ?1", publicId).withLock(LockModeType.PESSIMISTIC_WRITE).firstResult()
 
         /** The execution [token] was minted for, or none if it was never minted or has been replaced. */
-        fun findByToken(token: String): Execution? = find("tokenHash = ?1", hash(token)).firstResult()
-
-        private const val TOKEN_PREFIX = "odc_exec_"
+        fun findByToken(token: String): Execution? = find("tokenHash = ?1", sha256Hex(token)).firstResult()
 
         /** Enough entropy that guessing one is not a strategy, and short enough to fit a header. */
         private const val TOKEN_BYTES = 24
-
-        private val RANDOM = SecureRandom()
-
-        private fun hash(token: String): String =
-            MessageDigest.getInstance("SHA-256").digest(token.toByteArray()).joinToString("") { "%02x".format(it) }
     }
 }
 

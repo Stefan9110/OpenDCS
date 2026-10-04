@@ -22,6 +22,7 @@
 
 package org.opendc.web.server.auth
 
+import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.runtime.LaunchMode
 import io.quarkus.runtime.StartupEvent
 import io.smallrye.config.ConfigMapping
@@ -30,18 +31,21 @@ import jakarta.enterprise.context.ApplicationScoped
 import jakarta.enterprise.event.Observes
 import jakarta.enterprise.inject.Produces
 import jakarta.inject.Singleton
-import jakarta.transaction.Transactional
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.eclipse.microprofile.config.Config
+import org.eclipse.microprofile.config.ConfigProvider
+import org.opendc.web.server.model.HandleKind
 import org.opendc.web.server.model.PlanTier
 import org.opendc.web.server.model.UserAccount
 import org.slf4j.LoggerFactory
+import java.net.URI
 import java.time.Instant
 import java.util.Optional
 
 /** How a deployment tells its callers apart. */
 enum class AuthMode {
-    /** Auth0 access tokens. */
+    /** Auth0 access tokens, verified by Quarkus OIDC against the tenant in `quarkus.oidc.*`. */
     AUTH0,
 
     /** No sign-in: every request acts as one implicit administrator account, metered against nothing. */
@@ -55,15 +59,17 @@ interface AuthConfig {
     @WithDefault("auth0")
     fun mode(): AuthMode
 
-    fun auth0(): Auth0Tenant
+    /**
+     * OIDC subjects made administrators when they sign in, so a fresh deployment gets its first one
+     * without SQL. The database stays the source of truth: removing a subject here revokes nothing.
+     */
+    fun admins(): Optional<Set<String>>
 
-    /** The Auth0 application the frontend signs in through. Read only in auth0 mode. */
-    interface Auth0Tenant {
-        fun domain(): Optional<String>
+    fun auth0(): Auth0Client
 
+    interface Auth0Client {
+        /** The single-page application the frontend signs in through, which `/config` hands out. */
         fun clientId(): Optional<String>
-
-        fun audience(): Optional<String>
     }
 }
 
@@ -83,21 +89,39 @@ sealed interface AuthSettings {
     data object Anonymous : AuthSettings
 }
 
-/** The sign-in [config] describes. A missing Auth0 setting is an error naming its key. */
-fun authSettings(config: AuthConfig): AuthSettings =
-    when (config.mode()) {
-        AuthMode.ANONYMOUS -> AuthSettings.Anonymous
+/**
+ * The sign-in a deployment's settings describe, cross-checked against the OIDC tenant that verifies
+ * the tokens: the two are separate keys, and a mismatch would otherwise be a mode that silently
+ * accepts nobody, or anybody. Each problem names the key at fault.
+ */
+fun authSettings(
+    mode: AuthMode,
+    clientId: Optional<String>,
+    config: Config,
+): AuthSettings {
+    val tenantEnabled = config.getOptionalValue("quarkus.oidc.tenant-enabled", Boolean::class.java).orElse(true)
+    return when (mode) {
+        AuthMode.ANONYMOUS -> {
+            check(!tenantEnabled) { "opendc.auth.mode=anonymous cannot run with quarkus.oidc.tenant-enabled=true" }
+            AuthSettings.Anonymous
+        }
         AuthMode.AUTH0 -> {
-            val tenant = config.auth0()
+            check(tenantEnabled) { "opendc.auth.mode=auth0 needs quarkus.oidc.tenant-enabled=true" }
+            val server =
+                config.getOptionalValue("quarkus.oidc.auth-server-url", String::class.java).orElseThrow {
+                    IllegalStateException("opendc.auth.mode=auth0 needs quarkus.oidc.auth-server-url")
+                }
+            val audience =
+                config.getOptionalValues("quarkus.oidc.token.audience", String::class.java).orElse(emptyList()).firstOrNull()
+                    ?: throw IllegalStateException("opendc.auth.mode=auth0 needs quarkus.oidc.token.audience")
             AuthSettings.Auth0(
-                domain = tenant.domain().orElseThrow { missingAuth0Setting("domain") },
-                clientId = tenant.clientId().orElseThrow { missingAuth0Setting("client-id") },
-                audience = tenant.audience().orElseThrow { missingAuth0Setting("audience") },
+                domain = URI.create(server).host,
+                clientId = clientId.orElseThrow { IllegalStateException("opendc.auth.mode=auth0 needs opendc.auth.auth0.client-id") },
+                audience = audience,
             )
         }
     }
-
-private fun missingAuth0Setting(key: String) = IllegalStateException("opendc.auth.mode=auth0 needs opendc.auth.auth0.$key")
+}
 
 /** Who the implicit account of anonymous mode is to the identity provider, which it never meets. */
 const val IMPLICIT_SUBJECT = "anonymous"
@@ -105,44 +129,50 @@ const val IMPLICIT_SUBJECT = "anonymous"
 const val IMPLICIT_HANDLE = "local"
 
 /**
+ * The account every request of anonymous mode acts as. Put in place at boot, before the socket
+ * opens, so resolving a request to it never waits on the database.
+ */
+@ApplicationScoped
+class ImplicitAccount {
+    val id: Long by lazy { QuarkusTransaction.requiringNew().call { seeded().id } }
+
+    private fun seeded(): UserAccount =
+        UserAccount.findBySubject(IMPLICIT_SUBJECT) ?: UserAccount().apply {
+            subject = IMPLICIT_SUBJECT
+            handle = IMPLICIT_HANDLE
+            handleKind = HandleKind.CHOSEN
+            displayName = "Local user"
+            planTier = PlanTier.FREE
+            isAdmin = true
+            createdAt = Instant.now()
+            persist()
+        }
+}
+
+/**
  * Settles how this deployment signs callers in, once and at boot, so a misconfigured one fails to
  * start rather than at its first sign-in.
  *
- * Anonymous mode resolves every request to an implicit account, which is put in place here before
- * anything asks for it. That mode is allowed in a deployment, for a single person running OpenDC for
- * themselves, but it is said out loud at boot: anyone who can reach the port is the administrator.
+ * Anonymous mode is allowed in a deployment, for a single person running OpenDC for themselves, but
+ * it is said out loud at boot: anyone who can reach the port is the administrator.
  */
 @ApplicationScoped
 class AuthSetup(private val config: AuthConfig) {
     @Produces
     @Singleton
-    fun settings(): AuthSettings = authSettings(config)
+    fun settings(): AuthSettings = authSettings(config.mode(), config.auth0().clientId(), ConfigProvider.getConfig())
 
-    @Transactional
     internal fun onStart(
         @Suppress("UNUSED_PARAMETER") @Observes event: StartupEvent,
         settings: AuthSettings,
+        implicit: ImplicitAccount,
     ) {
         if (settings is AuthSettings.Anonymous) {
-            seedImplicitAccount()
+            implicit.id
+            if (LaunchMode.current() == LaunchMode.NORMAL) {
+                LOG.warn("opendc.auth.mode=anonymous: every request acts as one implicit administrator with no budget")
+            }
         }
-    }
-
-    private fun seedImplicitAccount() {
-        if (LaunchMode.current() == LaunchMode.NORMAL) {
-            LOG.warn("opendc.auth.mode=anonymous: every request acts as one implicit administrator with no budget")
-        }
-        if (UserAccount.findBySubject(IMPLICIT_SUBJECT) != null) {
-            return
-        }
-        val account = UserAccount()
-        account.subject = IMPLICIT_SUBJECT
-        account.handle = IMPLICIT_HANDLE
-        account.displayName = "Local user"
-        account.planTier = PlanTier.FREE
-        account.isAdmin = true
-        account.createdAt = Instant.now()
-        account.persist()
     }
 
     private companion object {

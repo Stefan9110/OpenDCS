@@ -110,6 +110,9 @@ class Trace : PanacheEntityBase {
 
     lateinit var updatedAt: Instant
 
+    /** Whether every table its kind names has arrived, which is when it appears in the library. */
+    fun isComplete(): Boolean = TracePart.findByTrace(id).map { it.tableName }.containsAll(kind.tables)
+
     companion object : PanacheCompanion<Trace> {
         fun findBySlug(slug: String): Trace? = find("slug = ?1", slug).firstResult()
 

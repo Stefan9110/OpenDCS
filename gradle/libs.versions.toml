@@ -90,6 +90,8 @@ quarkus-hibernate-orm-panache-kotlin = { module = "io.quarkus:quarkus-hibernate-
 quarkus-junit5-core = { module = "io.quarkus:quarkus-junit" }
 quarkus-jacoco = { module = "io.quarkus:quarkus-jacoco" }
 quarkus-test-security = { module = "io.quarkus:quarkus-test-security" }
+# An OIDC provider on WireMock, in process, so Auth0 mode is tested without a container.
+quarkus-test-oidc-server = { module = "io.quarkus:quarkus-test-oidc-server" }
 restassured-core = { module = "io.rest-assured:rest-assured" }
 
 # Object storage. The plain SDK rather than the Quarkus extension: object storage is a production

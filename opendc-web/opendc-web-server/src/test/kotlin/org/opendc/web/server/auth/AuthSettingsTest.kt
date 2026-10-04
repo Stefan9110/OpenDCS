@@ -22,6 +22,9 @@
 
 package org.opendc.web.server.auth
 
+import io.smallrye.config.PropertiesConfigSource
+import io.smallrye.config.SmallRyeConfigBuilder
+import org.eclipse.microprofile.config.Config
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -29,48 +32,56 @@ import org.junit.jupiter.api.assertThrows
 import java.util.Optional
 
 /**
- * A deployment that cannot sign anybody in has to say which setting it is missing before it starts
- * taking requests, not answer every visitor with a sign-in page that leads nowhere.
+ * The sign-in mode and the OIDC tenant that verifies tokens are separate settings. A deployment
+ * where they disagree would accept nobody, or anybody, so it has to refuse to start and name the
+ * key at fault.
  */
 class AuthSettingsTest {
+    private val tenant =
+        mapOf(
+            "quarkus.oidc.tenant-enabled" to "true",
+            "quarkus.oidc.auth-server-url" to "https://opendc.eu.auth0.com/",
+            "quarkus.oidc.token.audience" to "https://api.opendc.org",
+        )
+
     @Test
     fun `an Auth0 deployment hands the frontend the tenant it signs in through`() {
-        val settings = authSettings(config(AuthMode.AUTH0, domain = "opendc.eu.auth0.com", clientId = "spa", audience = "https://api"))
+        val settings = authSettings(AuthMode.AUTH0, Optional.of("spa"), config(tenant))
 
-        assertEquals(AuthSettings.Auth0(domain = "opendc.eu.auth0.com", clientId = "spa", audience = "https://api"), settings)
+        assertEquals(AuthSettings.Auth0(domain = "opendc.eu.auth0.com", clientId = "spa", audience = "https://api.opendc.org"), settings)
     }
 
     @Test
     fun `an Auth0 deployment missing a setting names the key it lacks`() {
-        val failure =
-            assertThrows<IllegalStateException> {
-                authSettings(config(AuthMode.AUTH0, domain = "opendc.eu.auth0.com", clientId = null, audience = "https://api"))
-            }
-
-        assertTrue("opendc.auth.auth0.client-id" in failure.message.orEmpty()) { "unhelpful message: ${failure.message}" }
+        assertNames("opendc.auth.auth0.client-id") { authSettings(AuthMode.AUTH0, Optional.empty(), config(tenant)) }
+        assertNames("quarkus.oidc.tenant-enabled") {
+            authSettings(AuthMode.AUTH0, Optional.of("spa"), config(tenant + ("quarkus.oidc.tenant-enabled" to "false")))
+        }
+        assertNames("quarkus.oidc.auth-server-url") {
+            authSettings(AuthMode.AUTH0, Optional.of("spa"), config(tenant - "quarkus.oidc.auth-server-url"))
+        }
+        assertNames("quarkus.oidc.token.audience") {
+            authSettings(AuthMode.AUTH0, Optional.of("spa"), config(tenant - "quarkus.oidc.token.audience"))
+        }
     }
 
     @Test
-    fun `an anonymous deployment needs no tenant at all`() {
-        assertEquals(AuthSettings.Anonymous, authSettings(config(AuthMode.ANONYMOUS, domain = null, clientId = null, audience = null)))
+    fun `an anonymous deployment refuses a tenant that would verify tokens it never asks for`() {
+        assertEquals(
+            AuthSettings.Anonymous,
+            authSettings(AuthMode.ANONYMOUS, Optional.empty(), config(mapOf("quarkus.oidc.tenant-enabled" to "false"))),
+        )
+        assertNames("quarkus.oidc.tenant-enabled") { authSettings(AuthMode.ANONYMOUS, Optional.empty(), config(tenant)) }
     }
 
-    private fun config(
-        mode: AuthMode,
-        domain: String?,
-        clientId: String?,
-        audience: String?,
-    ): AuthConfig =
-        object : AuthConfig {
-            override fun mode(): AuthMode = mode
+    private fun assertNames(
+        key: String,
+        attempt: () -> Unit,
+    ) {
+        val failure = assertThrows<IllegalStateException> { attempt() }
+        assertTrue(key in failure.message.orEmpty()) { "expected $key in: ${failure.message}" }
+    }
 
-            override fun auth0(): AuthConfig.Auth0Tenant =
-                object : AuthConfig.Auth0Tenant {
-                    override fun domain(): Optional<String> = Optional.ofNullable(domain)
-
-                    override fun clientId(): Optional<String> = Optional.ofNullable(clientId)
-
-                    override fun audience(): Optional<String> = Optional.ofNullable(audience)
-                }
-        }
+    private fun config(properties: Map<String, String>): Config =
+        SmallRyeConfigBuilder().withSources(PropertiesConfigSource(properties, "test", 100)).build()
 }

@@ -33,6 +33,7 @@ import org.opendc.web.launcher.ResultMetric
 import org.opendc.web.launcher.TelemetryTarget
 import org.opendc.web.launcher.UnitOutcome
 import org.opendc.web.server.ApiTest
+import org.opendc.web.server.TestAccounts
 import org.opendc.web.server.execution.ExecutionLoop
 import org.opendc.web.server.execution.RecordingDispatcher
 import org.opendc.web.server.execution.ended
@@ -163,11 +164,23 @@ class TelemetryResourceTest {
         report("odc_exec_invented", completedTasks = 1).then().statusCode(401)
     }
 
+    // A launcher's token reports progress on its own execution and can do nothing else, whichever
+    // mode the deployment signs people in with.
     @Test
-    fun `refuses a report with no credential at all`() {
+    fun `a launcher token cannot act as a person`() {
+        val token = tokenFor(running())
+
+        ApiTest.requestJson().header("Authorization", "Bearer $token").get("/api/v1/projects").then().statusCode(403)
+    }
+
+    // In anonymous mode a caller with no credential is the local account, which is a person and not a
+    // launcher; a person's access token is no launcher's either.
+    @Test
+    fun `refuses a report from anyone but a launcher`() {
         running()
 
-        ApiTest.requestJson().body(body(completedTasks = 0)).post("/api/v1/telemetry").then().statusCode(401)
+        ApiTest.requestJson().body(body(completedTasks = 0)).post("/api/v1/telemetry").then().statusCode(403)
+        TestAccounts.person().request().body(body(completedTasks = 0)).post("/api/v1/telemetry").then().statusCode(403)
     }
 
     // A token dies with the attempt it was minted for. A process nobody managed to stop must not be

@@ -1,6 +1,6 @@
 "use client"
 
-import type { Account } from "@/lib/api/types"
+import type { Account, Handle } from "@/lib/api/types"
 import type { AuthSession } from "@/lib/auth/auth"
 import { Avatar, Badge, Group, Stack, Text } from "@mantine/core"
 import { IconFolder, IconUser, IconUserKey } from "@tabler/icons-react"
@@ -15,13 +15,22 @@ export function UserIdentity({ session }: Readonly<{ session: AuthSession }>) {
                         {session.userName}
                     </Text>
                     <Text size="xs" c="dimmed">
-                        @{session.handle}
+                        {handleLabel(session.handle)}
                     </Text>
                 </Stack>
             </Group>
             <AccountBadges account={session.account} />
         </Stack>
     )
+}
+
+function handleLabel(handle: Handle): string {
+    switch (handle.type) {
+        case "provisional":
+            return "No handle chosen yet"
+        case "chosen":
+            return `@${handle.name}`
+    }
 }
 
 function AccountBadges({ account }: Readonly<{ account: Account }>) {

@@ -217,6 +217,9 @@ export interface Billing {
     invoices: Invoice[]
 }
 
+/** The name other people see, or that there is none yet: a first sign-in has to choose one. */
+export type Handle = { type: "provisional" } | { type: "chosen"; name: string }
+
 export interface Account {
     plan: PlanTier
     projectCount: number

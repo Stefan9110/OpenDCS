@@ -22,33 +22,74 @@
 
 package org.opendc.web.server.auth
 
+import io.quarkus.security.identity.SecurityIdentity
+import io.quarkus.security.runtime.QuarkusPrincipal
+import io.quarkus.security.runtime.QuarkusSecurityIdentity
 import jakarta.enterprise.context.RequestScoped
+import org.opendc.web.server.model.AccountState
+import org.opendc.web.server.model.HandleKind
 import org.opendc.web.server.model.UserAccount
+import org.opendc.web.server.rest.forbidden
 import org.opendc.web.server.rest.notAuthenticated
 
 /**
- * Resolves the account a request acts as. In anonymous mode that is the implicit account seeded at
- * startup, which is what makes a fresh checkout or a self-hosted deployment usable with no identity
- * provider. Auth0 and personal access tokens arrive behind this same seam.
- *
- * Scoped to the request and answered once within it. A single request asks who the caller is
- * several times over, since every ownership check does, and the account is found by its subject
- * rather than by its key, so this is a query that the persistence context cannot spare.
+ * The kinds of caller. A role says what a caller is, not what state its account is in: a failed
+ * role check cannot say why it failed, and the frontend has to tell a deactivated account from one
+ * that is signed out.
+ */
+object Roles {
+    /** Any person's account. What every endpoint requires unless it says otherwise. */
+    const val USER = "user"
+
+    /** An active account flagged as an administrator. */
+    const val ADMIN = "admin"
+
+    /** A launcher reporting on the execution its token was minted for. */
+    const val EXECUTION = "execution"
+}
+
+/** The account a security identity acts as, by key: entities do not travel between transactions. */
+const val ACCOUNT_ATTRIBUTE = "opendc.account"
+
+/** The execution a launcher's identity reports on. */
+const val EXECUTION_ATTRIBUTE = "opendc.execution"
+
+fun QuarkusSecurityIdentity.Builder.actingAs(account: UserAccount): QuarkusSecurityIdentity.Builder {
+    setAnonymous(false)
+    setPrincipal(QuarkusPrincipal(account.handle))
+    addRole(Roles.USER)
+    if (account.isAdmin && account.state == AccountState.ACTIVE) {
+        addRole(Roles.ADMIN)
+    }
+    addAttribute(ACCOUNT_ATTRIBUTE, account.id)
+    return this
+}
+
+/**
+ * The account a request acts as, loaded once per request from the identity Quarkus security
+ * established for it, and checked for the states a role cannot express.
  */
 @RequestScoped
-class Identity(private val settings: AuthSettings) {
-    private val caller by lazy(LazyThreadSafetyMode.NONE) { resolve() }
+class Identity(private val security: SecurityIdentity) {
+    private val loaded by lazy(LazyThreadSafetyMode.NONE) { load() }
 
-    fun currentUser(): UserAccount = caller
+    /** Any account that is not deactivated, including one still choosing its handle. Only `/me` uses this. */
+    fun account(): UserAccount = loaded
 
-    private fun resolve(): UserAccount =
-        when (settings) {
-            AuthSettings.Anonymous ->
-                checkNotNull(UserAccount.findBySubject(IMPLICIT_SUBJECT)) {
-                    "the implicit account is seeded at startup"
-                }
-            // Until OIDC is wired every request in this mode is unauthenticated, which is what the
-            // frontend's sign-in gate expects to see.
-            is AuthSettings.Auth0 -> throw notAuthenticated()
+    /** An account that has chosen its handle, which is what every endpoint but `/me` acts as. */
+    fun currentUser(): UserAccount {
+        if (loaded.handleKind == HandleKind.PROVISIONAL) {
+            throw forbidden("Choose a handle first")
         }
+        return loaded
+    }
+
+    private fun load(): UserAccount {
+        val id = security.getAttribute<Long>(ACCOUNT_ATTRIBUTE) ?: throw notAuthenticated()
+        val account = UserAccount.findById(id) ?: throw notAuthenticated()
+        if (account.state == AccountState.DEACTIVATED) {
+            throw forbidden("This account has been deactivated")
+        }
+        return account
+    }
 }

@@ -429,7 +429,7 @@ class TracesResource(
         request: ShareRequest,
     ): Response {
         val trace = owned(id)
-        val grantee = UserAccount.findByHandle(request.handle.trim()) ?: throw notFound("Account ${request.handle}")
+        val grantee = UserAccount.findActiveByHandle(request.handle.trim()) ?: throw notFound("Account ${request.handle}")
         if (grantee.id == trace.owner?.id) {
             throw conflict("This trace is already yours")
         }

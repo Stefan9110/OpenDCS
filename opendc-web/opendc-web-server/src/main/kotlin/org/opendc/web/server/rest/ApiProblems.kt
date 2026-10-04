@@ -22,6 +22,8 @@
 
 package org.opendc.web.server.rest
 
+import io.quarkus.security.ForbiddenException
+import io.quarkus.security.UnauthorizedException
 import jakarta.validation.ConstraintViolationException
 import jakarta.ws.rs.WebApplicationException
 import jakarta.ws.rs.core.MediaType
@@ -84,15 +86,16 @@ private const val NAME_LENGTH_CAP = 255
 fun validName(
     raw: String,
     what: String,
+    path: String = "name",
 ): String {
     val name = raw.trim()
     if (name.isEmpty()) {
-        throw invalidDocument("$what name must not be blank", listOf(DocumentIssue("name", "must not be blank")))
+        throw invalidDocument("$what name must not be blank", listOf(DocumentIssue(path, "must not be blank")))
     }
     if (name.length > NAME_LENGTH_CAP) {
         throw invalidDocument(
             "$what name is too long",
-            listOf(DocumentIssue("name", "must be at most $NAME_LENGTH_CAP characters")),
+            listOf(DocumentIssue(path, "must be at most $NAME_LENGTH_CAP characters")),
         )
     }
     return name
@@ -122,12 +125,33 @@ fun notFound(what: String): WebApplicationException =
         Response.status(404).entity(ApiProblem(status = 404, title = "$what not found")).type(MediaType.APPLICATION_JSON).build(),
     )
 
-fun conflict(title: String): WebApplicationException =
+fun conflict(
+    title: String,
+    issues: List<DocumentIssue> = emptyList(),
+): WebApplicationException =
     WebApplicationException(
-        Response.status(409).entity(ApiProblem(status = 409, title = title)).type(MediaType.APPLICATION_JSON).build(),
+        Response
+            .status(409)
+            .entity(ApiProblem(status = 409, title = title, issues = issues))
+            .type(MediaType.APPLICATION_JSON)
+            .build(),
     )
 
 class ApiExceptionMappers {
+    // The built-in security mappers answer with an empty body; these win on priority and answer in
+    // the envelope every other refusal uses. A missing credential is told to sign in.
+    @ServerExceptionMapper(UnauthorizedException::class)
+    fun unauthorized(): RestResponse<ApiProblem> =
+        RestResponse.ResponseBuilder
+            .create<ApiProblem>(401)
+            .entity(ApiProblem(status = 401, title = "Sign in to continue"))
+            .header("WWW-Authenticate", "Bearer")
+            .type(MediaType.APPLICATION_JSON)
+            .build()
+
+    @ServerExceptionMapper(ForbiddenException::class)
+    fun forbidden(): RestResponse<ApiProblem> = problemResponse(ApiProblem(status = 403, title = "You may not do this"))
+
     @ServerExceptionMapper
     fun invalidDocument(exception: InvalidDocumentException): RestResponse<ApiProblem> = problemResponse(exception.problem)
 

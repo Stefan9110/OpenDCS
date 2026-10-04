@@ -32,9 +32,9 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.opendc.web.server.ApiTest
+import org.opendc.web.server.TestAccounts
 import org.opendc.web.server.model.Experiment
 import org.opendc.web.server.model.ExperimentResource
-import org.opendc.web.server.model.PlanTier
 import org.opendc.web.server.model.Trace
 import org.opendc.web.server.model.TraceKind
 import org.opendc.web.server.model.TraceOrigin
@@ -400,32 +400,21 @@ class TraceLibraryTest {
         }
     }
 
-    private fun seedStranger(): String = QuarkusTransaction.requiringNew().call { newStranger().handle }
+    private fun seedStranger(): String = TestAccounts.person("stranger").handle
 
-    private fun seedForeignTrace(): String =
-        QuarkusTransaction.requiringNew().call {
-            val stranger = newStranger()
+    private fun seedForeignTrace(): String {
+        val stranger = TestAccounts.person("stranger")
+        return QuarkusTransaction.requiringNew().call {
             val now = Instant.now()
             val trace = Trace()
             trace.slug = "${stranger.handle}/private"
             trace.kind = TraceKind.CARBON
             trace.origin = TraceOrigin.UPLOADED
-            trace.owner = stranger
+            trace.owner = UserAccount.findById(stranger.id)
             trace.createdAt = now
             trace.updatedAt = now
             trace.persist()
             trace.publicId.toString()
         }
-
-    private fun newStranger(): UserAccount {
-        val stranger = UserAccount()
-        val suffix = UUID.randomUUID().toString().take(8)
-        stranger.subject = "stranger-$suffix"
-        stranger.handle = "stranger-$suffix"
-        stranger.displayName = "Stranger $suffix"
-        stranger.planTier = PlanTier.FREE
-        stranger.createdAt = Instant.now()
-        stranger.persist()
-        return stranger
     }
 }
