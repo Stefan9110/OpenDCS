@@ -31,14 +31,13 @@ import org.apache.parquet.hadoop.example.GroupReadSupport
 import org.apache.parquet.io.InputFile
 import org.apache.parquet.schema.MessageType
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName
-import org.opendc.sdk.model.export.OutputFileSpec
+import org.opendc.sdk.model.telemetry.OutputFileSpec
 import org.opendc.web.launcher.EntityFold
 import org.opendc.web.launcher.MetricPoint
 import org.opendc.web.launcher.Reading
 import org.opendc.web.launcher.ResultMetric
 import org.opendc.web.launcher.RowIdentity
 import org.opendc.web.launcher.rows
-import org.opendc.web.launcher.tableName
 import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.StoredObjectFile
 import java.util.Collections
@@ -110,7 +109,7 @@ class ParquetSeries(private val store: ObjectStore) {
         table: OutputFileSpec,
     ): Map<ResultMetric, List<MetricPoint>> {
         val metrics = ResultMetric.of(table)
-        val key = "$prefix/${table.tableName}.parquet"
+        val key = "$prefix/${table.fileName}"
         if (metrics.isEmpty() || !store.exists(key)) {
             return emptyMap()
         }

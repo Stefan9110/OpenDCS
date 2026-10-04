@@ -22,7 +22,7 @@
 
 package org.opendc.web.launcher
 
-import org.opendc.sdk.model.export.OutputFileSpec
+import org.opendc.sdk.model.telemetry.OutputFileSpec
 
 /** How several values become one. */
 enum class Reduction {
@@ -138,12 +138,13 @@ enum class ResultMetric(
         }
 
     /**
-     * What this metric is called on the wire and in the frontend's own catalog.
+     * What this metric is called on the wire and in the frontend's own catalog: the file its table is
+     * written to, without the extension, and the column.
      *
      * Derived rather than written down a second time: a metric is one column of one table, and
      * spelling that out twice is how the two copies come to disagree.
      */
-    val id: String get() = "${table.tableName}.$column"
+    val id: String get() = "${table.fileName.substringBeforeLast('.')}.$column"
 
     companion object {
         fun byId(id: String): ResultMetric? = entries.firstOrNull { it.id == id }
@@ -173,26 +174,11 @@ sealed interface RowIdentity {
 val OutputFileSpec.rows: RowIdentity
     get() =
         when (this) {
-            OutputFileSpec.HOST -> RowIdentity.PerEntity("host_name")
-            OutputFileSpec.TASK -> RowIdentity.PerEntity("task_id")
-            OutputFileSpec.POWER_SOURCE -> RowIdentity.PerEntity("source_name")
             OutputFileSpec.BATTERY -> RowIdentity.PerEntity("battery_name")
+            OutputFileSpec.CLUSTER -> RowIdentity.PerEntity("cluster_name")
+            OutputFileSpec.DATA_CENTER -> RowIdentity.PerEntity("data_center_name")
+            OutputFileSpec.HOST -> RowIdentity.PerEntity("host_name")
+            OutputFileSpec.POWER_SOURCE -> RowIdentity.PerEntity("source_name")
             OutputFileSpec.SERVICE -> RowIdentity.Singleton
-        }
-
-/**
- * What the parquet file holding [this] is called, without its extension.
- *
- * The engine's own `OutputFiles` says the same thing, but it lives in the simulator, which the server
- * has no dependency on and should not grow one for a file name. A launcher test pins the two
- * together.
- */
-val OutputFileSpec.tableName: String
-    get() =
-        when (this) {
-            OutputFileSpec.HOST -> "host"
-            OutputFileSpec.TASK -> "task"
-            OutputFileSpec.POWER_SOURCE -> "powerSource"
-            OutputFileSpec.BATTERY -> "battery"
-            OutputFileSpec.SERVICE -> "service"
+            OutputFileSpec.TASK -> RowIdentity.PerEntity("task_id")
         }

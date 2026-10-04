@@ -36,7 +36,7 @@ import org.opendc.sdk.model.dsl.seconds
 import org.opendc.sdk.model.dsl.topology
 import org.opendc.sdk.model.dsl.watts
 import org.opendc.sdk.model.experiment.ExperimentSpec
-import org.opendc.sdk.model.export.ExportSpec
+import org.opendc.sdk.model.telemetry.ExportSpec
 import org.opendc.sdk.model.topology.PowerModelType
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.workload.InlineWorkloadSpec
@@ -44,8 +44,8 @@ import org.opendc.sdk.model.workload.TaskFragmentSpec
 import org.opendc.sdk.model.workload.TaskSpec
 import org.opendc.sdk.runner.OpenDC
 import org.opendc.sdk.runner.provision.FileSystemResourceProvisioner
-import org.opendc.sdk.runner.sink.CallbackSink
-import org.opendc.sdk.runner.sink.OutputSink
+import org.opendc.sdk.runner.telemetry.sink.CallbackSink
+import org.opendc.sdk.runner.telemetry.sink.OutputSink
 import java.nio.file.Files
 import kotlin.math.abs
 
@@ -148,7 +148,7 @@ class TelemetrySinkTest {
     private fun powerPerHost(into: MutableMap<Long, MutableMap<String, Double>>) =
         CallbackSink(
             onHost = { reader ->
-                into.getOrPut(reader.timestamp.toEpochMilli()) { mutableMapOf() }[reader.hostInfo.name] = reader.powerDraw
+                into.getOrPut(reader.timestamp.toEpochMilli()) { mutableMapOf() }[reader.hostName.orEmpty()] = reader.powerDraw
             },
         )
 
@@ -179,15 +179,17 @@ class TelemetrySinkTest {
 
     private fun fleet(hosts: Int): TopologySpec =
         topology {
-            cluster(name = "C01") {
-                repeat(hosts) { index ->
-                    host(name = "H0$index") {
-                        cpu(coreCount = 2, coreSpeed = 2000.mhz)
-                        memory(size = 1.gib)
-                        power {
-                            type = PowerModelType.LINEAR
-                            maxPower = 200.watts
-                            idlePower = 100.watts
+            datacenter {
+                cluster(name = "C01") {
+                    repeat(hosts) { index ->
+                        host(name = "H0$index") {
+                            cpu(coreCount = 2, coreSpeed = 2000.mhz)
+                            memory(size = 1.gib)
+                            power {
+                                type = PowerModelType.LINEAR
+                                maxPower = 200.watts
+                                idlePower = 100.watts
+                            }
                         }
                     }
                 }
@@ -197,7 +199,6 @@ class TelemetrySinkTest {
     private fun task(id: Int): TaskSpec =
         TaskSpec(
             id = id,
-            name = "t$id",
             submissionTime = 0.ms,
             duration = RUN_MS.ms,
             cpuCoreCount = 1,

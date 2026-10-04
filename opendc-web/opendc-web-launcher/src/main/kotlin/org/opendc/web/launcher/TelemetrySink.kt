@@ -22,16 +22,16 @@
 
 package org.opendc.web.launcher
 
-import org.opendc.compute.simulator.telemetry.ComputeMonitor
-import org.opendc.compute.simulator.telemetry.OutputFiles
-import org.opendc.compute.simulator.telemetry.table.battery.BatteryTableReader
-import org.opendc.compute.simulator.telemetry.table.host.HostTableReader
-import org.opendc.compute.simulator.telemetry.table.powerSource.PowerSourceTableReader
-import org.opendc.compute.simulator.telemetry.table.service.ServiceTableReader
-import org.opendc.sdk.runner.sink.OutputSink
-import org.opendc.sdk.runner.sink.RunContext
-import org.opendc.sdk.runner.sink.SinkResult
-import org.opendc.sdk.runner.sink.SinkSession
+import org.opendc.sdk.model.telemetry.OutputFileSpec
+import org.opendc.sdk.runner.telemetry.MetricExporter
+import org.opendc.sdk.runner.telemetry.sink.OutputSink
+import org.opendc.sdk.runner.telemetry.sink.RunContext
+import org.opendc.sdk.runner.telemetry.sink.SinkResult
+import org.opendc.sdk.runner.telemetry.sink.SinkSession
+import org.opendc.sdk.runner.telemetry.table.battery.BatterySample
+import org.opendc.sdk.runner.telemetry.table.host.HostSample
+import org.opendc.sdk.runner.telemetry.table.powerSource.PowerSourceSample
+import org.opendc.sdk.runner.telemetry.table.service.ServiceSample
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -60,10 +60,10 @@ class TelemetrySink : OutputSink {
         val samples = RunSamples(context.scenarioId, context.seed)
         runs += samples
         return object : SinkSession {
-            override val monitor: ComputeMonitor = TelemetryMonitor(samples)
+            override val monitor: MetricExporter = TelemetryMonitor(samples)
 
-            override val tables: Set<OutputFiles> =
-                setOf(OutputFiles.HOST, OutputFiles.SERVICE, OutputFiles.POWER_SOURCE, OutputFiles.BATTERY)
+            override val tables: Set<OutputFileSpec> =
+                setOf(OutputFileSpec.HOST, OutputFileSpec.SERVICE, OutputFileSpec.POWER_SOURCE, OutputFileSpec.BATTERY)
 
             /** Called once the run has finished, which is the last chance to close its final instant. */
             override fun result(): SinkResult? {
@@ -80,11 +80,11 @@ class TelemetrySink : OutputSink {
 /** There is one scheduling service, so every row it reports at an instant is the same row again. */
 private const val THE_SERVICE = "service"
 
-private class TelemetryMonitor(private val samples: RunSamples) : ComputeMonitor {
-    override fun record(reader: HostTableReader) {
+private class TelemetryMonitor(private val samples: RunSamples) : MetricExporter {
+    override fun export(reader: HostSample) {
         samples.record(
             reader.timestamp.toEpochMilli(),
-            reader.hostInfo.name,
+            reader.hostName,
             // The work this host got through and what it had to do it with, so the fleet's share is
             // weighted by capacity rather than being an average of per-host shares.
             ResultMetric.HOST_CPU_UTILIZATION to Reading(reader.cpuUsage, reader.cpuCapacity),
@@ -92,10 +92,10 @@ private class TelemetryMonitor(private val samples: RunSamples) : ComputeMonitor
         )
     }
 
-    override fun record(reader: PowerSourceTableReader) {
+    override fun export(reader: PowerSourceSample) {
         samples.record(
             reader.timestamp.toEpochMilli(),
-            reader.powerSourceInfo.name,
+            reader.powerSourceName,
             ResultMetric.POWER_SOURCE_POWER_DRAW to Reading(reader.powerDraw),
             ResultMetric.POWER_SOURCE_ENERGY_USAGE to Reading(reader.energyUsage),
             ResultMetric.POWER_SOURCE_CARBON_EMISSION to Reading(reader.carbonEmission),
@@ -103,11 +103,11 @@ private class TelemetryMonitor(private val samples: RunSamples) : ComputeMonitor
         )
     }
 
-    override fun record(reader: BatteryTableReader) {
-        samples.record(reader.timestamp.toEpochMilli(), reader.batteryInfo.name, ResultMetric.BATTERY_CHARGE to Reading(reader.charge))
+    override fun export(reader: BatterySample) {
+        samples.record(reader.timestamp.toEpochMilli(), reader.batteryName, ResultMetric.BATTERY_CHARGE to Reading(reader.charge))
     }
 
-    override fun record(reader: ServiceTableReader) {
+    override fun export(reader: ServiceSample) {
         samples.progress(reader.tasksCompleted + reader.tasksTerminated)
         samples.record(
             reader.timestamp.toEpochMilli(),
@@ -130,7 +130,9 @@ private class TelemetryMonitor(private val samples: RunSamples) : ComputeMonitor
  * exactly when a later one begins.
  *
  * Rows are kept by the entity that reported them rather than counted, because an instant is reported
- * more than once at the end of a run and the second report of a host is that host again.
+ * more than once at the end of a run and the second report of a host is that host again. The engine
+ * names every entity uniquely; a sample without a name is the single "missing" row the parquet
+ * writes for it, so it is kept under one key here too.
  */
 private class RunSamples(
     private val scenarioIndex: Int,
@@ -139,7 +141,7 @@ private class RunSamples(
     private val lock = Any()
     private var completedTasks = 0
     private var instant = NO_INSTANT
-    private val reporting = ResultMetric.entries.associateWith { mutableMapOf<String, Reading>() }
+    private val reporting = ResultMetric.entries.associateWith { mutableMapOf<String?, Reading>() }
     private val series = ResultMetric.entries.associateWith { PointBuffer(it.overTime) }
 
     fun progress(completed: Int) {
@@ -148,7 +150,7 @@ private class RunSamples(
 
     fun record(
         timestamp: Long,
-        entity: String,
+        entity: String?,
         vararg readings: Pair<ResultMetric, Reading>,
     ) {
         synchronized(lock) {

@@ -26,17 +26,16 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.opendc.compute.simulator.telemetry.OutputFiles
-import org.opendc.compute.simulator.telemetry.parquet.DfltBatteryExportColumns
-import org.opendc.compute.simulator.telemetry.parquet.DfltHostExportColumns
-import org.opendc.compute.simulator.telemetry.parquet.DfltPowerSourceExportColumns
-import org.opendc.compute.simulator.telemetry.parquet.DfltServiceExportColumns
-import org.opendc.compute.simulator.telemetry.table.battery.BatteryTableReader
-import org.opendc.compute.simulator.telemetry.table.host.HostTableReader
-import org.opendc.compute.simulator.telemetry.table.powerSource.PowerSourceTableReader
-import org.opendc.compute.simulator.telemetry.table.service.ServiceTableReader
-import org.opendc.sdk.model.export.OutputFileSpec
-import org.opendc.trace.util.parquet.exporter.ExportColumn
+import org.opendc.sdk.model.telemetry.OutputFileSpec
+import org.opendc.sdk.runner.telemetry.parquet.DfltBatteryExportColumns
+import org.opendc.sdk.runner.telemetry.parquet.DfltHostExportColumns
+import org.opendc.sdk.runner.telemetry.parquet.DfltPowerSourceExportColumns
+import org.opendc.sdk.runner.telemetry.parquet.DfltServiceExportColumns
+import org.opendc.sdk.runner.telemetry.table.battery.BatterySample
+import org.opendc.sdk.runner.telemetry.table.host.HostSample
+import org.opendc.sdk.runner.telemetry.table.powerSource.PowerSourceSample
+import org.opendc.sdk.runner.telemetry.table.service.ServiceSample
+import org.opendc.trace.parquet.exporter.ExportColumn
 
 /**
  * The catalog names columns the simulator writes and tables the frontend reads. Both are spelled out
@@ -53,10 +52,10 @@ class ResultMetricTest {
         DfltBatteryExportColumns
         val exported =
             mapOf(
-                OutputFileSpec.HOST to ExportColumn.getAllLoadedColumns<HostTableReader>().map { it.name },
-                OutputFileSpec.SERVICE to ExportColumn.getAllLoadedColumns<ServiceTableReader>().map { it.name },
-                OutputFileSpec.POWER_SOURCE to ExportColumn.getAllLoadedColumns<PowerSourceTableReader>().map { it.name },
-                OutputFileSpec.BATTERY to ExportColumn.getAllLoadedColumns<BatteryTableReader>().map { it.name },
+                OutputFileSpec.HOST to ExportColumn.getAllLoadedColumns<HostSample>().map { it.name },
+                OutputFileSpec.SERVICE to ExportColumn.getAllLoadedColumns<ServiceSample>().map { it.name },
+                OutputFileSpec.POWER_SOURCE to ExportColumn.getAllLoadedColumns<PowerSourceSample>().map { it.name },
+                OutputFileSpec.BATTERY to ExportColumn.getAllLoadedColumns<BatterySample>().map { it.name },
             )
 
         for (metric in ResultMetric.entries) {
@@ -84,22 +83,6 @@ class ResultMetricTest {
     @Test
     fun `reports nothing supplied as nothing used rather than as a share of nothing`() {
         assertEquals(0.0, ResultMetric.HOST_CPU_UTILIZATION.fold(listOf(Reading(0.0, 0.0))))
-    }
-
-    @Test
-    fun `a table is called the same thing here as the file the simulator writes it to`() {
-        val engine =
-            mapOf(
-                OutputFileSpec.HOST to OutputFiles.HOST,
-                OutputFileSpec.TASK to OutputFiles.TASK,
-                OutputFileSpec.POWER_SOURCE to OutputFiles.POWER_SOURCE,
-                OutputFileSpec.BATTERY to OutputFiles.BATTERY,
-                OutputFileSpec.SERVICE to OutputFiles.SERVICE,
-            )
-
-        for ((spec, file) in engine) {
-            assertEquals(file.fileName, "${spec.tableName}.parquet") { "$spec is filed under a different name than it is written to" }
-        }
     }
 
     @Test
