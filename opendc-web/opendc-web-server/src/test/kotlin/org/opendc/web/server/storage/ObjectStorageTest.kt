@@ -108,6 +108,23 @@ class ObjectStorageTest {
         store.close()
     }
 
+    // A bucket on a private network beside the server is reached by launchers at one address and by
+    // browsers at another; a URL signed for the wrong one is unreachable, or its signature invalid.
+    @Test
+    fun `an s3 store signs browser uploads for its public endpoint and launcher transfers for its own`() {
+        val store =
+            ObjectStorage(
+                config(ObjectStoreKind.S3, endpoint = "http://minio:9000", publicEndpoint = "http://localhost:9000"),
+            ).objectStore()
+
+        val upload = (store.uploadTarget(key, 1024) as UploadTarget.Direct).parts.single().url
+
+        assertTrue(upload.startsWith("http://localhost:9000/bucket/"), "browsers upload from outside: $upload")
+        assertTrue(store.readUrl(key, Duration.ofHours(1)).startsWith("http://minio:9000/bucket/"))
+        assertTrue(store.writeUrl(key, Duration.ofHours(1)).startsWith("http://minio:9000/bucket/"))
+        store.close()
+    }
+
     // A deployment that names S3 but forgets a credential must be told which key is missing, not
     // handed a client that fails on the first upload with something from inside the SDK.
     @Test
@@ -121,6 +138,7 @@ class ObjectStorageTest {
         kind: ObjectStoreKind,
         bucket: String? = "bucket",
         endpoint: String? = null,
+        publicEndpoint: String? = null,
     ): ObjectStoreConfig =
         object : ObjectStoreConfig {
             override fun kind() = kind
@@ -132,6 +150,8 @@ class ObjectStorageTest {
                     override fun bucket(): Optional<String> = Optional.ofNullable(bucket)
 
                     override fun endpoint(): Optional<String> = Optional.ofNullable(endpoint)
+
+                    override fun publicEndpoint(): Optional<String> = Optional.ofNullable(publicEndpoint)
 
                     override fun region() = "eu-central-1"
 

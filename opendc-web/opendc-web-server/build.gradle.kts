@@ -76,7 +76,6 @@ dependencies {
     implementation(libs.quarkus.redis.client)
     implementation(libs.quarkus.jdbc.postgresql)
     implementation(libs.quarkus.jdbc.h2)
-    implementation(libs.quarkus.quinoa.runtime)
 
     implementation(enforcedPlatform(libs.aws.bom))
     implementation(libs.aws.s3)
@@ -99,13 +98,6 @@ tasks.test {
     dependsOn(":opendc-web:opendc-web-launcher:installDist")
 }
 
-// Quinoa builds the frontend itself from ui-dir during quarkusBuild; the frontend module's own
-// nextBuild task stays as the standalone assemble/check path. Never run both pnpm processes in
-// the same directory concurrently under a parallel root build.
-tasks.quarkusBuild {
-    mustRunAfter(":opendc-web:opendc-web-frontend:nextBuild")
-}
-
 // The application plugin generates the start scripts; the Quarkus fast-jar launcher carries its
 // own classpath manifest, so it is the only entry the scripts need.
 tasks.startScripts {
@@ -114,22 +106,40 @@ tasks.startScripts {
 
 val quarkusAppDir = layout.buildDirectory.dir("quarkus-app")
 
+// A distribution is the whole self-hosted product: the server, the frontend's static export it
+// serves, and the launcher its local dispatcher starts. src/dist/config points the server at both.
+// Only the distribution builds the frontend, so neither a development run nor a test ever does.
+evaluationDependsOn(":opendc-web:opendc-web-frontend")
+evaluationDependsOn(":opendc-web:opendc-web-launcher")
+
+val frontendExport = project(":opendc-web:opendc-web-frontend").tasks.named("nextBuild")
+val launcherDistribution = project(":opendc-web:opendc-web-launcher").tasks.named("installDist")
+val launcherInstallDir = project(":opendc-web:opendc-web-launcher").layout.buildDirectory.dir("install")
+
 distributions {
     main {
-        distributionBaseName.set("opendc")
+        distributionBaseName.set("opendc-server")
 
         contents {
             from("../../LICENSE.txt")
             from(tasks.quarkusBuild) {
                 into("lib")
             }
+            from(frontendExport) {
+                into("frontend")
+            }
+            from(launcherDistribution) {
+                into("launcher")
+            }
             // The application plugin hard-wires the module jar and the plain runtime classpath
             // into lib/ with no removal API. The Quarkus fast-jar under build/quarkus-app already
             // bundles every dependency, so those defaults would ship each jar twice. Keep only
-            // jars that come out of the Quarkus build.
+            // jars that come out of the Quarkus build or the launcher's own distribution.
             exclude { element ->
+                val file = element.file.toPath()
                 element.name.endsWith(".jar") &&
-                    !element.file.toPath().startsWith(quarkusAppDir.get().asFile.toPath())
+                    !file.startsWith(quarkusAppDir.get().asFile.toPath()) &&
+                    !file.startsWith(launcherInstallDir.get().asFile.toPath())
             }
         }
     }

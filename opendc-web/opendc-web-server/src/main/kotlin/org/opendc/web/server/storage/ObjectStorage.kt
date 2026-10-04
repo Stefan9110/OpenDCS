@@ -71,6 +71,13 @@ interface ObjectStoreConfig {
          */
         fun endpoint(): Optional<String>
 
+        /**
+         * What a browser reaches the bucket at, where that differs from [endpoint]: a bucket on a
+         * private network beside the server, such as MinIO in the compose stack. Defaults to
+         * [endpoint].
+         */
+        fun publicEndpoint(): Optional<String>
+
         /** Required by the SDK even where the provider ignores it. */
         @WithDefault("us-east-1")
         fun region(): String
@@ -117,9 +124,11 @@ class ObjectStorage(private val config: ObjectStoreConfig) {
             )
         val region = Region.of(s3.region())
         val endpoint = s3.endpoint().map(URI::create)
+        val publicEndpoint = s3.publicEndpoint().map(URI::create).or { endpoint }
         return S3ObjectStore(
             client = buildClient(s3, credentials, region, endpoint),
-            presigner = buildPresigner(s3, credentials, region, endpoint),
+            launcherPresigner = buildPresigner(s3, credentials, region, endpoint),
+            browserPresigner = buildPresigner(s3, credentials, region, publicEndpoint),
             bucket = required(s3.bucket(), "bucket"),
             uploadWindow = s3.uploadWindow(),
         )

@@ -32,6 +32,9 @@ plugins {
 application {
     applicationName = "opendc-launcher"
     mainClass.set("org.opendc.web.launcher.MainKt")
+    // A JVM that has run out of memory is in no state to report anything, and its exit code is
+    // what tells every dispatcher to retry with more.
+    applicationDefaultJvmArgs = listOf("-XX:+ExitOnOutOfMemoryError")
 }
 
 dependencies {

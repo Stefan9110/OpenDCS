@@ -78,10 +78,16 @@ private fun ceilDiv(
     by: Long,
 ): Long = (value + by - 1) / by
 
-/** Objects in an S3-compatible bucket, which is what a deployment uses. */
+/**
+ * Objects in an S3-compatible bucket, which is what a deployment uses.
+ *
+ * Signed URLs go to two audiences that may reach the bucket at different addresses: launchers, which
+ * run beside the server, and browsers, which upload from outside it. Each is signed for its own.
+ */
 class S3ObjectStore(
     private val client: S3Client,
-    private val presigner: S3Presigner,
+    private val launcherPresigner: S3Presigner,
+    private val browserPresigner: S3Presigner,
     private val bucket: String,
     private val uploadWindow: Duration,
 ) : ObjectStore {
@@ -147,7 +153,7 @@ class S3ObjectStore(
         // hold an upload open. Nothing is left behind if the browser never sends it.
         if (slices.size == 1) {
             val signed =
-                presigner.presignPutObject(
+                browserPresigner.presignPutObject(
                     PutObjectPresignRequest
                         .builder()
                         .signatureDuration(uploadWindow)
@@ -161,7 +167,7 @@ class S3ObjectStore(
         return UploadTarget.Direct(
             slices.mapIndexed { index, slice ->
                 val signed =
-                    presigner.presignUploadPart(
+                    browserPresigner.presignUploadPart(
                         UploadPartPresignRequest
                             .builder()
                             .signatureDuration(uploadWindow)
@@ -186,7 +192,7 @@ class S3ObjectStore(
         key: String,
         lifetime: Duration,
     ): String =
-        presigner
+        launcherPresigner
             .presignGetObject(
                 GetObjectPresignRequest
                     .builder()
@@ -200,7 +206,7 @@ class S3ObjectStore(
         key: String,
         lifetime: Duration,
     ): String =
-        presigner
+        launcherPresigner
             .presignPutObject(
                 PutObjectPresignRequest
                     .builder()
@@ -251,7 +257,8 @@ class S3ObjectStore(
 
     override fun close() {
         client.close()
-        presigner.close()
+        launcherPresigner.close()
+        browserPresigner.close()
     }
 
     /**
