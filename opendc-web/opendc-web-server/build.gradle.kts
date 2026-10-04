@@ -120,14 +120,8 @@ distributions {
 
         contents {
             from("../../LICENSE.txt")
-            from("config") {
-                into("config")
-            }
             from(tasks.quarkusBuild) {
                 into("lib")
-            }
-            from("../../traces") {
-                into("traces")
             }
             // The application plugin hard-wires the module jar and the plain runtime classpath
             // into lib/ with no removal API. The Quarkus fast-jar under build/quarkus-app already
