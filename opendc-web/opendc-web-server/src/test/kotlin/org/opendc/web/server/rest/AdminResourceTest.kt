@@ -133,7 +133,9 @@ class AdminResourceTest {
     // Counters are registered for every value up front, so a dashboard shows zero rather than nothing.
     @Test
     fun `serves health and metrics on the management port`() {
-        given().port(MANAGEMENT_PORT).get("/q/health/ready").then().statusCode(200)
+        for (probe in listOf("live", "ready", "started")) {
+            given().port(MANAGEMENT_PORT).get("/q/health/$probe").then().statusCode(200)
+        }
         given()
             .port(MANAGEMENT_PORT)
             .get("/q/metrics")
@@ -141,6 +143,10 @@ class AdminResourceTest {
             .statusCode(200)
             .body(containsString("opendc_executions_settled_total{reason=\"walltime\"}"))
             .body(containsString("opendc_executions_launched_total{outcome=\"accepted\"}"))
+            .body(containsString("opendc_executions{state=\"queued\"}"))
+            .body(containsString("opendc_units_queued "))
+            .body(containsString("opendc_platform_cores_total "))
+            .body(containsString("opendc_platform_cores_allocated "))
     }
 
     private fun submitted(name: String): String {

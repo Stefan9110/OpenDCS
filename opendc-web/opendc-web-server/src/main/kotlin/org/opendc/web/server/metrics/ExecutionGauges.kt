@@ -24,6 +24,7 @@ package org.opendc.web.server.metrics
 
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
+import io.quarkus.runtime.Startup
 import io.quarkus.scheduler.Scheduled
 import jakarta.enterprise.context.ApplicationScoped
 import jakarta.transaction.Transactional
@@ -37,7 +38,11 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * The state of the queue and the platform, read from Postgres every 15 seconds and held, so a scrape
  * never queries the database. Every replica reports the same numbers, so dashboards take the max.
+ *
+ * Nothing injects this, so it starts with the application: left lazy, the gauges would not exist
+ * until the first refresh, and not at all where the scheduler is off.
  */
+@Startup
 @ApplicationScoped
 class ExecutionGauges(
     registry: MeterRegistry,
