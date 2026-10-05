@@ -1,16 +1,20 @@
 "use client"
 
+import { ChartCard } from "@/components/experiment/results/ChartCard"
 import { HeadlineStats } from "@/components/experiment/results/HeadlineStats"
-import { MetricChart } from "@/components/experiment/results/MetricChart"
+import { MetricChart, type PlottedRun, legendOf } from "@/components/experiment/results/MetricChart"
 import { RunPicker } from "@/components/experiment/results/RunPicker"
 import { ScenarioComparison } from "@/components/experiment/results/ScenarioComparison"
 import {
-    MAX_OVERLAID_RUNS,
+    type ColorScheme,
+    type ShownRun,
+    defaultRuns,
     describeRuns,
     formatInterval,
     formatSimulatedDuration,
     metricOptions,
     resultsCsv,
+    seriesColor,
 } from "@/components/experiment/results/resultsView"
 import { PanelGhost } from "@/components/util/Ghost"
 import { QueryState } from "@/components/util/QueryState"
@@ -27,9 +31,10 @@ import {
     reportedMetrics,
     simulatedSpan,
 } from "@/lib/experiment/results"
-import { ActionIcon, Alert, Button, Group, Paper, Select, Stack, Text, Title, Tooltip } from "@mantine/core"
-import { IconDownload, IconFileZip, IconFlask, IconInfoCircle } from "@tabler/icons-react"
-import { type ReactNode, useState } from "react"
+import type { ExperimentSpec } from "@/lib/experiment/spec"
+import { Alert, Button, Group, Select, Stack, Text, useComputedColorScheme } from "@mantine/core"
+import { IconDownload, IconFileZip, IconFlask } from "@tabler/icons-react"
+import { useState } from "react"
 
 const DEFAULT_METRIC: MetricId = "host.cpu_utilization"
 
@@ -53,8 +58,9 @@ export function ResultsPanel({ experiment }: { experiment: Experiment }) {
 
 function LoadedResults({ experiment, results }: { experiment: Experiment; results: ExperimentResults }) {
     const reported = reportedMetrics(results)
+    const scheme = useComputedColorScheme("light")
     const [preferred, setPreferred] = useState<MetricId>(DEFAULT_METRIC)
-    const [chosen, setChosen] = useState<number[]>([])
+    const [picked, setPicked] = useState<ShownRun[]>([])
 
     // Parquet lands per scenario, so anything past queued has files before it has samples to chart.
     const downloads = experiment.state !== "queued" && <ResultDownloads experiment={experiment} results={results} />
@@ -71,14 +77,11 @@ function LoadedResults({ experiment, results }: { experiment: Experiment; result
     }
 
     const metric = pickMetric(reported, preferred)
-    const shown = pickRuns(results, chosen)
-    const runs = results.scenarios.filter((scenario) => shown.includes(scenario.scenarioIndex))
-    const labels = describeRuns(
-        experiment.spec,
-        runs.map((run) => run.scenarioIndex),
-    )
-    const primary = runs[0]
+    const shown = pickRuns(results, picked)
+    const lines = plottedRuns(results, experiment.spec, shown, scheme)
+    const primary = lines[0]
     const spanMs = simulatedSpan(results)
+    const fileName = fileSlug(`${experiment.name} ${metric.label}`)
 
     return (
         <Stack gap="md">
@@ -96,7 +99,7 @@ function LoadedResults({ experiment, results }: { experiment: Experiment; result
                         spec={experiment.spec}
                         scenarios={results.scenarios}
                         chosen={shown}
-                        onChange={setChosen}
+                        onChange={setPicked}
                     />
                 </Group>
                 {downloads}
@@ -105,9 +108,9 @@ function LoadedResults({ experiment, results }: { experiment: Experiment; result
             {primary && (
                 <Stack gap={6}>
                     <Text size="xs" c="dimmed">
-                        {labels[0]?.short} totals
+                        {primary.label.short} totals
                     </Text>
-                    <HeadlineStats run={primary} />
+                    <HeadlineStats run={primary.scenario} />
                 </Stack>
             )}
 
@@ -115,8 +118,11 @@ function LoadedResults({ experiment, results }: { experiment: Experiment; result
                 title={`${metric.label} over simulated time`}
                 caption={`${formatSimulatedDuration(spanMs)} simulated, one point per ${formatInterval(results.bucketMs)}`}
                 hint={metric.description}
+                fileName={`${fileName}.png`}
+                // A saved image has no run picker beside it, so it names the scenario even when it is alone.
+                legend={results.scenarios.length > 1 ? legendOf(lines) : []}
             >
-                <MetricChart runs={runs} labels={labels} metric={metric.id} spanMs={spanMs} />
+                <MetricChart lines={lines} metric={metric.id} spanMs={spanMs} />
             </ChartCard>
 
             {results.scenarios.length > 1 && (
@@ -124,6 +130,8 @@ function LoadedResults({ experiment, results }: { experiment: Experiment; result
                     title={`${metric.label} per scenario`}
                     caption={`All ${results.scenarios.length} scenarios, reduced over each whole run`}
                     hint={`Every scenario reduced to a single number by taking the ${metric.reduce} of its samples.`}
+                    fileName={`${fileName}-per-scenario.png`}
+                    legend={[]}
                 >
                     <ScenarioComparison spec={experiment.spec} scenarios={results.scenarios} metric={metric.id} />
                 </ChartCard>
@@ -155,41 +163,6 @@ function ResultDownloads({ experiment, results }: { experiment: Experiment; resu
     )
 }
 
-function ChartCard({
-    title,
-    caption,
-    hint,
-    children,
-}: {
-    title: string
-    caption: string
-    hint: string
-    children: ReactNode
-}) {
-    return (
-        <Paper withBorder radius="md" p="md">
-            <Stack gap="sm">
-                <Stack gap={2}>
-                    <Group gap={6}>
-                        <Title order={5} fw={500}>
-                            {title}
-                        </Title>
-                        <Tooltip label={hint} withArrow multiline w={280}>
-                            <ActionIcon variant="subtle" color="gray" size="xs" aria-label={`About ${title}`}>
-                                <IconInfoCircle size={14} />
-                            </ActionIcon>
-                        </Tooltip>
-                    </Group>
-                    <Text size="xs" c="dimmed">
-                        {caption}
-                    </Text>
-                </Stack>
-                {children}
-            </Stack>
-        </Paper>
-    )
-}
-
 function pickMetric(reported: ResultMetric[], preferred: MetricId): ResultMetric {
     const chosen = reported.find((metric) => metric.id === preferred) ?? reported[0]
     if (!chosen) throw new Error("no metric to show")
@@ -200,10 +173,30 @@ function metricIdOf(raw: string | null, fallback: MetricId): MetricId {
     return RESULT_METRICS.find((metric) => metric.id === raw)?.id ?? fallback
 }
 
-function pickRuns(results: ExperimentResults, chosen: number[]): number[] {
+function pickRuns(results: ExperimentResults, picked: ShownRun[]): ShownRun[] {
     const available = results.scenarios.map((scenario) => scenario.scenarioIndex)
-    const kept = chosen.filter((index) => available.includes(index))
-    return kept.length > 0 ? kept : available.slice(0, MAX_OVERLAID_RUNS)
+    const kept = picked.filter((run) => available.includes(run.scenarioIndex))
+    return kept.length > 0 ? kept : defaultRuns(available)
+}
+
+// In scenario order, so the legend and the totals read the same whichever run was picked first.
+function plottedRuns(
+    results: ExperimentResults,
+    spec: ExperimentSpec,
+    shown: ShownRun[],
+    scheme: ColorScheme,
+): PlottedRun[] {
+    const ordered = [...shown].sort((left, right) => left.scenarioIndex - right.scenarioIndex)
+    const labels = describeRuns(
+        spec,
+        ordered.map((run) => run.scenarioIndex),
+    )
+    return ordered.flatMap((run, position) => {
+        const scenario = results.scenarios.find((entry) => entry.scenarioIndex === run.scenarioIndex)
+        const label = labels[position]
+        if (scenario === undefined || label === undefined) return []
+        return [{ scenario, label, color: seriesColor(run.lane, scheme) }]
+    })
 }
 
 function downloadCsv(name: string, results: ExperimentResults): void {

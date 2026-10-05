@@ -1,4 +1,5 @@
 import { ResultsPanel } from "@/components/experiment/results/ResultsPanel"
+import { downloadChartImage } from "@/components/experiment/results/chartImage"
 import { resultsArchiveLink } from "@/lib/api/experiments"
 import type { Experiment } from "@/lib/api/types"
 import type { ExperimentResults } from "@/lib/experiment/results"
@@ -132,5 +133,15 @@ describe("downloading an experiment's results", () => {
         show("draft", RESULTS)
 
         expect(screen.queryByRole("button", { name: "Download all results" })).not.toBeInTheDocument()
+    })
+})
+
+describe("saving a chart as an image", () => {
+    it("says there is nothing to save before the chart has been drawn", async () => {
+        const image = { title: "CPU utilization", caption: "", legend: [], fileName: "chart.png" }
+
+        await expect(downloadChartImage(document.createElement("div"), image)).rejects.toThrow(
+            "There is no chart to save yet",
+        )
     })
 })

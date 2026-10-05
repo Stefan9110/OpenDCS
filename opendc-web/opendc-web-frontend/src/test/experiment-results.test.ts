@@ -1,4 +1,13 @@
-import { formatScaled, timeAxis } from "@/components/experiment/results/resultsView"
+import {
+    type ShownRun,
+    defaultRuns,
+    formatInterval,
+    formatScaled,
+    formatTick,
+    tickAxisWidth,
+    timeAxis,
+    toggleRun,
+} from "@/components/experiment/results/resultsView"
 import {
     RESULT_METRICS,
     type ResultPoint,
@@ -83,13 +92,88 @@ describe("showing a share of a large fleet", () => {
     })
 
     it("gives neighbouring axis ticks different labels at the scale a large fleet runs at", () => {
-        const ticks = [0.5, 1, 1.5, 2].map((tick) => formatScaled(tick, utilization.sample))
+        const ticks = [0.5, 1, 1.5, 2].map((tick) => formatTick(tick, utilization.sample))
 
         expect(new Set(ticks).size).toBe(ticks.length)
     })
 
     it("still reads plainly for a fleet that is busy", () => {
         expect(formatScaled(42.9, utilization.sample)).toBe("42.9 %")
+    })
+})
+
+// The unit sits in the axis label, so ".00 kWh" on every tick only widened the axis until its labels
+// ran off the left of the chart.
+describe("value-axis ticks", () => {
+    const energy = metricById("powerSource.energy_usage")
+
+    it("shows a round tick as the number it is, without trailing decimals or a unit", () => {
+        expect(formatTick(300_000, energy.sample)).toBe("300,000")
+        expect(formatTick(2.5, energy.sample)).toBe("2.5")
+    })
+
+    it("widens the axis for longer labels rather than letting them run off the chart", () => {
+        const narrow = tickAxisWidth([{ t: 0, run: 9 }], ["run"], energy.sample)
+        const wide = tickAxisWidth([{ t: 0, run: 287_543 }], ["run"], energy.sample)
+
+        expect(wide).toBeGreaterThan(narrow)
+    })
+
+    it("sizes the axis by the values reported, not by the instants a run has no value at", () => {
+        expect(tickAxisWidth([{ t: 0 }, { t: 1, run: 5 }], ["run"], energy.sample)).toBe(
+            tickAxisWidth([{ t: 1, run: 5 }], ["run"], energy.sample),
+        )
+    })
+})
+
+// The server widens a point by doubling, so a point can cover 80 minutes; calling that "one per hour"
+// misstates what each point sums or averages over.
+describe("the interval one point covers", () => {
+    it("names a whole unit on its own", () => {
+        expect(formatInterval(3_600_000)).toBe("hour")
+        expect(formatInterval(86_400_000)).toBe("day")
+        expect(formatInterval(5 * 60_000)).toBe("5 minutes")
+    })
+
+    it("spells out every unit of an interval that is not a whole one", () => {
+        expect(formatInterval(80 * 60_000)).toBe("1 hour 20 minutes")
+        expect(formatInterval(320 * 60_000)).toBe("5 hours 20 minutes")
+        expect(formatInterval(2560 * 60_000)).toBe("1 day 18 hours 40 minutes")
+    })
+})
+
+// A colour names a scenario. Repainting the runs that stay when one is taken off makes the reader
+// relearn which line is which.
+describe("the colours of overlaid runs", () => {
+    const lanes = (shown: ShownRun[]) => Object.fromEntries(shown.map((run) => [run.scenarioIndex, run.lane]))
+
+    it("keeps every run's colour when another is taken off", () => {
+        expect(lanes(toggleRun(defaultRuns([0, 1, 2]), 1))).toEqual({ 0: 0, 2: 2 })
+    })
+
+    it("gives a run its own colour back when it returns", () => {
+        const returned = toggleRun(toggleRun(defaultRuns([0, 1, 2]), 1), 1)
+
+        expect(lanes(returned)).toEqual({ 0: 0, 1: 1, 2: 2 })
+    })
+
+    it("takes the oldest run off a full chart and gives the newcomer its colour, leaving the rest alone", () => {
+        expect(lanes(toggleRun(defaultRuns([0, 1, 2, 3]), 3))).toEqual({ 1: 1, 2: 2, 3: 0 })
+    })
+
+    it("never takes the last run off the chart", () => {
+        const alone = toggleRun(toggleRun(defaultRuns([0, 1]), 1), 0)
+
+        expect(lanes(alone)).toEqual({ 0: 0 })
+    })
+
+    it("draws the first scenarios in their own colours even when one of them reports late", () => {
+        expect(lanes(defaultRuns([0, 2]))).toEqual({ 0: 0, 2: 2 })
+        expect(lanes(defaultRuns([0, 1, 2]))).toEqual({ 0: 0, 1: 1, 2: 2 })
+    })
+
+    it("gives scenarios past the first three the colours left free", () => {
+        expect(lanes(defaultRuns([1, 3, 4]))).toEqual({ 1: 1, 3: 0, 4: 2 })
     })
 })
 

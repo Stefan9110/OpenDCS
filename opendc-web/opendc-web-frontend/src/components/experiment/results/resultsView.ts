@@ -37,6 +37,42 @@ export function magnitudeColor(scheme: ColorScheme): string {
     return seriesColor(0, scheme)
 }
 
+/** A scenario on the time chart, and the lane, so the colour, it keeps for as long as it stays there. */
+export interface ShownRun {
+    scenarioIndex: number
+    lane: number
+}
+
+// The first scenarios each own a lane, so an experiment of up to three always draws a scenario in the
+// same colour. Any other scenario takes the first lane left free.
+function laneFor(shown: ShownRun[], scenarioIndex: number): number {
+    const taken = new Set(shown.map((run) => run.lane))
+    if (scenarioIndex < MAX_OVERLAID_RUNS && !taken.has(scenarioIndex)) return scenarioIndex
+    let lane = 0
+    while (taken.has(lane)) lane += 1
+    return lane
+}
+
+/** What the time chart shows until the reader picks: the first scenarios to report. */
+export function defaultRuns(available: number[]): ShownRun[] {
+    const shown: ShownRun[] = []
+    for (const scenarioIndex of available.slice(0, MAX_OVERLAID_RUNS)) {
+        shown.push({ scenarioIndex, lane: laneFor(shown, scenarioIndex) })
+    }
+    return shown
+}
+
+// Taking a run off leaves every other run its colour; adding one to a full chart takes the oldest off.
+// The last run stays, so the chart is never empty.
+export function toggleRun(shown: ShownRun[], scenarioIndex: number): ShownRun[] {
+    if (shown.some((run) => run.scenarioIndex === scenarioIndex)) {
+        const kept = shown.filter((run) => run.scenarioIndex !== scenarioIndex)
+        return kept.length > 0 ? kept : shown
+    }
+    const room = shown.length < MAX_OVERLAID_RUNS ? shown : shown.slice(1)
+    return [...room, { scenarioIndex, lane: laneFor(room, scenarioIndex) }]
+}
+
 export interface RunLabels {
     short: string
     full: string
@@ -110,12 +146,32 @@ export function comparisonRows(scenarios: ScenarioResults[], metric: MetricId): 
     })
 }
 
-export function formatScaled(value: number, scale: MetricScale): string {
-    const shown = new Intl.NumberFormat("en-GB", {
-        minimumFractionDigits: scale.decimals,
-        maximumFractionDigits: scale.decimals,
+function formatNumber(value: number, decimals: number): string {
+    return new Intl.NumberFormat("en-GB", {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
     }).format(value)
+}
+
+export function formatScaled(value: number, scale: MetricScale): string {
+    const shown = formatNumber(value, scale.decimals)
     return scale.unit === "" ? shown : `${shown} ${scale.unit}`
+}
+
+/** A tick on a value axis: a round number shows only the decimals it has, and the axis label carries the unit. */
+export function formatTick(value: number, scale: MetricScale): string {
+    return new Intl.NumberFormat("en-GB", { maximumFractionDigits: scale.decimals }).format(value)
+}
+
+// A glyph at the axis's 12px, and the gap a tick keeps from the axis line.
+const TICK_CHAR_PX = 7
+const TICK_GAP_PX = 16
+
+// Recharts gives a value axis a fixed width. It never rounds the top tick up past twice the largest
+// value, so that number at full precision is as wide as any label on the axis can get.
+export function tickAxisWidth(rows: Array<Record<string, number>>, keys: string[], scale: MetricScale): number {
+    const largest = Math.max(0, ...rows.flatMap((row) => keys.map((key) => Math.abs(row[key] ?? 0))))
+    return formatNumber(2 * largest, scale.decimals).length * TICK_CHAR_PX + TICK_GAP_PX
 }
 
 export function formatReduced(value: number, metric: MetricId): string {
@@ -197,10 +253,20 @@ function plural(count: number, unit: string): string {
     return `${count} ${unit}${count === 1 ? "" : "s"}`
 }
 
-// "every 1 day" reads badly where "every day" does not.
+// Spelled out in full, since a point covering 80 minutes is not one per hour. "Every 1 day" reads badly
+// where "every day" does not.
 export function formatInterval(milliseconds: number): string {
-    const spelled = formatSimulatedDuration(milliseconds)
-    return spelled.startsWith("1 ") ? spelled.slice(2) : spelled
+    const minutes = Math.max(1, Math.round(milliseconds / MINUTE_MS))
+    const parts: Array<[number, string]> = [
+        [Math.floor(minutes / (DAY_MS / MINUTE_MS)), "day"],
+        [Math.floor((minutes % (DAY_MS / MINUTE_MS)) / (HOUR_MS / MINUTE_MS)), "hour"],
+        [minutes % (HOUR_MS / MINUTE_MS), "minute"],
+    ]
+    const spelled = parts
+        .filter(([count]) => count > 0)
+        .map(([count, unit]) => plural(count, unit))
+        .join(" ")
+    return /^1 [a-z]+$/.test(spelled) ? spelled.slice(2) : spelled
 }
 
 export function resultsCsv(results: ExperimentResults): string {

@@ -1,6 +1,12 @@
 "use client"
 
-import { MAX_OVERLAID_RUNS, describeRuns, seriesColor } from "@/components/experiment/results/resultsView"
+import {
+    MAX_OVERLAID_RUNS,
+    type ShownRun,
+    describeRuns,
+    seriesColor,
+    toggleRun,
+} from "@/components/experiment/results/resultsView"
 import type { ScenarioResults } from "@/lib/experiment/results"
 import type { ExperimentSpec } from "@/lib/experiment/spec"
 import { Button, Checkbox, Group, Menu, Stack, Text, useComputedColorScheme } from "@mantine/core"
@@ -14,8 +20,8 @@ export function RunPicker({
 }: {
     spec: ExperimentSpec
     scenarios: ScenarioResults[]
-    chosen: number[]
-    onChange: (chosen: number[]) => void
+    chosen: ShownRun[]
+    onChange: (chosen: ShownRun[]) => void
 }) {
     const scheme = useComputedColorScheme("light")
     const labels = describeRuns(
@@ -24,15 +30,6 @@ export function RunPicker({
     )
 
     if (scenarios.length <= 1) return undefined
-
-    const toggle = (scenarioIndex: number) => {
-        if (chosen.includes(scenarioIndex)) {
-            const kept = chosen.filter((entry) => entry !== scenarioIndex)
-            if (kept.length > 0) onChange(kept)
-            return
-        }
-        onChange([...chosen, scenarioIndex].slice(-MAX_OVERLAID_RUNS))
-    }
 
     return (
         <Menu position="bottom-start" closeOnItemClick={false} withinPortal>
@@ -45,16 +42,19 @@ export function RunPicker({
                 <Menu.Label>Overlay up to {MAX_OVERLAID_RUNS} at a time</Menu.Label>
                 {scenarios.map((scenario, row) => {
                     const label = labels[row] ?? { short: `#${scenario.scenarioIndex}`, full: "" }
-                    const position = chosen.indexOf(scenario.scenarioIndex)
+                    const lane = chosen.find((run) => run.scenarioIndex === scenario.scenarioIndex)?.lane
                     return (
-                        <Menu.Item key={scenario.scenarioIndex} onClick={() => toggle(scenario.scenarioIndex)}>
+                        <Menu.Item
+                            key={scenario.scenarioIndex}
+                            onClick={() => onChange(toggleRun(chosen, scenario.scenarioIndex))}
+                        >
                             <Group gap="sm" wrap="nowrap" align="flex-start">
                                 <Checkbox
-                                    checked={position >= 0}
+                                    checked={lane !== undefined}
                                     readOnly
                                     size="xs"
                                     mt={3}
-                                    color={position >= 0 ? seriesColor(position, scheme) : undefined}
+                                    color={lane === undefined ? undefined : seriesColor(lane, scheme)}
                                     aria-label={label.short}
                                 />
                                 <Stack gap={0}>
