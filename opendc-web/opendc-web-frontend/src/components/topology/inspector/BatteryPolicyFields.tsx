@@ -1,15 +1,12 @@
 "use client"
 
-import { FieldLabel, UnitAdornment } from "@/components/topology/inspector/FieldLabel"
+import { FieldLabel, UnitAdornment } from "@/components/util/FieldLabel"
 import type { BatteryPolicy } from "@/lib/topology/spec"
 import { SCALAR_UNIT } from "@/lib/units"
 import { Group, NumberInput } from "@mantine/core"
 import type { ReactNode } from "react"
 
-/**
- * The thresholds of every policy the simulator reads, including the two it no longer offers for new
- * batteries, so an older document still shows what it holds.
- */
+// Covers the two policies no longer offered too, so an older document still shows what it holds.
 export function BatteryPolicyFields({
     policy,
     onChange,

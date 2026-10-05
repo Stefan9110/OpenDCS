@@ -49,8 +49,6 @@ class LocalObjectStoreTest {
         assertArrayEquals(content, store.open(key).use { it.readBytes() })
     }
 
-    // Parquet reads a footer that sits at the end of the file. Without a ranged read, reaching it
-    // means pulling everything before it, which for a large trace is the whole object.
     @Test
     fun `a range reads part of an object without reading what comes before it`() {
         val content = ByteArray(5_000) { (it % 251).toByte() }
@@ -88,8 +86,7 @@ class LocalObjectStoreTest {
         assertTrue(store.exists(key))
         store.delete(key)
         assertFalse(store.exists(key))
-        // Deleting a trace removes an object per table whether or not each one arrived, so removing
-        // what is already gone must not throw.
+        // Deleting what is already gone must not throw.
         store.delete(key)
     }
 
@@ -98,8 +95,6 @@ class LocalObjectStoreTest {
         assertThrows<Exception> { store().open(key) }
     }
 
-    // What an experiment produced is decided by its export spec, so an archive has to ask what is
-    // there rather than work out what should have been written.
     @Test
     fun `listing a prefix answers with the keys under it and nothing beside them`() {
         val store = store()
@@ -118,8 +113,6 @@ class LocalObjectStoreTest {
         assertEquals(emptyList<String>(), store().list("results/never-run"))
     }
 
-    // A transfer in flight is a file beside its destination. Handing one to a reader would give them
-    // half an object presented as a whole one.
     @Test
     fun `a transfer still in flight is not listed as an object`() {
         val store = store()
@@ -129,8 +122,6 @@ class LocalObjectStoreTest {
         assertEquals(listOf("results/one/0/seed=0/host.parquet"), store.list("results/one"))
     }
 
-    // A transfer that breaks partway must leave nothing where a whole object is expected, and no
-    // spool beside it either.
     @Test
     fun `nothing is left behind but the object`() {
         val store = store()
@@ -140,15 +131,11 @@ class LocalObjectStoreTest {
         assertEquals(listOf("tasks.parquet"), Files.list(directory).use { it.toList() }.map { it.fileName.toString() })
     }
 
-    // A directory cannot be written to from a browser, so the local store says so and the server
-    // takes the bytes instead. Getting this wrong would hand a development machine a URL to nowhere.
     @Test
     fun `a local store asks for the bytes to come through the server, however large the file`() {
         assertEquals(UploadTarget.ThroughServer, store().uploadTarget(key, 40L * 1024 * 1024 * 1024))
     }
 
-    // There is nothing to assemble, so completing is only a question of whether the request that
-    // carried the bytes ever arrived.
     @Test
     fun `an upload is complete once the file is there`() {
         val store = store()

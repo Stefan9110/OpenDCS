@@ -26,9 +26,7 @@ export function ExperimentView() {
     const params = useSearchParams()
     const experimentId = idParam(params, "id")
 
-    // The experiment's own id is enough to find it, and the project it belongs to comes back with
-    // it. Carrying the project in the link too would let the two disagree, and a breadcrumb would
-    // then name a project the experiment is not in.
+    // The link carries no project id: the experiment names its own, so the two cannot disagree.
     if (experimentId.status !== "ok") {
         return (
             <MessagePage title="No experiment here" message="This link is missing an experiment id.">
@@ -51,8 +49,7 @@ function LoadedExperiment({ experimentId, tab }: { experimentId: Id; tab: TabNam
     const openTab = (name: string | null) =>
         router.replace(`/experiment?id=${experimentId}&tab=${tabOf(name)}`, { scroll: false })
 
-    // An experiment that never loaded, because it was deleted or never existed, leaves no page to
-    // annotate. Only a first load counts: a failed refetch keeps showing what is already on screen.
+    // Only a failed first load is a dead end; a failed refetch keeps what is on screen.
     if (experiment.isError && experiment.data === undefined) {
         return (
             <MessagePage title="Experiment not found" message={problemOf(experiment.error).title}>

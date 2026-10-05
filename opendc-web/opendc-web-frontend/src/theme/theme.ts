@@ -1,5 +1,7 @@
 import { type MantineColorsTuple, createTheme } from "@mantine/core"
 
+export const brandColor = "#00a6d6"
+
 const opendc: MantineColorsTuple = [
     "#e0f7ff",
     "#b8ecfb",
@@ -7,7 +9,7 @@ const opendc: MantineColorsTuple = [
     "#63d2ef",
     "#43c7ea",
     "#2fbfe8",
-    "#00a6d6",
+    brandColor,
     "#0093bd",
     "#007ea3",
     "#006788",

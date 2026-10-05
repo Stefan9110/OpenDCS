@@ -21,10 +21,11 @@ import { selectionFor } from "@/components/topology/tree"
 import { useTopologyEditor } from "@/components/topology/useTopologyEditor"
 import { EntityBreadcrumbs } from "@/components/util/EntityBreadcrumbs"
 import { openNamePrompt } from "@/components/util/NamePrompt"
+import { downloadJson } from "@/components/util/download"
 import { useProject } from "@/lib/api/projects"
 import type { Id, TopologyTemplate } from "@/lib/api/types"
 import { usePermission } from "@/lib/project/permissions"
-import { dataCenterHeadroom, isOverBudget } from "@/lib/topology/capacity"
+import { dataCenterHeadroom, isOverBudget, supplyOf } from "@/lib/topology/capacity"
 import { placeCluster } from "@/lib/topology/edits"
 import { dataCenterName } from "@/lib/topology/spec"
 import { brokenClusters, brokenDataCenters } from "@/lib/topology/validation"
@@ -34,20 +35,23 @@ import { IconPencil } from "@tabler/icons-react"
 import dynamic from "next/dynamic"
 import { useState } from "react"
 
-// The canvas is loaded on demand because konva is large. Its chunk arriving is still content
-// arriving, so the floor keeps its area rather than spinning in the middle of it.
+const INSPECTOR_WIDTH = 360
+const INSPECTOR_MIN_WIDTH = 300
+const INSPECTOR_MAX_WIDTH = 720
+const COMPACT_QUERY = "(max-width: 75em)"
+
+// Loaded on demand because konva is large; the skeleton keeps the floor's area meanwhile.
 const FloorStage = dynamic(() => import("@/components/topology/canvas/FloorStage").then((m) => m.FloorStage), {
     ssr: false,
     loading: () => <Skeleton h="100%" radius="md" />,
 })
 
 export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
-    // A viewer sees the same builder with nothing that would change the topology.
     const editable = usePermission(template.projectId, "edit")
     const editor = useTopologyEditor(template, editable)
     const [zoom, setZoom] = useState<ZoomCommand>({ action: "fit", nonce: 0 })
-    const inspector = useResizableWidth(360, 300, 720)
-    const compact = useMediaQuery("(max-width: 75em)", false, { getInitialValueInEffect: true })
+    const inspector = useResizableWidth(INSPECTOR_WIDTH, INSPECTOR_MIN_WIDTH, INSPECTOR_MAX_WIDTH)
+    const compact = useMediaQuery(COMPACT_QUERY, false, { getInitialValueInEffect: true })
     const [treeOpened, tree] = useDisclosure(false)
     const [inspectorOpened, inspectorDrawer] = useDisclosure(false)
     const { plan, view, issues } = editor
@@ -111,7 +115,7 @@ export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
                             onUndo={editor.undo}
                             onRedo={editor.redo}
                             onZoom={(action) => setZoom((current) => ({ action, nonce: current.nonce + 1 }))}
-                            onExport={() => downloadTopology(editor.name, plan.topology)}
+                            onExport={() => downloadJson(editor.name, plan.topology)}
                             {...(compact ? { onOpenTree: tree.open, onOpenInspector: inspectorDrawer.open } : {})}
                         />
                         <DataCenterTabs
@@ -127,7 +131,7 @@ export function TopologyBuilder({ template }: { template: TopologyTemplate }) {
                                     key={shown}
                                     floor={floor}
                                     clusters={dataCenter.clusters}
-                                    supply={dataCenterHeadroom(dataCenter).budget}
+                                    supply={supplyOf(dataCenter)}
                                     overBudget={isOverBudget(dataCenterHeadroom(dataCenter))}
                                     selected={selectedClusters(selection, shown)}
                                     broken={brokenClusters(issues, shown, dataCenter.clusters.length)}
@@ -198,14 +202,4 @@ function TopologyBreadcrumbs({
             }
         />
     )
-}
-
-function downloadTopology(name: string, topology: unknown): void {
-    const blob = new Blob([JSON.stringify(topology, null, 4)], { type: "application/json" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `${name.replaceAll(/\s+/g, "-").toLowerCase()}.json`
-    link.click()
-    URL.revokeObjectURL(url)
 }

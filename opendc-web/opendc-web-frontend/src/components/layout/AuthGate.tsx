@@ -2,6 +2,7 @@
 
 import { MessagePage } from "@/components/layout/MessagePage"
 import { OnboardingPage } from "@/components/user/OnboardingPage"
+import { UNREACHABLE_TITLE } from "@/lib/api/client"
 import { useAuth } from "@/lib/auth/auth"
 import { useSessionControls } from "@/lib/auth/session"
 import { Button } from "@mantine/core"
@@ -9,12 +10,9 @@ import { IconLogin, IconLogout, IconRefresh } from "@tabler/icons-react"
 import type { ReactNode } from "react"
 
 /**
- * Interrupts the page when the session says it must not be shown: nobody is signed in, the account
- * is deactivated or still has to choose a handle, or the API cannot be reached at all.
- *
- * While the session is still resolving the page renders anyway. Holding it back would put a second
- * skeleton in front of the one the page already draws, and would queue every request behind the
- * session. The pages guard nothing on their own: the server is what refuses somebody else's data.
+ * Replaces the page when nobody is signed in, the account is deactivated or has no handle yet, or the
+ * API is unreachable. While loading the page renders anyway, so requests are not queued behind the
+ * session; the server, not this gate, is what guards the data.
  */
 export function AuthGate({ children }: Readonly<{ children: ReactNode }>) {
     const auth = useAuth()
@@ -23,7 +21,7 @@ export function AuthGate({ children }: Readonly<{ children: ReactNode }>) {
     switch (auth.status) {
         case "unavailable":
             return (
-                <MessagePage title="Cannot reach OpenDC" message={auth.problem.title}>
+                <MessagePage title={UNREACHABLE_TITLE} message={auth.problem.title}>
                     <Button leftSection={<IconRefresh size={16} />} onClick={auth.retry}>
                         Try again
                     </Button>

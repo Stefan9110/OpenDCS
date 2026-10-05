@@ -3,7 +3,7 @@
 import { isCreatableBatteryPolicy, starterBattery, starterBatteryPolicy } from "@/components/topology/defaults"
 import { BatteryPolicyFields } from "@/components/topology/inspector/BatteryPolicyFields"
 import { CatalogSelect } from "@/components/topology/inspector/CatalogSelect"
-import { FieldLabel, UnitAdornment } from "@/components/topology/inspector/FieldLabel"
+import { FieldLabel, UnitAdornment } from "@/components/util/FieldLabel"
 import { useCatalog } from "@/lib/api/catalogs"
 import type { BatterySpec } from "@/lib/topology/spec"
 import { SCALAR_UNIT } from "@/lib/units"

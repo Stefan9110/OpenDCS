@@ -39,6 +39,7 @@ import org.intellij.lang.annotations.Language
 import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.dispatcher.Grant
+import org.opendc.web.dispatcher.NO_EXIT_CODE
 import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.launcher.PeakMemory
 import java.time.Instant
@@ -98,14 +99,9 @@ sealed interface ObservedSpan {
     ) : ObservedSpan
 }
 
-/** Reported in place of an exit code the platform never recorded. */
-const val NO_EXIT_CODE = -1
-
 /**
- * One `(scenario, seed)` run of a submitted experiment.
- *
- * Written at submit and never removed while the experiment lives. A unit outlives the executions
- * that carry it: retrying puts it in a new one without losing where it has already been.
+ * One `(scenario, seed)` run of a submitted experiment, written at submit. A unit outlives the
+ * executions that carry it: retrying puts it in a new one without losing where it has been.
  */
 @Entity
 @Table(name = "run_units")
@@ -124,11 +120,7 @@ class RunUnit : PanacheEntityBase {
     @Enumerated(EnumType.STRING)
     var state: UnitState = UnitState.QUEUED
 
-    /**
-     * How much work this run is. Written once, at submit, from the document's own workload, and never
-     * touched again: it is what progress is read against, and a denominator that moves is a bar that
-     * runs backwards.
-     */
+    /** Written once at submit from the document's workload, so the progress denominator never moves. */
     var totalTasks: Int = 0
 
     var completedTasks: Int = 0
@@ -212,12 +204,7 @@ class Execution : PanacheEntityBase {
 
     var attempt: Int = 1
 
-    /**
-     * All that is kept of the credential this execution's launcher reports progress with.
-     *
-     * Absent until the work is handed to a platform, which [state] already says. Nothing outside
-     * [grantToken] and [findByToken] ever sees this column.
-     */
+    /** The hash of the launcher's telemetry credential, absent until [state] says the work was handed over. */
     var tokenHash: String? = null
 
     lateinit var dispatcher: String
@@ -348,12 +335,8 @@ class Execution : PanacheEntityBase {
     }
 
     /**
-     * Mints the credential a launcher reports this execution's progress with, and returns it the one
-     * time it can be read.
-     *
-     * A fresh one every time the work goes out, so a token cannot outlive the attempt it was minted
-     * for: an execution that failed and was replaced leaves a process nobody stopped holding a
-     * credential that no longer resolves.
+     * Mints the launcher's telemetry credential and returns it the one time it can be read. A fresh
+     * one every time the work goes out, so a token cannot outlive the attempt it was minted for.
      */
     private fun grantToken(): String {
         val token = newSecret(EXECUTION_TOKEN_PREFIX, TOKEN_BYTES)

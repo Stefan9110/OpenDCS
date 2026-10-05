@@ -1,6 +1,6 @@
 "use client"
 
-import { FieldLabel, UnitAdornment } from "@/components/topology/inspector/FieldLabel"
+import { FieldLabel, UnitAdornment } from "@/components/util/FieldLabel"
 import { DEFAULT_UNIT, type Quantity, type QuantityKind, type Unit, amountIn, parseQuantity } from "@/lib/units"
 import { NumberInput } from "@mantine/core"
 
@@ -15,11 +15,7 @@ const KIND_NAMES: Record<QuantityKind, string> = {
 // Wide enough for the longest unit any field here prints, so the boxes line up in a column.
 const UNIT_WIDTH = 48
 
-/**
- * A measurement field: a plain number counted in one fixed unit, printed beside the box. Values
- * that arrive written in another unit are converted for display, so a stored "2600 MHz" reads as
- * 2.6 GHz rather than making someone work out which spellings the model accepts.
- */
+// A number in one fixed unit; values stored in another unit are converted for display.
 export function QuantityInput<K extends QuantityKind>({
     label,
     kind,

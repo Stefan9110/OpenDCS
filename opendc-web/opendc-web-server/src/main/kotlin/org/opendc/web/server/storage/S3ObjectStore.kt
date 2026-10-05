@@ -42,12 +42,8 @@ import java.nio.file.Files
 import java.time.Duration
 
 /**
- * How much of a file one connection is asked to carry.
- *
- * Measured against a third-party provider, one connection settles at a few megabytes a second and
- * eight of them at eight times that, with no sign of the link itself being the limit. So the size
- * is picked to leave a large file with parts to spare rather than to be as large as the protocol
- * permits: a file sent as one part is a file sent at the speed of one connection.
+ * How much of a file one connection is asked to carry. Kept small because one connection to object
+ * storage settles at a few megabytes a second, so a large file needs many parts in parallel.
  */
 private const val TARGET_PART_SIZE = 32L * 1024 * 1024
 
@@ -58,11 +54,8 @@ private const val MAXIMUM_PARTS = 10_000L
 private const val DELETE_BATCH = 1000
 
 /**
- * The stretches a file of [sizeBytes] is cut into, in order and covering all of it.
- *
- * Every part but the last is a full [TARGET_PART_SIZE], which is what makes an incomplete set
- * recognisable later: parts arrive numbered, so one that is missing shows up either as a gap in the
- * numbering or as a part that is short where the plan says it cannot be.
+ * The stretches a file of [sizeBytes] is cut into, in order and covering all of it. Every part but
+ * the last is full-sized, so a missing part shows up as a gap in the numbering or a short part.
  */
 internal fun planParts(sizeBytes: Long): List<LongRange> {
     val partSize = maxOf(TARGET_PART_SIZE, ceilDiv(sizeBytes, MAXIMUM_PARTS))
@@ -79,10 +72,8 @@ private fun ceilDiv(
 ): Long = (value + by - 1) / by
 
 /**
- * Objects in an S3-compatible bucket, which is what a deployment uses.
- *
- * Signed URLs go to two audiences that may reach the bucket at different addresses: launchers, which
- * run beside the server, and browsers, which upload from outside it. Each is signed for its own.
+ * Objects in an S3-compatible bucket. URLs are signed separately for launchers beside the server and
+ * browsers outside it, which may reach the bucket at different addresses.
  */
 class S3ObjectStore(
     private val client: S3Client,
@@ -124,10 +115,7 @@ class S3ObjectStore(
             false
         }
 
-    /**
-     * Paged, because a bucket answers a listing a thousand keys at a time however many there are and
-     * an experiment of many scenarios and seeds passes that without being unusual.
-     */
+    // Paged: a bucket answers a thousand keys at a time, which a large experiment easily passes.
     override fun list(prefix: String): List<String> =
         client
             .listObjectsV2Paginator { it.bucket(bucket).prefix(prefix) }
@@ -137,8 +125,7 @@ class S3ObjectStore(
 
     override fun delete(key: String) {
         client.deleteObject { it.bucket(bucket).key(key) }
-        // Parts of an upload nobody finished are stored, and charged for, without ever being an
-        // object, so deleting the object is not on its own enough to give the space back.
+        // Parts of an unfinished upload are stored and charged for without being an object.
         for (upload in uploadsOf(key)) {
             client.abortMultipartUpload { it.bucket(bucket).key(key).uploadId(upload.uploadId()) }
         }
@@ -149,8 +136,7 @@ class S3ObjectStore(
         sizeBytes: Long,
     ): UploadTarget {
         val slices = planParts(sizeBytes)
-        // One part is a whole file, and a plain signed PUT carries it without the bucket having to
-        // hold an upload open. Nothing is left behind if the browser never sends it.
+        // A plain signed PUT carries a one-part file and leaves nothing behind if it is never sent.
         if (slices.size == 1) {
             val signed =
                 browserPresigner.presignPutObject(
@@ -176,8 +162,7 @@ class S3ObjectStore(
                                     .builder()
                                     .bucket(bucket)
                                     .key(key)
-                                    // Part numbers start at one, and are what storage orders the
-                                    // assembled object by.
+                                    // S3 part numbers start at one.
                                     .partNumber(index + 1)
                                     .uploadId(uploadId)
                                     .build(),
@@ -216,7 +201,6 @@ class S3ObjectStore(
             ).url()
             .toString()
 
-    /** Deleted a thousand keys at a time, which is as many as one request may name. */
     override fun deletePrefix(prefix: String) {
         for (batch in list("$prefix/").chunked(DELETE_BATCH)) {
             client.deleteObjects { request ->
@@ -235,8 +219,7 @@ class S3ObjectStore(
         val uploadId = uploadsOf(key).maxByOrNull { it.initiated() }?.uploadId() ?: return exists(key)
         val parts = client.listPartsPaginator { it.bucket(bucket).key(key).uploadId(uploadId) }.parts().toList()
         if (!arrivedWhole(parts)) {
-            // Given back rather than left open, so a fresh attempt starts clean and the bucket
-            // stops charging for bytes that are never going to become an object.
+            // Aborted so a fresh attempt starts clean and the orphaned parts stop being charged for.
             client.abortMultipartUpload { it.bucket(bucket).key(key).uploadId(uploadId) }
             return false
         }
@@ -262,14 +245,9 @@ class S3ObjectStore(
     }
 
     /**
-     * Whether these are all the parts of a file, judged against how [planParts] cut it up: numbered
-     * from one without a gap, and every part but the last the same full size.
-     *
-     * Storage assembles whatever it is handed without comment, so a set with a part missing out of
-     * the middle would otherwise become an object very nearly the size of the trace, holding a
-     * parquet footer that points at the wrong places. A set missing its *last* parts is not caught
-     * here and does not need to be: that leaves the file without the footer parquet reads it by, so
-     * it is refused when the trace is checked over.
+     * Whether these are all the parts of a file as [planParts] cut it: numbered from one without a
+     * gap, and every part but the last the same full size. Missing trailing parts are not caught
+     * here; they take the parquet footer with them, so the ingest check refuses the file.
      */
     private fun arrivedWhole(parts: List<Part>): Boolean {
         if (parts.isEmpty()) return false
@@ -279,12 +257,7 @@ class S3ObjectStore(
         return ordered.dropLast(1).all { it.size() == full } && ordered.last().size() <= full
     }
 
-    /**
-     * The uploads of [key] the bucket is still holding open.
-     *
-     * Asked of the bucket rather than remembered here: an upload id means nothing except to the
-     * bucket that issued it, and one read back cannot have drifted from what the bucket really has.
-     */
+    /** The uploads of [key] the bucket is still holding open, asked of the bucket so they cannot drift. */
     private fun uploadsOf(key: String): List<MultipartUpload> =
         client
             .listMultipartUploads { it.bucket(bucket).prefix(key) }

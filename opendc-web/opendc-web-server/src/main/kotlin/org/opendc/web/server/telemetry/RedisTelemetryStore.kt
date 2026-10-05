@@ -30,14 +30,8 @@ import org.slf4j.LoggerFactory
 import java.time.Duration
 
 /**
- * Samples held in Redis, which is what a deployment of more than one server uses.
- *
- * Every key is written with an expiry, so nothing here has to be swept and a run whose launcher
- * vanished takes its samples with it. Redis is asked to persist none of this: what it holds is worth
- * exactly the next poll of a chart.
- *
- * A store that cannot be reached is logged and treated as empty. Telemetry never decides anything, so
- * refusing to answer `/status` because a cache is down would turn a cosmetic outage into a real one.
+ * Samples held in Redis, each key written with an expiry so nothing needs sweeping. An unreachable
+ * Redis is logged and read as empty, so a cache outage never fails `/status`.
  */
 class RedisTelemetryStore(redis: RedisDataSource, private val ttl: Duration) : TelemetryStore {
     private val values = redis.value(String::class.java)

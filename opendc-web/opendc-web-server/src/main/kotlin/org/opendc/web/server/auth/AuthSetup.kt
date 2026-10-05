@@ -54,8 +54,7 @@ enum class AuthMode {
 
 @ConfigMapping(prefix = "opendc.auth")
 interface AuthConfig {
-    // The secure mode is the default on purpose: a deployment that forgets to configure this gets
-    // authentication rather than an open administrator account.
+    // Secure by default: a deployment that forgets this gets sign-in, not an open administrator.
     @WithDefault("auth0")
     fun mode(): AuthMode
 
@@ -90,9 +89,8 @@ sealed interface AuthSettings {
 }
 
 /**
- * The sign-in a deployment's settings describe, cross-checked against the OIDC tenant that verifies
- * the tokens: the two are separate keys, and a mismatch would otherwise be a mode that silently
- * accepts nobody, or anybody. Each problem names the key at fault.
+ * The sign-in a deployment's settings describe, cross-checked against the OIDC tenant, since a
+ * mismatch would silently accept nobody, or anybody. Each problem names the key at fault.
  */
 fun authSettings(
     mode: AuthMode,
@@ -128,10 +126,7 @@ const val IMPLICIT_SUBJECT = "anonymous"
 
 const val IMPLICIT_HANDLE = "local"
 
-/**
- * The account every request of anonymous mode acts as. Put in place at boot, before the socket
- * opens, so resolving a request to it never waits on the database.
- */
+/** The account every request of anonymous mode acts as, seeded at boot before the socket opens. */
 @ApplicationScoped
 class ImplicitAccount {
     val id: Long by lazy { QuarkusTransaction.requiringNew().call { seeded().id } }
@@ -150,11 +145,8 @@ class ImplicitAccount {
 }
 
 /**
- * Settles how this deployment signs callers in, once and at boot, so a misconfigured one fails to
- * start rather than at its first sign-in.
- *
- * Anonymous mode is allowed in a deployment, for a single person running OpenDC for themselves, but
- * it is said out loud at boot: anyone who can reach the port is the administrator.
+ * Settles how this deployment signs callers in at boot, so a misconfigured one fails to start. Anonymous
+ * mode is warned about, since anyone who can reach the port is the administrator.
  */
 @ApplicationScoped
 class AuthSetup(private val config: AuthConfig) {

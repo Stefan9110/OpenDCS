@@ -29,7 +29,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.time.Duration
 
-/** A directory of objects, one file per key. What a development machine and the test suite use. */
+/** A directory of objects, one file per key, for development and tests. */
 class LocalObjectStore(private val root: Path) : ObjectStore {
     override fun put(
         key: String,
@@ -37,8 +37,7 @@ class LocalObjectStore(private val root: Path) : ObjectStore {
     ): Long {
         val target = fileOf(key)
         Files.createDirectories(target.parent)
-        // Written beside its destination and renamed, so a transfer that breaks partway leaves no
-        // half a file where a whole one is expected.
+        // Written beside its destination and renamed, so a broken transfer leaves no half a file.
         val spool = Files.createTempFile(target.parent, ".incoming-", ".part")
         try {
             val size = Files.newOutputStream(spool).use { content.copyTo(it) }
@@ -84,12 +83,7 @@ class LocalObjectStore(private val root: Path) : ObjectStore {
 
     override fun exists(key: String): Boolean = Files.exists(fileOf(key))
 
-    /**
-     * The files under the directory [prefix] names, as the keys they were written under.
-     *
-     * A transfer in flight is written beside its destination under a name beginning with a dot, so
-     * skipping those is what keeps half a file out of an answer that reads as a finished one.
-     */
+    /** The files under the directory [prefix] names, skipping the dot-named spools of transfers in flight. */
     override fun list(prefix: String): List<String> {
         val base = fileOf(prefix)
         if (!Files.isDirectory(base)) {
@@ -107,13 +101,11 @@ class LocalObjectStore(private val root: Path) : ObjectStore {
         Files.deleteIfExists(fileOf(key))
     }
 
-    /** A directory is not reachable from a browser, so the server has to take the bytes itself. */
     override fun uploadTarget(
         key: String,
         sizeBytes: Long,
     ): UploadTarget = UploadTarget.ThroughServer
 
-    /** Bytes that came through the server were a whole file by the time the request that carried them ended. */
     override fun completeUpload(key: String): Boolean = exists(key)
 
     /** A launcher on this machine reads the file itself, so nothing is signed and nothing expires. */
@@ -131,7 +123,6 @@ class LocalObjectStore(private val root: Path) : ObjectStore {
         fileOf(prefix).toFile().deleteRecursively()
     }
 
-    /** A directory holds nothing open between calls. */
     override fun close() {}
 
     private fun fileOf(key: String): Path = root.resolve(key)

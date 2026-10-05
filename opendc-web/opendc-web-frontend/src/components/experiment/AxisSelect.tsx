@@ -1,7 +1,7 @@
 "use client"
 
 import type { AxisChoice } from "@/components/experiment/draftAxes"
-import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
+import { FieldLabel } from "@/components/util/FieldLabel"
 import { MultiSelect, Text, Tooltip } from "@mantine/core"
 
 export function AxisSelect({

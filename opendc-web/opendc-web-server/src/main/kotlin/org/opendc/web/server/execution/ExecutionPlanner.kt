@@ -70,10 +70,7 @@ private const val INPUTS = "inputs"
 
 /**
  * Works out what an experiment's queued units will cost, how they are shaped into executions, and
- * what a launcher is handed to run one.
- *
- * Shaping happens at dispatch rather than at submit, so it sees the slot the dispatcher offers
- * rather than one guessed at when the document was written.
+ * what a launcher is handed to run one. Shaping happens at dispatch, against the slot then on offer.
  */
 @ApplicationScoped
 class ExecutionPlanner(
@@ -88,10 +85,7 @@ class ExecutionPlanner(
         slot: ExecutionSlot,
     ): List<PlannedBag> = planBags(estimate(scenariosOf(experiment), units), slot, config.toPolicy())
 
-    /**
-     * The scenarios no execution on [slot] can hold, whatever they are packed with: one estimated to
-     * run past the slot's time cap, or to need more memory than any grant worth asking for.
-     */
+    /** The scenarios no execution on [slot] can hold, whatever they are packed with. */
     fun unfit(
         scenarios: List<ScenarioSpec>,
         slot: ExecutionSlot,
@@ -101,16 +95,13 @@ class ExecutionPlanner(
     }
 
     /**
-     * What the units [carried] were expected to cost when they last ran, which is where a retry starts.
-     * Kept rather than recomputed, so growth after an out-of-memory kill carries into the next attempt.
+     * What the units [carried] were expected to cost when they last ran, kept rather than recomputed so
+     * growth after an out-of-memory kill carries into the retry.
      */
     fun storedEstimates(carried: List<ExecutionUnit>): List<PlannedUnit> =
         carried.map { PlannedUnit(it.unit.scenarioIndex, it.unit.seed, it.estimatedSeconds, it.estimatedPeakMemoryMb) }
 
-    /**
-     * Writes down an execution of [units] shaped as [bag]. It is started by the next pass of the
-     * queue, or by this one. Its units are carried from here on and start from nothing.
-     */
+    /** Writes down a queued execution of [units] shaped as [bag]; its units are carried from here on. */
     fun queue(
         experiment: Experiment,
         bag: PlannedBag,
@@ -137,8 +128,7 @@ class ExecutionPlanner(
         for (planned in bag.units) {
             val unit = byRun[planned.scenarioIndex to planned.seed] ?: continue
             unit.state = UnitState.CARRIED
-            // The attempt starts over from nothing, so what an earlier one got through is no longer
-            // progress towards anything.
+            // The attempt starts over, so an earlier one's progress no longer counts.
             unit.completedTasks = 0
             val row = ExecutionUnit()
             row.execution = execution
@@ -152,12 +142,9 @@ class ExecutionPlanner(
     }
 
     /**
-     * What one launcher process is handed for [execution].
-     *
-     * Every trace the units name is staged under the launcher's working directory and every reference
-     * rewritten to where it was staged, so the launcher never has to know what a name means. Each run
-     * publishes each of its files and then its outcome to a URL of its own, signed for [lifetime].
-     * [token] is what it reports progress with, and can do nothing else.
+     * What one launcher process is handed for [execution]. Every trace the units name is staged and
+     * every reference rewritten to its staged path, so the launcher never resolves a name. Every URL is
+     * signed for [lifetime]; [token] can only report progress.
      */
     fun manifest(
         execution: Execution,
@@ -221,11 +208,9 @@ class ExecutionPlanner(
 }
 
 /**
- * The inputs one manifest stages, gathered as its units' references are rewritten.
- *
- * Each trace is staged once however many units name it. A trace of several tables is referred to as
- * the directory holding them, since that is what a reader opens; one of a single table as the file.
- * A reference the deployment does not know is left as it is, for the launcher to refuse.
+ * The inputs one manifest stages, each trace once however many units name it. A trace of several
+ * tables is referred to as its directory, one of a single table as the file. An unknown name is left
+ * as it is, for the launcher to refuse.
  */
 private class Staging(
     private val store: ObjectStore,
@@ -255,12 +240,9 @@ private class Staging(
 }
 
 /**
- * How much workload a scenario has to get through.
- *
- * A workload written into the document is counted from the document; a stored trace from what was
- * measured when it was stored. One that was never measured is not guessed at, and estimates for it
- * rest on the model's fixed terms. [find] says which traces may be counted: a quote counts only those
- * its author may use, dispatch every trace a submitted experiment names.
+ * How much workload a scenario has to get through: an inline workload counted from the document, a
+ * stored trace from what was measured when it was stored, an unmeasured one as nothing. [find] says
+ * which traces may be counted: a quote counts only those its author may use.
  */
 fun traceExtentOf(
     workload: WorkloadSpec,

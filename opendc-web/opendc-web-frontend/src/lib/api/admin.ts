@@ -2,11 +2,19 @@ import { apiRequest, apiText } from "@/lib/api/client"
 import type { CarriedOutcome, ExitReason, Handle, Page, PlanTier } from "@/lib/api/types"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
+const ENDED_STATES = ["succeeded", "failed", "cancelled"] as const
+
+type EndedState = (typeof ENDED_STATES)[number]
+
+export const EXECUTION_STATES = ["queued", "submitted", "running", ...ENDED_STATES] as const
+
+export type ExecutionState = (typeof EXECUTION_STATES)[number]
+
 export type ExecutionPhase =
     | { type: "queued" }
     | { type: "submitted"; submittedAt: string }
     | { type: "running"; startedAt: string; elapsedSeconds: number; straggler: boolean }
-    | { type: "ended"; state: string; settledAt: string; reason: ExitReason; message: string }
+    | { type: "ended"; state: EndedState; settledAt: string; reason: ExitReason; message: string }
 
 export interface AdminExecution {
     id: string
@@ -64,24 +72,12 @@ export interface AdminAccount {
 }
 
 /** Which executions to list: the live ones, every one, or those in one state. */
-export type StateFilter = "live" | "all" | "queued" | "submitted" | "running" | "succeeded" | "failed" | "cancelled"
+export type StateFilter = "live" | "all" | ExecutionState
 
-const ALL_STATES = ["queued", "submitted", "running", "succeeded", "failed", "cancelled"] as const
-
-export function statesOf(filter: StateFilter): readonly string[] {
-    switch (filter) {
-        case "live":
-            return []
-        case "all":
-            return ALL_STATES
-        case "queued":
-        case "submitted":
-        case "running":
-        case "succeeded":
-        case "failed":
-        case "cancelled":
-            return [filter]
-    }
+export function statesOf(filter: StateFilter): readonly ExecutionState[] {
+    if (filter === "live") return []
+    if (filter === "all") return EXECUTION_STATES
+    return [filter]
 }
 
 export const adminKeys = {
@@ -94,6 +90,10 @@ export const adminKeys = {
 
 export const ADMIN_PAGE_SIZE = 50
 
+const LIVE_EXECUTIONS_POLL_MS = 5000
+
+const CAPACITY_POLL_MS = 10_000
+
 export function useAdminExecutions(filter: StateFilter, page: number) {
     const params = new URLSearchParams(statesOf(filter).map((state) => ["state", state]))
     params.set("limit", String(ADMIN_PAGE_SIZE))
@@ -101,7 +101,7 @@ export function useAdminExecutions(filter: StateFilter, page: number) {
     return useQuery({
         queryKey: adminKeys.executions(filter, page),
         queryFn: () => apiRequest<Page<AdminExecution>>(`api/v1/admin/executions?${params}`),
-        refetchInterval: filter === "live" ? 5000 : false,
+        refetchInterval: filter === "live" ? LIVE_EXECUTIONS_POLL_MS : false,
     })
 }
 
@@ -136,7 +136,7 @@ export function useAdminCapacity() {
     return useQuery({
         queryKey: adminKeys.capacity,
         queryFn: () => apiRequest<PlatformCapacity>("api/v1/admin/capacity"),
-        refetchInterval: 10_000,
+        refetchInterval: CAPACITY_POLL_MS,
     })
 }
 

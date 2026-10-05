@@ -66,9 +66,7 @@ class TraceLibraryTest {
         assertEquals(listOf("tasks", "fragments"), registered.jsonPath().getList<String>("uploads.table"))
     }
 
-    // The development store is a directory, which a browser cannot write to, so the slot points at
-    // this server. Against object storage it would be a signed URL and these bytes would never come
-    // through here at all.
+    // The development store is a directory a browser cannot write to, so the slot points at this server.
     @Test
     fun `a store the browser cannot reach asks for the bytes through the server`() {
         val registered = register("carbon", unique("through"))
@@ -78,9 +76,7 @@ class TraceLibraryTest {
         assertTrue(registered.jsonPath().getString("uploads[0].parts[0].url").startsWith("api/v1/traces/"))
     }
 
-    // How a file is cut into parts, and so how many connections may carry it at once, is settled
-    // while the targets are handed out. A registration that will not say how large its files are
-    // cannot be answered, and one that says none of them is not describing a parquet table.
+    // Parts are cut when the targets are handed out, so every file needs a size, and an empty one is no table.
     @Test
     fun `a registration has to say how large each of its files is`() {
         ApiTest.requestJson()
@@ -131,9 +127,7 @@ class TraceLibraryTest {
         )
     }
 
-    // A transfer cut off partway leaves a file that starts out perfectly valid. The parquet footer
-    // is written at the end, so what is missing is exactly what proves the file whole: half a
-    // trace cannot pass for a trace.
+    // A truncated file lacks the parquet footer, which is what proves the file whole.
     @Test
     fun `a table cut off partway through is refused`() {
         val id = register("carbon", unique("truncated")).id()
@@ -196,8 +190,7 @@ class TraceLibraryTest {
         register("carbon", name).then().statusCode(409)
     }
 
-    // Registering, uploading and completing are three requests, but the library shows a trace only
-    // once all three have happened: half of one is nobody's business but the uploader's.
+    // The library shows a trace only once registering, uploading and completing have all happened.
     @Test
     fun `an unfinished upload is not in the library`() {
         val name = unique("abandoned")
@@ -206,8 +199,7 @@ class TraceLibraryTest {
         assertFalse(rows().any { it["slug"] == "local/$name" })
     }
 
-    // Since an unfinished upload is invisible, nothing would ever free the name it holds. Starting
-    // again over the top of one is what keeps a failed upload from costing a name for good.
+    // An unfinished upload is invisible, so starting again over it is what frees its name.
     @Test
     fun `a name held by an unfinished upload can be claimed again`() {
         val name = unique("retried")
@@ -261,8 +253,7 @@ class TraceLibraryTest {
         ApiTest.requestJson().get("/api/v1/traces/$id").then().statusCode(404)
     }
 
-    // The deployment's traces are nobody's to change, and saying so is honest: the caller can see
-    // them, so pretending they are absent would contradict the listing they came from.
+    // The caller can see a built-in trace, so changing one is a 403 rather than a 404.
     @Test
     fun `built-in traces cannot be changed or removed`() {
         val builtIn = rows().first { it["access"] == "builtin" }["id"]

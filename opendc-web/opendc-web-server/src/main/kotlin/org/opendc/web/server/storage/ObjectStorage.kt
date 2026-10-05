@@ -44,10 +44,10 @@ import java.time.Duration
 import java.util.Optional
 
 enum class ObjectStoreKind {
-    /** A directory on disk. What a development machine and the test suite use. */
+    /** A directory on disk, for development and tests. */
     LOCAL,
 
-    /** Any S3-compatible object storage, which is what a deployment uses. */
+    /** Any S3-compatible object storage, for a deployment. */
     S3,
 }
 
@@ -65,17 +65,10 @@ interface ObjectStoreConfig {
     interface S3Config {
         fun bucket(): Optional<String>
 
-        /**
-         * The endpoint to talk to, absent only for AWS itself. Any S3-compatible provider is named
-         * here instead, for example `https://fsn1.your-objectstorage.com`.
-         */
+        /** The provider's endpoint, such as `https://fsn1.your-objectstorage.com`; absent for AWS itself. */
         fun endpoint(): Optional<String>
 
-        /**
-         * What a browser reaches the bucket at, where that differs from [endpoint]: a bucket on a
-         * private network beside the server, such as MinIO in the compose stack. Defaults to
-         * [endpoint].
-         */
+        /** Where a browser reaches the bucket, if not at [endpoint], as with MinIO in the compose stack. */
         fun publicEndpoint(): Optional<String>
 
         /** Required by the SDK even where the provider ignores it. */
@@ -86,11 +79,7 @@ interface ObjectStoreConfig {
 
         fun secretKey(): Optional<String>
 
-        /**
-         * Whether a bucket is addressed as `endpoint/bucket` rather than `bucket.endpoint`. The
-         * SDK prefers the latter, which most S3-compatible providers do not serve, so this
-         * defaults to the form that works everywhere.
-         */
+        /** Whether a bucket is addressed as `endpoint/bucket`, which unlike `bucket.endpoint` every provider serves. */
         @WithDefault("true")
         fun pathStyle(): Boolean
 
@@ -100,7 +89,6 @@ interface ObjectStoreConfig {
     }
 }
 
-/** Builds the store the deployment asked for, and holds it open for as long as it runs. */
 @ApplicationScoped
 class ObjectStorage(private val config: ObjectStoreConfig) {
     @Produces
@@ -147,9 +135,7 @@ class ObjectStorage(private val config: ObjectStoreConfig) {
                 .credentialsProvider(credentials)
                 .forcePathStyle(s3.pathStyle())
                 .httpClientBuilder(UrlConnectionHttpClient.builder())
-                // The SDK attaches flexible-checksum headers to every upload by default, which a
-                // number of S3-compatible providers reject outright. AWS is happy either way, so
-                // the interoperable setting is simply the right one.
+                // Several S3-compatible providers reject the flexible-checksum headers the SDK adds by default.
                 .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
                 .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)
         endpoint.ifPresent { builder.endpointOverride(it) }

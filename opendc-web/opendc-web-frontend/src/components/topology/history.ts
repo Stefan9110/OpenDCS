@@ -15,10 +15,6 @@ export function record<T>(history: History<T>, present: T): History<T> {
     return { past: [...history.past, history.present].slice(-DEPTH), present, future: [] }
 }
 
-export function replace<T>(history: History<T>, present: T): History<T> {
-    return present === history.present ? history : { ...history, present }
-}
-
 export function undo<T>(history: History<T>): History<T> {
     const previous = history.past.at(-1)
     if (previous === undefined) return history

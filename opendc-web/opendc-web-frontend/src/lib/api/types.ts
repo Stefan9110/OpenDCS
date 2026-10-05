@@ -39,7 +39,7 @@ export type ExitReason =
     | "rejected"
     | "unknown"
 
-export interface ExitInfo {
+export interface ScenarioExit {
     exitCode: number
     reason: ExitReason
     message?: string
@@ -86,7 +86,7 @@ export interface ScenarioStatus {
     completedTasks: number
     totalTasks: number
     attempt: number
-    exitInfo?: ExitInfo
+    exitInfo?: ScenarioExit
 }
 
 /** One window of a longer list, and how long the whole list is. */
@@ -309,9 +309,4 @@ export interface DownloadLink {
     expiresAt: string
 }
 
-export interface Account {
-    plan: PlanTier
-    projectCount: number
-    budgets: BudgetWindow[]
-    isAdmin: boolean
-}
+export type Account = Pick<UserProfile, "plan" | "projectCount" | "budgets" | "isAdmin">

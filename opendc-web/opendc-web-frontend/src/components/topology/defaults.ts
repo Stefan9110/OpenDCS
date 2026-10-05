@@ -46,10 +46,7 @@ export function starterBattery(): BatterySpec {
     }
 }
 
-/**
- * The policies the editor offers. The simulator still reads runningMedian and runningQuartiles from
- * older documents, which the editor shows, but no longer offers them.
- */
+// runningMedian and runningQuartiles still load from older documents but are no longer offered.
 export const CREATABLE_BATTERY_POLICIES = ["single", "double", "runningMean", "runningMeanPlus"] as const
 
 export type CreatableBatteryPolicy = (typeof CREATABLE_BATTERY_POLICIES)[number]
@@ -65,7 +62,6 @@ export function starterBatteryPolicy(type: CreatableBatteryPolicy): BatteryPolic
         case "double":
             return { type, lowerThreshold: 100, upperThreshold: 200 }
         case "runningMean":
-            return { type, startingThreshold: 150, windowSize: 24 }
         case "runningMeanPlus":
             return { type, startingThreshold: 150, windowSize: 24 }
     }

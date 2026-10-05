@@ -28,9 +28,7 @@ export function DataCenterTabs({
                 <Tabs.List style={{ flexWrap: "nowrap", overflowX: "auto" }}>
                     {names.map((name, index) => (
                         <Tabs.Tab
-                            // Data centers have no identity beyond their place: names repeat, and
-                            // floors are lined up with them by index.
-                            // biome-ignore lint/suspicious/noArrayIndexKey: the index is the identity
+                            // biome-ignore lint/suspicious/noArrayIndexKey: names repeat; floors line up by index
                             key={index}
                             value={String(index)}
                             rightSection={

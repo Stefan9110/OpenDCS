@@ -1,6 +1,7 @@
 "use client"
 
 import { formatCount, formatMemory, formatPower, formatUpdatedAt } from "@/components/format"
+import { downloadJson } from "@/components/util/download"
 import { notifyProblem } from "@/components/util/feedback"
 import { useCreateTopology, useDeleteTopology } from "@/lib/api/topologies"
 import type { Id, TopologyTemplate } from "@/lib/api/types"
@@ -113,7 +114,10 @@ function TopologyRowActions({ projectId, template }: { projectId: Id; template: 
                             Duplicate
                         </Menu.Item>
                     )}
-                    <Menu.Item leftSection={<IconDownload size={16} />} onClick={() => downloadTopology(template)}>
+                    <Menu.Item
+                        leftSection={<IconDownload size={16} />}
+                        onClick={() => downloadJson(template.name, template.topology)}
+                    >
                         Download JSON
                     </Menu.Item>
                     {canEdit && (
@@ -125,14 +129,4 @@ function TopologyRowActions({ projectId, template }: { projectId: Id; template: 
             </Menu>
         </Group>
     )
-}
-
-function downloadTopology(template: TopologyTemplate): void {
-    const blob = new Blob([JSON.stringify(template.topology, null, 4)], { type: "application/json" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `${template.name.replaceAll(/\s+/g, "-").toLowerCase()}.json`
-    link.click()
-    URL.revokeObjectURL(url)
 }

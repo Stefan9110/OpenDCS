@@ -48,12 +48,7 @@ import org.opendc.web.server.model.UserAccount
 import org.opendc.web.server.traces.TraceDisposal
 import java.time.Instant
 
-/**
- * The caller's own account: who they are, the handle they go by, and leaving.
- *
- * These are the only endpoints an account still choosing its handle may use, since choosing one is
- * what they are for.
- */
+/** The caller's own account: the only endpoints an account still choosing its handle may use. */
 @Path("me")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
@@ -107,10 +102,7 @@ private fun UserAccount.toProfile(): UserProfile =
         budgets = budgetsOf(this, Instant.now()),
     )
 
-/**
- * Where an account stands in each window. One with no windows, like the local account of anonymous
- * mode, is not metered and reports none: an uncapped bar that can never move says less than nothing.
- */
+/** Where an account stands in each window. One with no windows, like anonymous mode's, is not metered. */
 private fun budgetsOf(
     user: UserAccount,
     now: Instant,
@@ -124,8 +116,8 @@ private fun budgetsOf(
         BudgetWindowWire(
             period =
                 when (window.period) {
-                    BudgetPeriod.SESSION -> WireBudgetPeriod.SESSION
-                    BudgetPeriod.WEEK -> WireBudgetPeriod.WEEK
+                    BudgetPeriod.SESSION -> BudgetPeriodWire.SESSION
+                    BudgetPeriod.WEEK -> BudgetPeriodWire.WEEK
                 },
             usedSeconds = window.usedAt(now),
             reservedSeconds = reserved,
@@ -154,7 +146,7 @@ sealed interface HandleWire {
 }
 
 @Serializable
-enum class WirePlan {
+enum class PlanWire {
     @SerialName("free")
     FREE,
 
@@ -165,20 +157,16 @@ enum class WirePlan {
     ENTERPRISE,
 }
 
-fun PlanTier.toWire(): WirePlan =
+fun PlanTier.toWire(): PlanWire =
     when (this) {
-        PlanTier.FREE -> WirePlan.FREE
-        PlanTier.EDUCATION -> WirePlan.EDUCATION
-        PlanTier.ENTERPRISE -> WirePlan.ENTERPRISE
+        PlanTier.FREE -> PlanWire.FREE
+        PlanTier.EDUCATION -> PlanWire.EDUCATION
+        PlanTier.ENTERPRISE -> PlanWire.ENTERPRISE
     }
 
-/**
- * The windows an account can be metered over. Both exist because `budget_windows` is keyed
- * `(user, period)` to hold one of each at once: a weekly allowance, and a session window that a
- * single sitting is charged against.
- */
+/** The windows an account is metered over: a weekly allowance, and the session a sitting is charged to. */
 @Serializable
-enum class WireBudgetPeriod {
+enum class BudgetPeriodWire {
     @SerialName("session")
     SESSION,
 
@@ -186,10 +174,9 @@ enum class WireBudgetPeriod {
     WEEK,
 }
 
-/** One accounting window of simulation budget. */
 @Serializable
 data class BudgetWindowWire(
-    val period: WireBudgetPeriod,
+    val period: BudgetPeriodWire,
     val usedSeconds: Double,
     val reservedSeconds: Double,
     val cap: SimulationCap,
@@ -200,7 +187,7 @@ data class BudgetWindowWire(
 data class UserProfile(
     val displayName: String,
     val handle: HandleWire,
-    val plan: WirePlan,
+    val plan: PlanWire,
     val isAdmin: Boolean,
     val projectCount: Int,
     val budgets: List<BudgetWindowWire>,
@@ -214,7 +201,6 @@ data class InvoiceWire(
     val paid: Boolean,
 )
 
-// renewsAt and paymentMethod join once a billing provider exists; absent fields stay absent.
 @Serializable
 data class Billing(
     val invoices: List<InvoiceWire>,

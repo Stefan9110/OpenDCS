@@ -49,6 +49,7 @@ import org.opendc.web.dispatcher.PlatformEvent
 import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.dispatcher.PlatformVerdict
 import org.opendc.web.dispatcher.TimeCap
+import org.opendc.web.dispatcher.jobName
 import org.opendc.web.launcher.PeakMemory
 import java.time.Duration
 import java.time.Instant

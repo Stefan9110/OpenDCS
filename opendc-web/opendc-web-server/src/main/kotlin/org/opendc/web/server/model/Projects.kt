@@ -44,10 +44,7 @@ enum class ProjectRole {
     VIEWER,
 }
 
-/**
- * [id] never leaves the server: it keeps foreign keys narrow, while [publicId] is what the API and
- * its URLs carry, so identifiers cannot be walked or counted from outside.
- */
+/** [id] never leaves the server; the API carries [publicId], so identifiers cannot be walked from outside. */
 @Entity
 @Table(name = "projects")
 class Project : PanacheEntityBase {
@@ -89,8 +86,7 @@ class ProjectMember : PanacheEntityBase {
     lateinit var role: ProjectRole
 
     companion object : PanacheCompanion<ProjectMember> {
-        // The project is fetched with the memberships because every caller reads it. Left lazy,
-        // listing someone's projects costs one query for the list and one more for each row in it.
+        // The project is fetched eagerly because every caller reads it; lazy, it costs a query per row.
         @Language("JPAQL")
         private const val BY_USER = """
             SELECT m FROM ProjectMember m

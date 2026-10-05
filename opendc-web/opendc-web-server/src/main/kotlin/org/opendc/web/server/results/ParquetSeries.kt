@@ -45,13 +45,7 @@ import java.util.Collections
 /** The column every output table is stamped with, holding simulated milliseconds since the run began. */
 private const val TIMESTAMP = "timestamp"
 
-/**
- * How many runs are held reduced at once.
- *
- * A reduction is a few thousand doubles and the file behind it never changes, so keeping one is far
- * cheaper than reading a hundred megabytes of parquet again two seconds later. The cap is what stops
- * a server that has served a great many experiments from holding all of them.
- */
+/** How many reduced runs are memoised at once; a reduction is small and its file never changes. */
 private const val MEMOISED_RUNS = 512
 
 /** Nothing has been read yet. Simulated time starts at zero, so it cannot stand in for this. */
@@ -61,16 +55,9 @@ private const val NO_INSTANT = Long.MIN_VALUE
 private const val THE_ONLY_ROW = "-"
 
 /**
- * Reads the parquet a finished run left behind, as the series a chart is drawn from.
- *
- * This is the canonical account of a run: the samples a launcher posted while it was going are a
- * preview that expires, and these files are what it actually produced. Only the handful of columns
- * the charts name are read, which is the whole point of the format -- a host table of two dozen
- * columns costs three of them here.
- *
- * A run is read once and remembered. Its output is written whole and never touched again, so the
- * only thing that can make a reduction wrong is the run being done over, which is why a retry says
- * so through [forget].
+ * Reads the parquet a finished run left behind, the canonical account of a run, as the series a chart
+ * is drawn from. Only the columns the charts name are read. A run is read once and remembered until a
+ * retry calls [forget], since its output is otherwise never rewritten.
  */
 @ApplicationScoped
 class ParquetSeries(private val store: ObjectStore) {
@@ -83,11 +70,8 @@ class ParquetSeries(private val store: ObjectStore) {
         )
 
     /**
-     * What the run whose output lies under [prefix] measured.
-     *
-     * Empty where it wrote nothing, which is what a run that failed before publishing looks like,
-     * and also what one looks like before its files have landed. Only an answer with something in
-     * it is remembered, so the second kind is read again rather than reported empty for good.
+     * What the run whose output lies under [prefix] measured, empty where nothing has landed. Only a
+     * non-empty answer is remembered, so files that land later are still read.
      */
     fun read(prefix: String): Map<ResultMetric, List<MetricPoint>> {
         memoised[prefix]?.let { return it }
@@ -117,15 +101,13 @@ class ParquetSeries(private val store: ObjectStore) {
         }
         val file = StoredObjectFile(store, key)
         val schema = ParquetFileReader.open(file).use { it.fileMetaData.schema }
-        // A deployment's export spec decides which columns are written, so a metric the file has
-        // nothing to say about is left out rather than reported as zero.
+        // The export spec decides which columns are written; a metric without its columns is left out, not zero.
         val present = metrics.filter { metric -> metric.columns.all { schema.containsField(it) } }
         if (present.isEmpty() || !schema.containsField(TIMESTAMP)) {
             return emptyMap()
         }
 
-        // A table whose identity column the file does not carry is read as though it were a
-        // singleton, which is what an old file written before that column existed looks like.
+        // A file written before the identity column existed is read as a singleton table.
         val identity = (table.rows as? RowIdentity.PerEntity)?.column?.takeIf { schema.containsField(it) }
         val fold = InstantFold(present)
         rows(file, projection(schema, present, identity)).use { rows ->
@@ -184,17 +166,11 @@ class ParquetSeries(private val store: ObjectStore) {
 }
 
 /**
- * Folds the rows of one table into one value per metric per instant.
+ * Folds the rows of one table into one value per metric per instant, across hosts.
  *
- * A topology has many hosts and a chart has one line, so the rows sharing an instant become a single
- * reading: fleet power adds up where fleet utilization averages. Rows are kept by the entity that
- * reported them, because the writer records an instant twice at the end of a run -- once on the
- * export interval and once the moment the last task finishes -- and the second row for a host is that
- * host again rather than another one.
- *
- * Rows arrive in the order they were written, tick by tick, so an instant is complete exactly when a
- * later one begins, which is what keeps this bounded by the number of hosts rather than by the length
- * of the trace.
+ * Rows are keyed by entity because the writer records the last instant of a run twice, and the
+ * second row for a host replaces the first. Rows arrive in time order, so an instant is complete when
+ * a later one begins, which bounds memory by the number of hosts.
  */
 private class InstantFold(private val metrics: List<ResultMetric>) {
     private val reporting = metrics.associateWith { mutableMapOf<String, Reading>() }

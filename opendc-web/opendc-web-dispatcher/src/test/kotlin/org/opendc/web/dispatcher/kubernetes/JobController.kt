@@ -25,6 +25,7 @@ package org.opendc.web.dispatcher.kubernetes
 import io.fabric8.kubernetes.api.model.Pod
 import io.fabric8.kubernetes.api.model.PodBuilder
 import io.fabric8.kubernetes.client.KubernetesClient
+import org.opendc.web.dispatcher.jobName
 import java.time.Instant
 import java.util.UUID
 

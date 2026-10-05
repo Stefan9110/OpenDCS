@@ -25,20 +25,22 @@ package org.opendc.web.server.rest
 import io.quarkus.hibernate.orm.panache.kotlin.PanacheQuery
 import kotlinx.serialization.Serializable
 
-/** One window of a longer list, and how long the whole list is. */
 @Serializable
 data class Page<T>(
     val items: List<T>,
     val total: Long,
 )
 
-/** The part of a list a client asked for, held to what one response may carry. */
 data class Window(
     val offset: Int,
     val limit: Int,
 ) {
     companion object {
         const val MAX_LIMIT = 200
+
+        // Strings, since they are the @DefaultValue of a query parameter.
+        const val DEFAULT_LIMIT = "50"
+        const val DEFAULT_OFFSET = "0"
 
         fun of(
             offset: Int,

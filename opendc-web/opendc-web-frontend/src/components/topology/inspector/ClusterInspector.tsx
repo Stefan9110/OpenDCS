@@ -1,10 +1,10 @@
 "use client"
 
 import { DataCenterSelect } from "@/components/topology/inspector/DataCenterSelect"
-import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
 import { HostGroupList } from "@/components/topology/inspector/HostGroupList"
 import { HostInspector } from "@/components/topology/inspector/HostInspector"
 import { IssueList } from "@/components/topology/inspector/IssueList"
+import { FieldLabel } from "@/components/util/FieldLabel"
 import type { DocumentIssue } from "@/lib/api/types"
 import { clusterCapacity } from "@/lib/topology/capacity"
 import type { TopologyPlan } from "@/lib/topology/edits"

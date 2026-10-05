@@ -26,11 +26,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/**
- * How a file is cut up, which is arithmetic and is tested as such. Signing a part beyond the first
- * means opening an upload with the bucket, so the rest of the multipart path is only exercisable
- * against a real one.
- */
+/** How a file is cut up. The rest of the multipart path needs a real bucket, so it is not tested here. */
 class S3ObjectStoreTest {
     private val partSize = 32L * 1024 * 1024
 
@@ -40,8 +36,6 @@ class S3ObjectStoreTest {
         assertEquals(listOf(0L..<1L), planParts(1))
     }
 
-    // The point of the whole exercise: one connection carries a few megabytes a second whatever the
-    // link can do, so a file worth splitting has to actually be split.
     @Test
     fun `a file past the part size is cut into as many parts as it takes`() {
         assertEquals(2, planParts(partSize + 1).size)
@@ -60,11 +54,7 @@ class S3ObjectStoreTest {
         assertTrue(parts.zipWithNext().all { (before, after) -> after.first == before.last + 1 }, "parts are not contiguous")
     }
 
-    /**
-     * What [S3ObjectStore] recognises an incomplete upload by: storage joins up whatever parts it is
-     * handed, so a part missing out of the middle is only detectable because the one after it is
-     * numbered too high, or because a part that should be full turns out to be short.
-     */
+    // Full parts are how S3ObjectStore recognises an upload with a part missing.
     @Test
     fun `every part but the last carries a full slice`() {
         for (size in listOf(partSize + 1, 3 * partSize, 3 * partSize - 1, 465L * 1024 * 1024)) {
@@ -75,8 +65,6 @@ class S3ObjectStoreTest {
         }
     }
 
-    // Ten thousand parts is all S3 takes, so past a certain size the parts have to grow rather than
-    // multiply. A file this large is refused outright otherwise, at the very end of a long upload.
     @Test
     fun `a file too large for the maximum number of parts gets larger parts instead`() {
         val size = 10L * 1024 * 1024 * 1024 * 1024

@@ -53,11 +53,8 @@ fun ProjectRole.allows(permission: ProjectPermission): Boolean =
     }
 
 /**
- * The caller's membership of the project behind [id], if it allows [needs].
- *
- * Someone who is not a member gets exactly what a project that does not exist gets, so membership
- * cannot be probed. A member whose role does not stretch far enough is told so, since they can see
- * the project anyway.
+ * The caller's membership of the project behind [id], if it allows [needs]. A non-member gets the 404
+ * of a missing project, so membership cannot be probed; a member lacking the role gets a 403.
  */
 fun projectFor(
     user: UserAccount,

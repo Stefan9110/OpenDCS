@@ -28,39 +28,30 @@ import org.opendc.sdk.model.experiment.ScenarioSpec
 /** The one environment variable a launcher reads: where its manifest is. */
 const val MANIFEST_URL_VARIABLE = "MANIFEST_URL"
 
-/** The entry point every dispatcher that starts a launcher from its files names. */
+/** The entry point of a launcher started from its files. */
 const val LAUNCHER_MAIN = "org.opendc.web.launcher.MainKt"
 
 /**
  * Everything one launcher process needs, written by the server and read at startup.
  *
- * The launcher never resolves a name. The server has rewritten every reference in the units to a
- * path relative to the launcher's working directory, and [inputs] says which bytes to put at those
- * paths before anything runs. Nothing consults [inputs] while resolving: it is a staging list, not a
- * resolution table.
- *
- * @property inputs What to fetch before the first unit starts.
- * @property units The runs, each narrowed to one repetition and carrying where its results go.
- * @property parallelism How many units run at once.
- * @property telemetry Where progress is reported while the units are still going. Defaulted to
- *           [TelemetryTarget.None] so a manifest written by hand needs nothing to listen to it.
+ * The server has already rewritten every reference in [units] to a path relative to the working
+ * directory; [inputs] only says what to stage at those paths and is never consulted while resolving.
  */
 @Serializable
 data class LaunchManifest(
     val inputs: List<StagedInput>,
     val units: List<LaunchUnit>,
     val parallelism: Int,
+    // Defaulted so a manifest written by hand needs nothing to listen to it.
     val telemetry: TelemetryTarget = TelemetryTarget.None,
 )
 
 /**
- * Bytes to put somewhere before the units start.
+ * Bytes to put at [path], relative to and inside the working directory, before the units start.
  *
- * @property path Where, relative to the working directory. It has to stay inside it.
- * @property source Where the bytes are, as a `file:` or `http(s):` URL.
- * @property key The stored object the bytes are, which never changes under one key. A launcher
- *           ignores it; a dispatcher that stages inputs itself caches by it, since [source] is signed
- *           afresh for every manifest.
+ * @property source A `file:` or `http(s):` URL.
+ * @property key The stored object, immutable under one key. A dispatcher that stages inputs itself
+ *           caches by it, since [source] is signed afresh for every manifest.
  */
 @Serializable
 data class StagedInput(
@@ -70,10 +61,8 @@ data class StagedInput(
 )
 
 /**
- * One `(scenario, seed)` run.
+ * One `(scenario, seed)` run: [scenario] has `runs = 1`, its own `initialSeed` and only staged paths.
  *
- * @property scenario The run, with `runs = 1`, its own `initialSeed`, and every reference a staged path.
- * @property outputs Where each file the run writes is published.
  * @property outcome Where the unit's [UnitOutcome] is published, once its outputs are.
  */
 @Serializable
@@ -83,7 +72,7 @@ data class LaunchUnit(
     val outcome: String,
 )
 
-/** Where the output file named [file] is published to. */
+/** Where the output file named [file] is published. */
 @Serializable
 data class OutputTarget(
     val file: String,

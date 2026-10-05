@@ -136,17 +136,17 @@ class SubmissionPipeline(
     ): SubmissionPreview {
         val spec = codec.decodeExperiment(document)
         val traces = resolveTraces(spec, caller)
+        val scenarios = spec.expand()
         return SubmissionPreview(
-            scenarioCount = spec.expand().size,
-            estimate = estimate(spec.expand(), traces),
-            issues = spec.validate().toWire() + traces.issues + unfitIssues(spec.expand()),
+            scenarioCount = scenarios.size,
+            estimate = estimate(scenarios, traces),
+            issues = spec.validate().toWire() + traces.issues + unfitIssues(scenarios),
         )
     }
 
     /**
-     * One issue per scenario no execution on this deployment can hold: estimated past the platform's
-     * time cap, or past the largest grant worth asking for. Such a scenario would only fail at its
-     * limit, every attempt, so it is refused before it is run rather than after.
+     * One issue per scenario no execution on this deployment can hold, by time or memory, since it
+     * would only fail at its limit on every attempt.
      */
     private fun unfitIssues(scenarios: List<ScenarioSpec>): List<DocumentIssue> =
         planner.unfit(scenarios, dispatcher.slot()).map { unfit ->
@@ -195,8 +195,7 @@ class SubmissionPipeline(
         admit(submitter, scenarios.sumOf { it.runs * quotes.getValue(it.id) }, now)
 
         extractResources(experiment, spec)
-        // Only the work is written here. How it is shaped into executions depends on the slot a
-        // dispatcher offers and on what earlier attempts did, neither of which is known yet.
+        // Only units are written; shaping them into executions waits for a dispatcher's slot.
         for (scenario in scenarios) {
             val tasks = plannedTaskCount(scenario)
             for (run in 0 until scenario.runs) {
@@ -219,11 +218,9 @@ class SubmissionPipeline(
         TraceSizeEstimator(config.estimator().toCoefficients()).estimate(scenario, traceExtentOf(scenario.workload)).cpuSeconds
 
     /**
-     * Stops everything the experiment still has to do, for good.
-     *
-     * Its units are cancelled here and stay cancelled whatever the executions carrying them go on to
-     * report. A queued execution is closed outright; one the platform holds is asked to stop once
-     * this commits, and settles when the platform says it has.
+     * Stops everything the experiment still has to do, for good. Its units stay cancelled whatever
+     * their executions report; a queued execution is closed outright, and one on the platform is
+     * asked to stop once this commits.
      */
     @Transactional
     fun cancel(experiment: Experiment) {
@@ -256,12 +253,8 @@ class SubmissionPipeline(
     }
 
     /**
-     * Queues one scenario's runs again.
-     *
-     * Only a scenario that has stopped can be restarted, and every run of it goes: a scenario is
-     * what a reader picked, and half of one running is not a state worth being able to reach. The
-     * output is written to the same place as before, so an earlier attempt's results are replaced
-     * rather than accumulated.
+     * Queues every run of one stopped scenario again. The output lands where it did before, replacing
+     * the earlier attempt's results.
      */
     @Transactional
     fun retryScenario(
@@ -283,14 +276,10 @@ class SubmissionPipeline(
             Submission.Draft -> {}
             is Submission.Submitted -> admit(submission.by, units.sumOf { it.quotedSeconds }, Instant.now())
         }
-        // What the earlier attempt measured is about to be overwritten where it lies, so anything
-        // still holding it would go on showing a result that no longer has a file behind it.
+        // The earlier attempt's output is about to be overwritten, so no cached reading of it may survive.
         results.forget(experiment.publicId, units)
         for (unit in units) {
             unit.state = UnitState.QUEUED
-            // A scenario about to be run again has got nowhere yet. Leaving the finished attempt's
-            // count would show it as complete until the new one reported over the top of it, which
-            // is the one moment a reader is watching the bar rather than the result.
             unit.completedTasks = 0
         }
         experiment.updatedAt = Instant.now()
@@ -305,10 +294,7 @@ class SubmissionPipeline(
         author: UserAccount,
     ): Experiment = newDraft(experiment.project, name, codec.decodeExperiment(codec.parseStored(experiment.spec)), author)
 
-    /**
-     * Removes an experiment whatever state it is in. Submitted experiments are immutable, which
-     * governs editing them, not keeping them: an owner may always delete their own work.
-     */
+    /** Removes an experiment whatever state it is in; immutability governs editing, not deleting. */
     @Transactional
     fun delete(experiment: Experiment) {
         chargeHeld(Execution.heldByExperiment(experiment.id))
@@ -322,10 +308,7 @@ class SubmissionPipeline(
         discard(Execution.onPlatformOfProject(project.id), Experiment.publicIdsOfProject(project.id))
     }
 
-    /**
-     * Charges for what running executions have used so far. They are about to go with their
-     * experiment, and settling them later finds nothing, so without this deleting would dodge the bill.
-     */
+    /** Charges for what running executions have used so far, since a deleted experiment is never settled. */
     private fun chargeHeld(held: List<HeldCores>) {
         val now = Instant.now()
         for (cores in held) {
@@ -335,11 +318,9 @@ class SubmissionPipeline(
     }
 
     /**
-     * Stops what the platform holds of experiments about to be deleted and removes everything they
-     * kept in the store, both once the deletion has committed.
-     *
-     * Everything is addressed by id, never loaded: the rows go with the schema's cascade, and a loaded
-     * row pointing at an experiment being deleted in the same transaction fails the flush.
+     * Stops what the platform holds of experiments about to be deleted and removes what they kept in
+     * the store, once the deletion commits. Addressed by id, never loaded: a loaded row pointing at a
+     * deleted experiment fails the flush.
      */
     private fun discard(
         executions: List<UUID>,
@@ -350,12 +331,8 @@ class SubmissionPipeline(
     }
 
     /**
-     * What a document will cost its owner, which is a different question from what dispatch needs
-     * to know: it reads the same model, but no per-deployment correction. What a user is quoted
-     * should not move because a cluster they never chose turned out to be slow.
-     *
-     * Only [traces] the author may use are counted, so the size of a trace someone else keeps private
-     * never leaks through an estimate.
+     * What a document will cost its owner: the dispatch model without any per-deployment correction.
+     * Only [traces] the author may use are counted, so a private trace's size never leaks.
      */
     private fun estimate(
         scenarios: List<ScenarioSpec>,
@@ -374,15 +351,8 @@ class SubmissionPipeline(
     }
 
     /**
-     * How many tasks one run of [scenario] has to get through.
-     *
-     * The whole denominator of an experiment is settled here, before any of it is dispatched, so the
-     * bar it draws only ever moves forwards. Filling it in as launchers reported theirs ran the bar
-     * backwards every time another scenario started: what had been all of the work became a fraction
-     * of it.
-     *
-     * Sampling picks tasks by load rather than by count, so a sampled run lands near this number
-     * rather than on it. Every other run, which is nearly all of them, lands exactly on it.
+     * How many tasks one run of [scenario] has to get through, fixed at submit so a progress bar's
+     * denominator never moves. A sampled run picks tasks by load, so it lands near this, not on it.
      */
     private fun plannedTaskCount(scenario: ScenarioSpec): Int {
         val sampled = traceExtentOf(scenario.workload).taskCount * sampledShare(scenario.workload)

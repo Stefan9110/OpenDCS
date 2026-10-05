@@ -24,13 +24,12 @@ package org.opendc.web.dispatcher.slurm
 
 import org.opendc.web.dispatcher.CapacitySnapshot
 import org.opendc.web.dispatcher.Grant
+import org.opendc.web.dispatcher.JOB_NAME_PREFIX
 import org.opendc.web.dispatcher.TimeCap
+import org.opendc.web.dispatcher.jobName
 import org.opendc.web.launcher.LAUNCHER_MAIN
 import java.util.UUID
 import kotlin.math.ceil
-
-/** Every job this dispatcher submits is named for its execution, which is how it is found again. */
-private const val JOB_PREFIX = "opendc-"
 
 /** Pending reasons SLURM will never get past, so waiting longer only wastes the timeout. */
 internal val PERMANENT_PENDING_REASONS =
@@ -53,9 +52,11 @@ private val PERMANENT_REFUSALS =
 /** Node states that offer nothing, whatever their CPUs say. */
 private val UNUSABLE_STATES = listOf("down", "drain", "fail", "maint", "unknown")
 
-private const val SECONDS_PER_MINUTE = 60
+internal const val SECONDS_PER_MINUTE = 60
 
-internal fun slurmJobName(executionId: UUID): String = "$JOB_PREFIX$executionId"
+private const val SECONDS_PER_HOUR = 60 * SECONDS_PER_MINUTE
+
+private const val SECONDS_PER_DAY = 24 * SECONDS_PER_HOUR
 
 /** One of this dispatcher's jobs as the queue lists it. */
 internal data class QueuedJob(
@@ -96,9 +97,9 @@ internal fun parseQueue(stdout: String): Map<UUID, QueuedJob> =
     stdout
         .lineSequence()
         .map { it.trim().split('|') }
-        .filter { it.size == 4 && it[0].startsWith(JOB_PREFIX) }
+        .filter { it.size == 4 && it[0].startsWith(JOB_NAME_PREFIX) }
         .mapNotNull { (name, id, state, reason) ->
-            val execution = runCatching { UUID.fromString(name.removePrefix(JOB_PREFIX)) }.getOrNull() ?: return@mapNotNull null
+            val execution = runCatching { UUID.fromString(name.removePrefix(JOB_NAME_PREFIX)) }.getOrNull() ?: return@mapNotNull null
             execution to QueuedJob(id, state == "PENDING", reason)
         }.toMap()
 
@@ -114,7 +115,7 @@ internal fun sbatchCommand(
         add("sbatch")
         add("--parsable")
         add("--no-requeue")
-        add("--job-name=${slurmJobName(executionId)}")
+        add("--job-name=${jobName(executionId)}")
         add("--nodes=1")
         add("--ntasks=1")
         add("--cpus-per-task=${grant.parallelism}")
@@ -150,7 +151,7 @@ internal fun parseSubmission(result: CommandResult): Submission {
 internal fun scancelCommand(
     user: String,
     executionId: UUID,
-): List<String> = listOf("scancel", "--user=$user", "--name=${slurmJobName(executionId)}")
+): List<String> = listOf("scancel", "--user=$user", "--name=${jobName(executionId)}")
 
 internal fun sinfoCommand(partition: Partition): List<String> =
     buildList {
@@ -184,6 +185,7 @@ internal fun parsePartition(
                 }
             }.toList()
     val usable = rows.filter { usable(it[5]) }.distinctBy { it[1] }
+    // %C is allocated/idle/other/total.
     val cpus = usable.map { row -> row[2].split('/').map { it.toIntOrNull() ?: 0 } }
     val memory = usable.map { it[3].toDoubleOrNull() ?: 0.0 }
     val free = usable.map { it[4].toDoubleOrNull() ?: 0.0 }
@@ -211,13 +213,13 @@ internal fun parseSlurmTime(text: String): TimeCap {
     val seconds =
         if ('-' in value) {
             // D-H, D-H:M, D-H:M:S
-            days * 86_400 + clock[0] * 3600 + clock.getOrElse(1) { 0 } * 60 + clock.getOrElse(2) { 0 }
+            days * SECONDS_PER_DAY + clock[0] * SECONDS_PER_HOUR + clock.getOrElse(1) { 0 } * SECONDS_PER_MINUTE + clock.getOrElse(2) { 0 }
         } else {
             // M, M:S, H:M:S
             when (clock.size) {
-                1 -> clock[0] * 60
-                2 -> clock[0] * 60 + clock[1]
-                else -> clock[0] * 3600 + clock[1] * 60 + clock[2]
+                1 -> clock[0] * SECONDS_PER_MINUTE
+                2 -> clock[0] * SECONDS_PER_MINUTE + clock[1]
+                else -> clock[0] * SECONDS_PER_HOUR + clock[1] * SECONDS_PER_MINUTE + clock[2]
             }
         }
     return TimeCap.Limited(seconds)

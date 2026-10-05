@@ -35,9 +35,9 @@ import org.opendc.web.server.storage.ObjectStore
 import org.opendc.web.server.storage.traceKey
 
 /**
- * The seeder runs once while Quarkus starts, so these read what it left behind. Two tables are
- * bundled for `bitbrains-small` under `src/test/resources/traces`; the other built-ins ship none,
- * which is what a deployment carrying no trace files looks like.
+ * The seeder runs once while Quarkus starts, so these read what it left behind. Placeholder tables
+ * that are not parquet are bundled for `bitbrains-small` under `src/test/resources/traces`; the other
+ * built-ins ship none.
  */
 @QuarkusTest
 class BuiltInTracesTest {
@@ -60,27 +60,17 @@ class BuiltInTracesTest {
         }
     }
 
-    // How many rows a trace holds decides the memory an experiment over it is granted, so a
-    // built-in is counted like an upload. A file that is not parquet at all, which is what the
-    // placeholders bundled here are, leaves the deployment running with no count rather than
-    // refusing to start.
     @Test
     fun `a bundled file that cannot be read as parquet is stored without a count`() {
         assertTrue(partsOf("bitbrains-small").all { it.rowCount == null })
     }
 
-    // A trace whose files a deployment does not carry is left with no tables rather than a row
-    // pointing at bytes nobody has. Those traces are then absent from the library too, so nobody is
-    // offered a name that resolves to nothing.
     @Test
     fun `a built-in that ships no files is left unresolved`() {
         assertEquals(emptyList<String>(), partsOf("surf-week").map { it.tableName })
         assertEquals(emptyList<String>(), partsOf("surf-month").map { it.tableName })
     }
 
-    // Startup runs on every boot, so seeding has to be idempotent: a second pass must find what is
-    // already there and add nothing, rather than a second row per table every time the server
-    // restarts.
     @Test
     fun `seeding again changes nothing`() {
         val before = partsOf("bitbrains-small").map { it.tableName to it.sizeBytes }.toSet()

@@ -1,6 +1,6 @@
 "use client"
 
-import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
+import { FieldLabel } from "@/components/util/FieldLabel"
 import { Select } from "@mantine/core"
 
 /** Picks a data center by its place, since names may repeat. */

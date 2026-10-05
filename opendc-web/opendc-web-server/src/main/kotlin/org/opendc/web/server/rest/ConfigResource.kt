@@ -31,9 +31,8 @@ import kotlinx.serialization.Serializable
 import org.opendc.web.server.auth.AuthSettings
 
 /**
- * What a frontend has to know about this deployment before it can show anything, chiefly how to
- * sign in. Served rather than built into the frontend, so one export serves every deployment, and
- * open to everyone, since it is read before anyone has signed in.
+ * What a frontend has to know before it can show anything, chiefly how to sign in. Served rather than
+ * built in, so one export serves every deployment, and open, since it is read before signing in.
  */
 @Path("config")
 @PermitAll

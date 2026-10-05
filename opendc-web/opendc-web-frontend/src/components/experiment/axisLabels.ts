@@ -26,10 +26,7 @@ export const RUNS_LABEL = "Runs per scenario"
 export const RUNS_HELP =
     "Repeats each scenario with a different random seed and averages the results. Raise it when one run is too noisy to trust, remembering that it multiplies the work like every other choice."
 
-/**
- * The axes whose entries are picked from a catalog of named things. The other three are written out
- * by hand, and earn a row in the expansion table only once they carry more than one entry.
- */
+// Axes picked from a catalog; the hand-written ones get a table row only once they vary.
 export const PRIMARY_AXES = ["topologies", "workloads", "allocationPolicies", "failureModels"] as const
 
 export const AXIS_HELP: Record<AxisKey, string> = {

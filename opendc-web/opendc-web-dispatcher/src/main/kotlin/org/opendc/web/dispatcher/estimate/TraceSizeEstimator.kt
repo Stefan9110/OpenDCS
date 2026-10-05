@@ -37,17 +37,17 @@ data class EstimatorCoefficients(
     val baseMemoryMb: Double,
     /** Per simulated host: its state, and the export row buffered for it each interval. */
     val memoryPerHostMb: Double,
-    /** Per million fragments. The heaviest term: every fragment row becomes an object on the heap. */
+    /** Per million fragments, each of which becomes an object on the heap. */
     val memoryPerMillionFragmentsMb: Double,
     /** Per million tasks, each of which becomes an object holding its own fragment list. */
     val memoryPerMillionTasksMb: Double,
-    /** Fixed cost of starting and finishing one run. */
+    /** Fixed cost of starting and finishing one run, the JVM included. */
     val baseSeconds: Double,
     /** Per million fragments read off disk and turned into objects, before anything is simulated. */
     val loadSecondsPerMillionFragments: Double,
     /** Per million fragments actually stepped through by the engine. */
     val simulateSecondsPerMillionFragments: Double,
-    /** Per million tasks admitted and placed. */
+    /** Per million tasks admitted and placed, which dominates a task-heavy trace. */
     val secondsPerMillionTasks: Double,
     /** What one host adds to the cost of writing the host table, at the default export interval. */
     val exportCostPerHost: Double,
@@ -68,15 +68,12 @@ fun sampledShare(workload: WorkloadSpec): Double =
 /**
  * Estimates a run from the number of rows it has to hold and get through.
  *
- * Sampling reduces runtime but not memory: the whole trace is loaded before it is sampled, so a run
- * over one percent of a trace still holds all of it. Runtime therefore splits into loading, paid on
- * the whole trace, and simulating, paid on the sampled part.
+ * Sampling reduces runtime but not memory: the whole trace is loaded before it is sampled, so loading
+ * is paid on the whole trace and simulating on the sampled part. Writing the host table is a
+ * multiplier, since it vanishes when that table is switched off.
  *
- * Writing results is a multiplier rather than a term, since the host table writes a row per host per
- * interval and vanishes when that table is switched off.
- *
- * The coefficients are the shape of the model, not fitted values; [CalibratedEstimator] corrects for
- * a particular machine.
+ * The coefficients are the shape of the model, not fitted values; [scaledBy] corrects for a
+ * particular machine.
  */
 class TraceSizeEstimator(private val coefficients: EstimatorCoefficients) : ResourceEstimator {
     override fun estimate(
@@ -106,11 +103,7 @@ class TraceSizeEstimator(private val coefficients: EstimatorCoefficients) : Reso
         )
     }
 
-    /**
-     * How much the run is slowed by writing the host table.
-     *
-     * Measured against the SDK's default interval, so halving the interval doubles the term.
-     */
+    /** How much writing the host table slows the run. Halving the export interval doubles the term. */
     private fun exportMultiplier(
         scenario: ScenarioSpec,
         hosts: Int,

@@ -5,13 +5,7 @@ import { Group, Text, Tooltip } from "@mantine/core"
 import { IconInfoCircle } from "@tabler/icons-react"
 import type { ReactNode } from "react"
 
-/**
- * A field's label, with the explanation behind an icon beside it.
- *
- * The text is left to inherit whatever the surrounding label is styled as, so a labelled field sits
- * at the same size as an unlabelled one next to it. Naming a size here would be right for the
- * inspector, where every input is extra small, and visibly wrong in a dialog where they are not.
- */
+// No size of its own: it inherits the surrounding label's, which differs between inspector and dialog.
 export function FieldLabel({ label, help }: { label: string; help?: string }): ReactNode {
     if (!help) return label
     return (

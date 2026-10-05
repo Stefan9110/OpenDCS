@@ -42,15 +42,9 @@ import org.opendc.web.server.telemetry.TelemetryStore
 import java.util.UUID
 
 /**
- * Where launchers say how far they have got.
- *
- * The only endpoint a runner ever calls, and the only one that resolves no user: the bearer token is
- * the caller, and it can do nothing but write progress into the work it was handed. That is what
- * makes this safe to expose to a cluster the browser API is not.
- *
- * Nothing reported here decides anything. Whether an execution succeeded is the platform's account
- * of the process, which is why a launcher never reports that it finished and why the numbers written
- * here are only ever overwritten, never accumulated.
+ * Where launchers say how far they have got. The caller is an execution token, not a user, and it can
+ * only write progress into the work it was handed. Nothing reported here decides anything, so the
+ * numbers are only ever overwritten, never accumulated.
  */
 @Path("telemetry")
 @RolesAllowed(Roles.EXECUTION)
@@ -76,12 +70,9 @@ class TelemetryResource(
                 .filter { it.state == UnitState.CARRIED }
                 .associateBy { it.scenarioIndex to it.seed }
         for (run in report.runs) {
-            // A report naming work this execution is not carrying is dropped rather than refused:
-            // one token writes one bag's progress, and a launcher that got that wrong is not a
-            // reason to lose the runs it got right. Work cancelled while it was out is not carried.
+            // Work this execution is not carrying, such as work cancelled while it was out, is dropped
+            // rather than refused, so the runs it got right are kept.
             val unit = carried[run.scenarioIndex to run.seed] ?: continue
-            // Against the count settled at submit, not one the launcher sends: the denominator is
-            // the platform's and holds still for the whole of a run.
             unit.completedTasks = run.completedTasks.coerceIn(0, unit.totalTasks)
             store.write(RunKey(experimentId, run.scenarioIndex, run.seed), run.series)
         }

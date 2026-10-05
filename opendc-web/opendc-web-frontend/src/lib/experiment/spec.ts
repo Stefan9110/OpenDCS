@@ -103,9 +103,7 @@ export type CheckpointSpec = z.infer<typeof checkpointSpecSchema>
 export type ExportSpec = z.infer<typeof exportSpecSchema>
 export type ExperimentSpec = z.infer<typeof experimentSpecSchema>
 
-// The sdk-model's own defaults, repeated here so a field the document leaves out still shows the
-// value the simulator will use. Written in units the backend's parser accepts, not as ISO-8601,
-// because these are also what the editor writes back.
+// The sdk-model's defaults, shown for omitted fields. Not ISO-8601: the editor writes these back.
 export const DEFAULT_CHECKPOINT_INTERVAL = "1 h"
 export const DEFAULT_CHECKPOINT_DURATION = "5 min"
 export const DEFAULT_INTERVAL_SCALING = 1
@@ -117,7 +115,6 @@ export const DEFAULT_FAILURE_MODEL: FailureModelSpec = { type: "none" }
 export const DEFAULT_EXPORT_MODEL: ExportSpec = {}
 export const DEFAULT_MAX_NUM_FAILURES = 10
 export const DEFAULT_RUNS = 1
-export const DEFAULT_INITIAL_SEED = 0
 
 export function allocationPolicyAxis(spec: ExperimentSpec): AllocationPolicySpec[] {
     return spec.allocationPolicies ?? [DEFAULT_ALLOCATION_POLICY]
@@ -143,29 +140,7 @@ export function experimentRuns(spec: ExperimentSpec): number {
     return spec.runs ?? DEFAULT_RUNS
 }
 
-export function experimentInitialSeed(spec: ExperimentSpec): number {
-    return spec.initialSeed ?? DEFAULT_INITIAL_SEED
-}
-
-export interface ScenarioSpec {
-    topology: TopologySpec
-    workload: WorkloadSpec
-    allocationPolicy: AllocationPolicySpec
-    exportModel: ExportSpec
-    failureModel: FailureModelSpec
-    checkpointModel: CheckpointSpec | null
-    maxNumFailures: number
-    runs: number
-    initialSeed: number
-    id: number
-    name: string
-}
-
-/**
- * The positions of [count] things, for a list whose entries are identified by where they sit. That
- * is how the expansion identifies them: a scenario's index is built from the position taken on each
- * axis, so two entries that print the same label are still two entries.
- */
+// Axis entries are identified by position, so two that print the same label are still two entries.
 export function positions(count: number): number[] {
     return Array.from({ length: count }, (_, position) => position)
 }

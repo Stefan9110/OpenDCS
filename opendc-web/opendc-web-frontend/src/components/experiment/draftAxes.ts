@@ -22,9 +22,7 @@ export interface AxisBinding<T> {
 
 const KEPT = "kept:"
 
-// An experiment spec can hold entries this editor has no name for: a workload read from a URI, a
-// hand-written filter policy, a topology that is no longer a saved template. Those get a choice of
-// their own rather than being dropped, so editing one axis cannot quietly rewrite another.
+// Entries the editor has no name for are kept as their own choice, so an edit never drops them.
 function bindAxis<T>(
     entries: T[],
     nameOf: (entry: T) => string | undefined,
@@ -60,12 +58,8 @@ export function catalogChoices(entries: CatalogEntry[]): AxisChoice[] {
     }))
 }
 
-// An experiment stores a copy of the topology it ran, not a reference to the template it came from,
-// so the editor recognises the copy by its content. The server's topologyHash cannot be used here
-// because the client cannot reproduce it: hashing happens over canonical bytes the server produces.
-// Both documents do arrive from that same canonical form, and one serializer emits one field order,
-// so stringifying is a sound comparison. If that ever stopped holding, the axis would simply show
-// the entry as unsaved instead of preselecting its template.
+// Experiments copy their topology, so it is matched to a template by content. Both arrive in the
+// server's canonical field order, so stringifying compares soundly; a mismatch only shows it unsaved.
 function documentKey(topology: TopologySpec): string {
     return JSON.stringify(topology)
 }

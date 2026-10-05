@@ -1,3 +1,4 @@
+import { meKeys } from "@/lib/api/account"
 import { apiRequest } from "@/lib/api/client"
 import { projectKeys } from "@/lib/api/projects"
 import type { Id, ProjectRole } from "@/lib/api/types"
@@ -54,7 +55,7 @@ export function useRemoveMember(projectId: Id) {
         onSuccess: () => {
             void queryClient.invalidateQueries({ queryKey: memberKey(projectId) })
             void queryClient.invalidateQueries({ queryKey: projectKeys.all })
-            void queryClient.invalidateQueries({ queryKey: ["me"] })
+            void queryClient.invalidateQueries({ queryKey: meKeys.profile })
         },
     })
 }

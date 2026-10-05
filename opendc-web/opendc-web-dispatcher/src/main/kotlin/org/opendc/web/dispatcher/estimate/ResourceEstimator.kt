@@ -27,9 +27,8 @@ import org.opendc.sdk.model.experiment.ScenarioSpec
 /**
  * Predicts what one `(scenario, seed)` run will cost, before anything is simulated.
  *
- * Packing, the resource grant, the time limit and straggler detection all read this. Implementations
- * are pure functions of their arguments, so a model can be checked against recorded runs with no
- * database and no cluster.
+ * Implementations are pure, so a model can be checked against recorded runs with no database and no
+ * cluster.
  */
 fun interface ResourceEstimator {
     fun estimate(
@@ -41,9 +40,8 @@ fun interface ResourceEstimator {
 /**
  * How much workload one run has to get through, in rows.
  *
- * Loading a workload builds one object per task and one per fragment, so rows predict the heap
- * where a compressed byte count does not. Both come from the parquet footers read when the trace
- * was stored, or from the spec itself for an inline workload.
+ * Loading builds one object per task and per fragment, so rows predict the heap where a compressed
+ * byte count does not.
  */
 data class TraceExtent(
     val taskCount: Long,
@@ -56,11 +54,8 @@ data class TraceExtent(
 }
 
 /**
- * What one run is expected to cost.
- *
- * Peak memory shapes dispatch, because it is the resource that runs out. Seconds are wall clock on
- * a core of its own, which sets the time limit; the simulated seconds a user is billed for are a
- * different quantity and are estimated elsewhere.
+ * What one run is expected to cost. Seconds are wall clock on a core of its own, not the simulated
+ * seconds a user is billed for.
  */
 data class UnitEstimate(
     val peakMemoryMb: Double,
@@ -68,12 +63,10 @@ data class UnitEstimate(
 )
 
 /**
- * The same estimator with its numbers scaled, which is how a deployment corrects a model written for
- * no particular machine to the one it runs on.
+ * The same estimator scaled to the machine a deployment runs on.
  *
- * Runtime and memory scale separately, since slow cores do not imply a need for more memory. Both
- * are held within a quarter and four times the model: past that the model has the wrong shape and no
- * constant will save it.
+ * Both multipliers are held within a quarter and four times the model: past that the model has the
+ * wrong shape and no constant will save it.
  */
 fun ResourceEstimator.scaledBy(
     runtimeMultiplier: Double,

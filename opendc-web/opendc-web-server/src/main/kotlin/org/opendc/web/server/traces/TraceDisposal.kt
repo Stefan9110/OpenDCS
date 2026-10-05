@@ -38,21 +38,17 @@ import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
 
+private const val SWEEP_INTERVAL = "1h"
+
 /**
- * Removes traces, and removes the ones nobody ever finished uploading.
- *
- * Registering a trace, sending its tables and completing are three separate requests, so a browser
- * that closes in the middle leaves a row and possibly some objects behind that nothing will ever
- * finish. They are invisible, since the library only shows a trace once every table has arrived,
- * and their name can be claimed again, so nothing is blocked by them. What they do occupy is
- * storage, and only a sweep like this one gives it back.
+ * Removes traces, and sweeps the uploads nobody finished: registering, sending tables and completing
+ * are separate requests, so a closed browser leaves an invisible row and objects that hold storage.
  */
 @ApplicationScoped
 class TraceDisposal(private val store: ObjectStore) {
     /**
-     * Frees [slug] for a new trace of [owner]'s. An upload or import that never finished holds a name
-     * nobody can see, so nothing would ever free it; since it is invisible and unusable, starting
-     * again takes it over. One that is still being imported is left to finish.
+     * Frees [slug] for a new trace of [owner]'s by taking over an unfinished one of that name, which
+     * nobody can see. One that is still being imported is left to finish.
      */
     fun claim(
         slug: String,
@@ -84,7 +80,7 @@ class TraceDisposal(private val store: ObjectStore) {
         Trace.flush()
     }
 
-    @Scheduled(every = "1h", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
+    @Scheduled(every = SWEEP_INTERVAL, concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     @Transactional
     fun sweepAbandoned() {
         val cutoff = Instant.now().minus(ABANDONED_AFTER)

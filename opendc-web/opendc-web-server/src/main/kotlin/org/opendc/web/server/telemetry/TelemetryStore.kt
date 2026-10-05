@@ -25,26 +25,22 @@ package org.opendc.web.server.telemetry
 import org.opendc.web.launcher.MetricSeries
 import java.util.UUID
 
-/** The `(scenario, seed)` run whose samples these are, which is the grain a launcher reports at. */
+/** The `(scenario, seed)` run a launcher reports samples for. */
 data class RunKey(
     val experimentId: UUID,
     val scenarioIndex: Int,
     val seed: Long,
 ) {
-    /** What this run is filed under, flat because every read names the runs it wants. */
+    /** The store key this run is filed under. */
     override fun toString(): String = "telemetry:$experimentId:$scenarioIndex:$seed"
 }
 
 /**
- * The samples of runs that have not finished yet.
- *
- * Everything here is disposable and expires on its own: a run's canonical account is the parquet it
- * writes, and a fact that has to outlive the run belongs in Postgres. Losing all of it costs a live
- * chart its last few minutes and nothing else, which is why the deployment backend may be a cache
- * with persistence switched off.
+ * The samples of runs that have not finished yet. Everything here expires and may be lost: the
+ * parquet is a run's canonical account, so the backend may be a cache with persistence off.
  */
 interface TelemetryStore {
-    /** Replaces what [key] has reported. Reports are whole, so there is nothing to append to. */
+    /** Replaces what [key] has reported; reports are whole, never appended. */
     fun write(
         key: RunKey,
         series: List<MetricSeries>,

@@ -32,10 +32,10 @@ import jakarta.inject.Singleton
 import java.time.Duration
 
 enum class TelemetryStoreKind {
-    /** This server's own memory. What a development machine, the test suite and one server use. */
+    /** This server's own memory, enough for one server. */
     MEMORY,
 
-    /** Redis, which is what a deployment of several servers shares. */
+    /** Redis, shared by a deployment of several servers. */
     REDIS,
 }
 
@@ -44,24 +44,15 @@ interface TelemetryConfig {
     @WithDefault("memory")
     fun kind(): TelemetryStoreKind
 
-    /**
-     * How long a run's samples outlive the last report of them.
-     *
-     * Long enough that a chart of a finished experiment keeps answering from here rather than going
-     * back to the parquet, and short enough that a launcher nobody ever hears from again costs
-     * nothing for a day.
-     */
+    /** How long a run's samples outlive its last report. */
     @WithDefault("PT6H")
     fun ttl(): Duration
 }
 
-/** Builds the telemetry store the deployment asked for. */
 @ApplicationScoped
 class TelemetryStorage(
     private val config: TelemetryConfig,
-    // Looked up rather than injected, so a deployment keeping telemetry in memory never asks for a
-    // Redis client and therefore never needs a Redis to be there. That is what keeps a fresh
-    // checkout, and a build matrix with no containers on it, running the whole suite.
+    // Looked up lazily so the memory store never needs a Redis, which keeps CI free of containers.
     private val redis: Instance<RedisDataSource>,
 ) {
     @Produces

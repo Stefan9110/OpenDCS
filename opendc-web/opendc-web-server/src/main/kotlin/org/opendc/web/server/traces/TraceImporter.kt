@@ -43,21 +43,22 @@ import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
+/** 10 GiB. */
+private const val DEFAULT_MAX_BYTES = "10737418240"
+
+private const val EXPIRY_INTERVAL = "10m"
+
 @ConfigMapping(prefix = "opendc.traces.import")
 interface TraceImportConfig {
     /** The largest table this server fetches. Over S3 storage it is spooled to local disk first. */
-    @WithDefault("10737418240")
+    @WithDefault(DEFAULT_MAX_BYTES)
     fun maxBytes(): Long
 
     /** How long an import may take before it is failed, whether or not anything is still working on it. */
     @WithDefault("PT6H")
     fun deadline(): Duration
 
-    /**
-     * Whether URLs may name private, loopback and link-local addresses. Off, because a server inside a
-     * cluster would otherwise fetch whatever it can reach for anybody who asks; an intranet deployment
-     * importing from its own mirrors turns it on.
-     */
+    /** Whether URLs may name private, loopback and link-local addresses; off so no URL reaches into the cluster. */
     @WithDefault("false")
     fun allowPrivateHosts(): Boolean
 
@@ -74,9 +75,8 @@ data class ImportRequested(
 )
 
 /**
- * Fetches traces from URLs in the background, then checks and records them exactly as an upload is
- * checked and recorded. Every table is fetched before any is inspected, so a trace is never half
- * there; anything that goes wrong fails the import with the reason, in words its owner can act on.
+ * Fetches traces from URLs in the background, then checks and records them as an upload is. Every
+ * table is fetched before any is inspected, so a trace is never half there.
  */
 @ApplicationScoped
 class TraceImporter(
@@ -94,7 +94,7 @@ class TraceImporter(
     }
 
     /** Fails imports past their deadline, including those whose server went away while running them. */
-    @Scheduled(every = "10m", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
+    @Scheduled(every = EXPIRY_INTERVAL, concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     fun expire() {
         QuarkusTransaction.requiringNew().run {
             val now = Instant.now()

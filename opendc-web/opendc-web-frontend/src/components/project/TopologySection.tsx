@@ -22,8 +22,7 @@ export function TopologySection({ projectId, templates }: { projectId: Id; templ
             onSubmit: (name) => create.mutate({ name, topology: newTopology() }, { onError: notifyProblem }),
         })
 
-    // The server is the validator: it converts a legacy document with the simulator's own conversion
-    // and answers anything else with issues that name where the problem is.
+    // The server validates, and converts a legacy document with the simulator's own conversion.
     const importFile = async (file: File | null) => {
         if (!file) return
         try {

@@ -186,8 +186,7 @@ function HostGroupRow({
     )
 }
 
-// One slot per host, drawn as a repeating gradient rather than N nodes: identical to a row of
-// squares, but it stays a single element for hundreds of hosts.
+// A repeating gradient rather than one node per host, so hundreds of hosts stay one element.
 function SlotStrip({ count, accent, dim }: { count: number; accent: string; dim: boolean }) {
     const drawn = Math.min(Math.max(count, 1), MAX_DRAWN_SLOTS)
     const slot = 100 / drawn

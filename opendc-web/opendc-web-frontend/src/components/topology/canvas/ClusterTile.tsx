@@ -1,7 +1,7 @@
 "use client"
 
 import { formatMemory, formatPower } from "@/components/format"
-import { TILE_INSET, TILE_SIZE, cellOrigin } from "@/components/topology/canvas/geometry"
+import { TILE_BODY, TILE_INSET, TILE_SIZE, cellOrigin } from "@/components/topology/canvas/geometry"
 import type { CanvasPalette } from "@/components/topology/canvas/palette"
 import type { HardwareIcons } from "@/components/topology/canvas/useHardwareIcons"
 import { type PowerBudget, clusterCapacity, clusterShare } from "@/lib/topology/capacity"
@@ -10,22 +10,29 @@ import { type ClusterSpec, clusterCount, clusterName } from "@/lib/topology/spec
 import type { KonvaEventObject } from "konva/lib/Node"
 import { Group, Image as KonvaImage, Line, Rect, Text } from "react-konva"
 
-const BODY = TILE_SIZE - TILE_INSET * 2
 const PAD = 10
+const CONTENT_WIDTH = TILE_BODY - PAD * 2
 const ICON = 12
 const GUTTER = ICON + 7
+const TEXT_X = PAD + GUTTER
+const TEXT_Y = 1
+const TEXT_WIDTH = CONTENT_WIDTH - GUTTER
 const TITLE_Y = 10
+const REPEAT_WIDTH = 24
 const DIVIDER_Y = 28
 const ROWS_TOP = 34
 const ROW_HEIGHT = 15
 const FOOTER_HEIGHT = 20
-const METER_HEIGHT = 6
 const PERCENT_WIDTH = 30
+const METER_X = TEXT_X + PERCENT_WIDTH
+const METER_Y = 3
+const METER_WIDTH = TEXT_WIDTH - PERCENT_WIDTH
+const METER_HEIGHT = 6
+const METER_RADIUS = 3
+const SMALL_FONT = 10
+const SHADOW_COLOR = "#0b1220"
 
-/**
- * One cluster on its data center's floor. The meter shows this cluster's share of the supply its
- * data center's clusters share, and turns red when the data center as a whole draws more than it.
- */
+// The meter is this cluster's share of the shared supply; red when the data center is over budget.
 export interface ClusterTileProps {
     cluster: ClusterSpec
     index: number
@@ -80,13 +87,13 @@ export function ClusterTile(props: ClusterTileProps) {
             onDblClick={() => props.onOpen(index)}
         >
             <Rect
-                width={BODY}
-                height={BODY}
+                width={TILE_BODY}
+                height={TILE_BODY}
                 cornerRadius={10}
                 fill={selected ? palette.clusterSelected : palette.cluster}
                 stroke={invalid ? palette.invalidBorder : selected ? palette.borderSelected : palette.border}
                 strokeWidth={selected || invalid ? 1.5 : 1}
-                shadowColor="#0b1220"
+                shadowColor={SHADOW_COLOR}
                 shadowOpacity={selected ? 0.16 : 0.06}
                 shadowBlur={selected ? 12 : 5}
                 shadowOffsetY={2}
@@ -95,7 +102,7 @@ export function ClusterTile(props: ClusterTileProps) {
             <Text
                 x={PAD}
                 y={TITLE_Y}
-                width={BODY - PAD * 2 - (repeats > 1 ? 24 : 0)}
+                width={CONTENT_WIDTH - (repeats > 1 ? REPEAT_WIDTH : 0)}
                 text={clusterName(cluster)}
                 fontSize={12}
                 fontStyle="600"
@@ -105,17 +112,17 @@ export function ClusterTile(props: ClusterTileProps) {
             />
             {repeats > 1 && (
                 <Text
-                    x={BODY - PAD - 24}
+                    x={TILE_BODY - PAD - REPEAT_WIDTH}
                     y={TITLE_Y + 1}
-                    width={24}
+                    width={REPEAT_WIDTH}
                     align="right"
                     text={`x${repeats}`}
-                    fontSize={10}
+                    fontSize={SMALL_FONT}
                     fill={palette.accent}
                 />
             )}
 
-            <Line points={[PAD, DIVIDER_Y, BODY - PAD, DIVIDER_Y]} stroke={palette.divider} strokeWidth={1} />
+            <Line points={[PAD, DIVIDER_Y, TILE_BODY - PAD, DIVIDER_Y]} stroke={palette.divider} strokeWidth={1} />
 
             {rows.map((row, position) => (
                 <IconRow
@@ -127,14 +134,14 @@ export function ClusterTile(props: ClusterTileProps) {
                 />
             ))}
 
-            <Group y={BODY - FOOTER_HEIGHT}>
+            <Group y={TILE_BODY - FOOTER_HEIGHT}>
                 {icons.energy && <KonvaImage image={icons.energy} x={PAD} y={0} width={ICON} height={ICON} />}
                 <Text
-                    x={PAD + GUTTER}
-                    y={1}
-                    width={limited ? PERCENT_WIDTH : BODY - PAD * 2 - GUTTER}
+                    x={TEXT_X}
+                    y={TEXT_Y}
+                    width={limited ? PERCENT_WIDTH : TEXT_WIDTH}
                     text={powerLabel}
-                    fontSize={10}
+                    fontSize={SMALL_FONT}
                     fill={overBudget ? palette.meterOver : palette.muted}
                     wrap="none"
                     ellipsis
@@ -142,19 +149,19 @@ export function ClusterTile(props: ClusterTileProps) {
                 {limited && (
                     <>
                         <Rect
-                            x={PAD + GUTTER + PERCENT_WIDTH}
-                            y={3}
-                            width={BODY - PAD * 2 - GUTTER - PERCENT_WIDTH}
+                            x={METER_X}
+                            y={METER_Y}
+                            width={METER_WIDTH}
                             height={METER_HEIGHT}
-                            cornerRadius={3}
+                            cornerRadius={METER_RADIUS}
                             fill={palette.meterTrack}
                         />
                         <Rect
-                            x={PAD + GUTTER + PERCENT_WIDTH}
-                            y={3}
-                            width={(BODY - PAD * 2 - GUTTER - PERCENT_WIDTH) * usage}
+                            x={METER_X}
+                            y={METER_Y}
+                            width={METER_WIDTH * usage}
                             height={METER_HEIGHT}
-                            cornerRadius={3}
+                            cornerRadius={METER_RADIUS}
                             fill={overBudget ? palette.meterOver : palette.energyFill}
                         />
                     </>
@@ -179,9 +186,9 @@ function IconRow({
         <Group y={y}>
             {icon && <KonvaImage image={icon} x={PAD} y={0} width={ICON} height={ICON} opacity={0.7} />}
             <Text
-                x={PAD + GUTTER}
-                y={1}
-                width={BODY - PAD * 2 - GUTTER}
+                x={TEXT_X}
+                y={TEXT_Y}
+                width={TEXT_WIDTH}
                 text={label}
                 fontSize={11}
                 fill={palette.label}

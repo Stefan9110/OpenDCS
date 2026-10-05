@@ -55,25 +55,17 @@ sealed interface EntityFold {
 
     /**
      * A share of the whole: [part] and [whole] are added up across the entities and then divided.
-     *
-     * Averaging the entities' own shares instead would weight a host holding a tenth of the fleet's
-     * capacity as heavily as one holding all of it, so two topologies getting through identical work
-     * would report differently for having been carved up differently.
+     * Averaging per-entity shares would weight a small host as heavily as a large one.
      */
     data class Share(val part: String, val whole: String) : EntityFold
 }
 
 /**
- * A series a result chart can show.
+ * A series a result chart can show, read both from live samples and from the parquet a run leaves.
  *
- * A run reports each of these twice over: as live samples while it is running, and as the parquet it
- * leaves behind. Both sides read this catalog, which is why it lives in the module the dispatcher and
- * the server can both see.
- *
- * A series is folded along two axes. [entities] folds the rows sharing one instant, since a topology
- * has many hosts and one chart line. [overTime] folds the instants inside a chart bucket, and is the
- * same reduction the frontend applies in `lib/experiment/results.ts` -- a cumulative counter carried
- * forward, a gauge averaged, a queue depth taken at its worst.
+ * [entities] folds the rows sharing one instant into one chart line. [overTime] folds the instants
+ * inside a chart bucket, and must match the reduction the frontend applies in
+ * `lib/experiment/results.ts`.
  */
 enum class ResultMetric(
     val table: OutputFileSpec,
@@ -81,8 +73,7 @@ enum class ResultMetric(
     val entities: EntityFold,
     val overTime: Reduction,
 ) {
-    // Read from the work done and the capacity to do it rather than from the column of the same
-    // name, which is each host's own share and cannot be averaged into the fleet's.
+    // Not from the column of the same name, which is each host's own share and cannot be averaged.
     HOST_CPU_UTILIZATION(
         OutputFileSpec.HOST,
         "cpu_utilization",
@@ -99,8 +90,7 @@ enum class ResultMetric(
         Reduction.SUM,
     ),
 
-    // Carbon released per unit of energy drawn, which is a share of the same kind: a source supplying
-    // almost nothing must not pull the figure about as hard as the one carrying the site.
+    // A share too: a source supplying almost nothing must not weigh as much as the one carrying the site.
     POWER_SOURCE_CARBON_INTENSITY(
         OutputFileSpec.POWER_SOURCE,
         "carbon_intensity",
@@ -108,8 +98,7 @@ enum class ResultMetric(
         Reduction.MEAN,
     ),
 
-    // The service table has one row per instant, so folding over entities never sees more than one
-    // value and which reduction is named here cannot change an answer.
+    // The service table has one row per instant, so the entity reduction below cannot change an answer.
     SERVICE_TASKS_ACTIVE(OutputFileSpec.SERVICE, "tasks_active", EntityFold.Each(Reduction.SUM), Reduction.MEAN),
     SERVICE_TASKS_PENDING(OutputFileSpec.SERVICE, "tasks_pending", EntityFold.Each(Reduction.SUM), Reduction.MAX),
     SERVICE_TASKS_COMPLETED(OutputFileSpec.SERVICE, "tasks_completed", EntityFold.Each(Reduction.SUM), Reduction.LAST),
@@ -137,13 +126,7 @@ enum class ResultMetric(
             }
         }
 
-    /**
-     * What this metric is called on the wire and in the frontend's own catalog: the file its table is
-     * written to, without the extension, and the column.
-     *
-     * Derived rather than written down a second time: a metric is one column of one table, and
-     * spelling that out twice is how the two copies come to disagree.
-     */
+    /** What this metric is called on the wire and in the frontend's catalog: `<table file stem>.<column>`. */
     val id: String get() = "${table.fileName.substringBeforeLast('.')}.$column"
 
     companion object {
@@ -157,9 +140,7 @@ enum class ResultMetric(
 /**
  * What tells one row of a table from another at the same instant.
  *
- * An instant is reported more than once: the sample taken on the export interval and the one taken
- * the moment the last task finishes land together at the end of a run. A second report of a reading
- * is that reading again, not another host, so folding without an identity would add a fleet to
+ * The last instant of a run is reported twice, so folding without an identity would add a fleet to
  * itself and finish a run at twice its power.
  */
 sealed interface RowIdentity {

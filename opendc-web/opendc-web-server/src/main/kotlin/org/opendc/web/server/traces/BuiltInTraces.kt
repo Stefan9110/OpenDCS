@@ -35,19 +35,13 @@ import org.opendc.web.server.storage.traceKey
 import org.slf4j.LoggerFactory
 
 /**
- * Puts the traces the deployment ships with into the store, so that a built-in resolves exactly the
- * way an upload does and nothing downstream has to know the difference.
- *
- * The files are bundled as resources under `traces/<slug>/<table>.parquet`, which is the layout the
- * trace's own kind already describes: whichever tables [org.opendc.web.server.model.TraceKind]
- * lists are the ones looked for. A trace whose files are not bundled is left alone rather than
- * guessed at, which is what a deployment that ships none of them looks like.
+ * Puts the traces the deployment ships with into the store, so a built-in resolves exactly the way an
+ * upload does. Files are bundled as resources under `traces/<slug>/<table>.parquet`; a trace whose
+ * files are not bundled is left unresolved.
  */
 @ApplicationScoped
 class BuiltInTraces(private val store: ObjectStore) {
-    // Failures are deliberately not swallowed. A trace library that could not be filled is a
-    // misconfigured deployment, and finding that out at boot is far better than finding it out
-    // when somebody's experiment cannot resolve the trace it names.
+    // Failures are not swallowed: a library that cannot be filled is a misconfiguration to catch at boot.
     @Transactional
     internal fun seed(
         @Suppress("UNUSED_PARAMETER") @Observes event: StartupEvent,
@@ -59,18 +53,15 @@ class BuiltInTraces(private val store: ObjectStore) {
         }
     }
 
-    // A shipped file is not checked for being the table it claims to be, the way an upload is:
-    // it is packaged with the server, so a wrong one is a packaging mistake to fix at the source.
-    // Its footer is still read, because how many rows a trace holds is what decides the memory an
-    // experiment over it is given, and a built-in with no count would be dispatched as if empty.
+    // A shipped file is trusted to be the table it claims, unlike an upload, but its footer is still
+    // read: the row count decides the memory an experiment over it is given.
     private fun seedTable(
         trace: Trace,
         table: String,
     ) {
         val key = traceKey(trace.publicId, table)
         val existing = TracePart.find(trace.id, table)
-        // Re-reads the resource when the row is there but the object is not, which is what a
-        // deployment looks like after its bucket has been replaced.
+        // A row without its object means the bucket was replaced, so the resource is stored again.
         if (existing != null && store.exists(key)) {
             return
         }
@@ -96,10 +87,8 @@ class BuiltInTraces(private val store: ObjectStore) {
     }
 
     /**
-     * How many rows the stored file holds, or nothing when it cannot be read as parquet.
-     *
-     * A deployment that ships something unreadable is told so and keeps running: the trace still
-     * resolves, and dispatch falls back to estimating from the scenario alone.
+     * How many rows the stored file holds, or null when it is not parquet; the trace still resolves
+     * and dispatch estimates from the scenario alone.
      */
     private fun rowCount(key: String): Long? =
         try {

@@ -4,13 +4,10 @@ import { formatPower } from "@/components/format"
 import { CatalogSelect } from "@/components/topology/inspector/CatalogSelect"
 import { QuantityInput } from "@/components/topology/inspector/QuantityInput"
 import { useTraceOptions } from "@/lib/api/traces"
-import { dataCenterHeadroom, isOverBudget, suggestedSupplyW } from "@/lib/topology/capacity"
+import { WATTS_PER_KW, dataCenterHeadroom, isOverBudget, suggestedSupplyW } from "@/lib/topology/capacity"
 import type { DataCenterSpec, PowerSourceSpec } from "@/lib/topology/spec"
 import { Progress, Stack, Switch, Text } from "@mantine/core"
 
-const WATTS_PER_KW = 1000
-
-/** The supply every cluster of a data center shares, and the carbon intensity it is drawn at. */
 export function SupplyFields({
     dataCenter,
     onChange,

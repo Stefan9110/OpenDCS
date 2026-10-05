@@ -34,16 +34,6 @@ export function foldExperimentState(states: ScenarioExecutionState[]): Experimen
     return "failed"
 }
 
-export function aggregateProgress(reports: ProgressReport[]): ProgressReport {
-    return reports.reduce(
-        (total, report) => ({
-            completedTasks: total.completedTasks + report.completedTasks,
-            totalTasks: total.totalTasks + report.totalTasks,
-        }),
-        { completedTasks: 0, totalTasks: 0 },
-    )
-}
-
 export function progressFraction(report: ProgressReport): number {
     if (report.totalTasks <= 0) return 0
     return Math.min(1, Math.max(0, report.completedTasks / report.totalTasks))

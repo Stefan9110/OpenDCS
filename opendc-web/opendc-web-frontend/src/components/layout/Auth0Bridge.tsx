@@ -1,17 +1,17 @@
 "use client"
 
+import { PageLoader } from "@/components/layout/PageLoader"
+import { meKeys } from "@/lib/api/account"
 import { setAuthHeaders } from "@/lib/api/client"
 import { type SessionControls, SessionProvider } from "@/lib/auth/session"
 import { config } from "@/lib/config"
 import { useAuth0 } from "@auth0/auth0-react"
-import { Center, Loader } from "@mantine/core"
 import { useQueryClient } from "@tanstack/react-query"
 import { type ReactNode, useEffect, useState } from "react"
 
 /**
- * Hands the API client its access tokens once Auth0 knows who is signed in, and gives the rest of
- * the app the controls to sign in and out. Children wait until the tokens are wired, or their first
- * requests would go out without one and read as signed out.
+ * Wires Auth0 access tokens into the API client and provides the sign-in controls. Children wait for
+ * the wiring, or their first requests would go out without a token and read as signed out.
  */
 export function Auth0Bridge({ children }: Readonly<{ children: ReactNode }>) {
     const { isLoading, isAuthenticated, getAccessTokenSilently, loginWithRedirect, logout, user } = useAuth0()
@@ -26,16 +26,10 @@ export function Auth0Bridge({ children }: Readonly<{ children: ReactNode }>) {
                 : async () => ({}),
         )
         setWired(true)
-        void queryClient.invalidateQueries({ queryKey: ["me"] })
+        void queryClient.invalidateQueries({ queryKey: meKeys.profile })
     }, [isLoading, isAuthenticated, getAccessTokenSilently, queryClient])
 
-    if (!wired) {
-        return (
-            <Center h="100vh">
-                <Loader />
-            </Center>
-        )
-    }
+    if (!wired) return <PageLoader />
 
     const controls: SessionControls = {
         type: "auth0",

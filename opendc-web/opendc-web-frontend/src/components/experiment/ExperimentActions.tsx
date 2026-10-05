@@ -2,6 +2,7 @@
 
 import { formatCount, formatSimulationBudget } from "@/components/format"
 import { openNamePrompt } from "@/components/util/NamePrompt"
+import { downloadJson } from "@/components/util/download"
 import { notifyProblem } from "@/components/util/feedback"
 import { problemOf } from "@/lib/api/client"
 import {
@@ -50,8 +51,7 @@ export function ExperimentActions({ experiment }: { experiment: Experiment }) {
                 </Text>
             ),
             labels: { confirm: "Run experiment", cancel: "Keep editing" },
-            // No toast: a failed run reports itself under the button that started it, where the
-            // reader is already looking, and stays there instead of vanishing on a timer.
+            // No toast: the error stays under the Run button instead of vanishing on a timer.
             onConfirm: () => submit.mutate(),
         })
 
@@ -92,7 +92,6 @@ export function ExperimentActions({ experiment }: { experiment: Experiment }) {
             onSubmit: (name) => rename.mutate({ name, spec: experiment.spec }, { onError: notifyProblem }),
         })
 
-    // Every action here changes the project, which a viewer may not.
     if (!canEdit) return null
 
     return (
@@ -149,7 +148,10 @@ export function ExperimentActions({ experiment }: { experiment: Experiment }) {
                     >
                         Clone to draft
                     </Menu.Item>
-                    <Menu.Item leftSection={<IconDownload size={16} />} onClick={() => downloadSpec(experiment)}>
+                    <Menu.Item
+                        leftSection={<IconDownload size={16} />}
+                        onClick={() => downloadJson(experiment.name, experiment.spec)}
+                    >
                         Export configuration
                     </Menu.Item>
                     <Menu.Divider />
@@ -160,14 +162,4 @@ export function ExperimentActions({ experiment }: { experiment: Experiment }) {
             </Menu>
         </Group>
     )
-}
-
-function downloadSpec(experiment: Experiment): void {
-    const blob = new Blob([JSON.stringify(experiment.spec, null, 4)], { type: "application/json" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `${experiment.name.replaceAll(/\s+/g, "-").toLowerCase()}.json`
-    link.click()
-    URL.revokeObjectURL(url)
 }

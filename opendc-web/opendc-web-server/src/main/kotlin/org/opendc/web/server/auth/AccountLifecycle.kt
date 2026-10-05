@@ -37,11 +37,8 @@ import org.opendc.web.server.service.openWindows
 import java.time.Instant
 
 /**
- * The account behind an OIDC [subject], created on first sight with a placeholder handle the person
- * replaces before doing anything else. A subject listed in [admins] is made an administrator.
- *
- * Two first requests of the same person can race to create the account; the loser's insert fails
- * on the unique subject, and it reads the winner's instead.
+ * The account behind an OIDC [subject], created on first sight with a placeholder handle. Two first
+ * requests can race to create it; the loser's insert fails on the unique subject and reads the winner's.
  */
 fun signedIn(
     subject: String,
@@ -87,11 +84,8 @@ fun provisionAccount(
 }
 
 /**
- * Sets the handle other people see and the name shown with it.
- *
- * A chosen handle prefixes every trace its account uploads, so it may change only while the account
- * owns no finished trace. Uploads it never finished are discarded with the change, since they are
- * invisible and would otherwise keep the old prefix.
+ * Sets the handle and display name. A chosen handle prefixes the account's traces, so it may change
+ * only while none is finished; unfinished uploads are discarded rather than left with the old prefix.
  */
 fun changeProfile(
     account: UserAccount,
@@ -118,10 +112,8 @@ fun changeProfile(
 }
 
 /**
- * Signs an account out for good, in the least destructive way that strands nobody: its tokens are
- * revoked and it leaves every project somebody else works in, while projects it works in alone are
- * left as they are and runs it started keep going. The sole owner of a shared project has to hand
- * it over first.
+ * Signs an account out for good: its tokens are revoked and it leaves every shared project, while its
+ * solo projects and running work are left alone. The sole owner of a shared project must hand it over first.
  */
 fun deactivate(
     account: UserAccount,

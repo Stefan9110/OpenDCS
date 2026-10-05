@@ -44,9 +44,8 @@ import org.opendc.web.server.model.UserAccount
 import java.time.Instant
 
 /**
- * Who works in a project, addressed by handle. Owners decide who is in it and with what role; anyone
- * may leave. A project always keeps at least one owner, and changes to its members take turns on the
- * project row, so two owners demoting each other cannot leave it with none.
+ * Who works in a project, addressed by handle. Changes take turns on the project row, so two owners
+ * demoting each other cannot leave it with none.
  */
 @Path("projects/{id}/members")
 @Produces(MediaType.APPLICATION_JSON)
@@ -121,8 +120,7 @@ class ProjectMembersResource(private val identity: Identity) {
         return Response.noContent().build()
     }
 
-    // Locked before the caller's role is read, so a role changed by someone else in the meantime is
-    // the one checked.
+    // Locked before the caller's role is read, so a role changed in the meantime is the one checked.
     private fun locked(
         id: String,
         needs: ProjectPermission,
@@ -149,25 +147,25 @@ class ProjectMembersResource(private val identity: Identity) {
 
 private fun ProjectMember.toWire(): ProjectMemberWire = ProjectMemberWire(user.handle, user.displayName, role.toWire())
 
-private fun WireProjectRole.toModel(): ProjectRole =
+private fun ProjectRoleWire.toModel(): ProjectRole =
     when (this) {
-        WireProjectRole.OWNER -> ProjectRole.OWNER
-        WireProjectRole.EDITOR -> ProjectRole.EDITOR
-        WireProjectRole.VIEWER -> ProjectRole.VIEWER
+        ProjectRoleWire.OWNER -> ProjectRole.OWNER
+        ProjectRoleWire.EDITOR -> ProjectRole.EDITOR
+        ProjectRoleWire.VIEWER -> ProjectRole.VIEWER
     }
 
 @Serializable
 data class ProjectMemberWire(
     val handle: String,
     val displayName: String,
-    val role: WireProjectRole,
+    val role: ProjectRoleWire,
 )
 
 @Serializable
 data class MemberInvite(
     val handle: String,
-    val role: WireProjectRole,
+    val role: ProjectRoleWire,
 )
 
 @Serializable
-data class RoleChange(val role: WireProjectRole)
+data class RoleChange(val role: ProjectRoleWire)

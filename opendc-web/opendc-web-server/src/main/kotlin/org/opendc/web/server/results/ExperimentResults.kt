@@ -34,8 +34,7 @@ data class ResultPoint(
 /**
  * One metric of one scenario, averaged over the seeds it was run with.
  *
- * @property spread How far apart those seeds landed, over the whole series. Zero where a scenario
- *           ran once, which is the honest answer rather than a missing one.
+ * @property spread How far apart those seeds landed over the whole series; zero for a single seed.
  */
 @Serializable
 data class ResultSeries(
@@ -44,9 +43,7 @@ data class ResultSeries(
     val spread: Double,
 )
 
-// These collections carry no default: the wire form omits defaulted fields, and a chart that
-// receives no series array at all cannot tell "nothing reported yet" from a malformed response.
-// An empty list is the honest answer and has to be sent.
+// No defaults on these collections: the wire form omits defaulted fields, and an empty list must be sent.
 @Serializable
 data class ScenarioResults(
     val scenarioIndex: Int,
@@ -57,9 +54,7 @@ data class ScenarioResults(
 
 /**
  * @property exportIntervalMs How often the simulation itself took a sample.
- * @property bucketMs How far apart the points reported here are. A trace covering months has far
- *           more samples than a chart has pixels, so they are folded into buckets on the way out and
- *           the reader is told how wide one is.
+ * @property bucketMs How far apart the points reported here are, after folding samples into buckets.
  */
 @Serializable
 data class ExperimentResults(

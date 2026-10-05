@@ -33,9 +33,8 @@ import org.opendc.web.server.rest.forbidden
 import org.opendc.web.server.rest.notAuthenticated
 
 /**
- * The kinds of caller. A role says what a caller is, not what state its account is in: a failed
- * role check cannot say why it failed, and the frontend has to tell a deactivated account from one
- * that is signed out.
+ * The kinds of caller. A role says what a caller is, not what state its account is in, since a failed
+ * role check cannot say why and the frontend has to tell a deactivated account from a signed-out one.
  */
 object Roles {
     /** Any person's account. What every endpoint requires unless it says otherwise. */
@@ -65,10 +64,7 @@ fun QuarkusSecurityIdentity.Builder.actingAs(account: UserAccount): QuarkusSecur
     return this
 }
 
-/**
- * The account a request acts as, loaded once per request from the identity Quarkus security
- * established for it, and checked for the states a role cannot express.
- */
+/** The account a request acts as, loaded once and checked for the states a role cannot express. */
 @RequestScoped
 class Identity(private val security: SecurityIdentity) {
     private val loaded by lazy(LazyThreadSafetyMode.NONE) { load() }

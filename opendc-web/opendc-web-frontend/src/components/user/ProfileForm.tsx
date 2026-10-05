@@ -1,12 +1,10 @@
 "use client"
 
-import { HANDLE_PATTERN } from "@/lib/account/handle"
+import { HANDLE_PATTERN, HANDLE_RULE } from "@/lib/account/handle"
 import { type ProfileChange, useUpdateProfile } from "@/lib/api/account"
 import { ApiError } from "@/lib/api/client"
 import { Button, Stack, TextInput } from "@mantine/core"
 import { useState } from "react"
-
-const HANDLE_RULE = "3 to 32 lowercase letters, digits or dashes, starting with a letter"
 
 /** The handle other people see and the name shown with it, checked here and then by the server. */
 export function ProfileForm({

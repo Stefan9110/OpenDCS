@@ -1,13 +1,14 @@
 "use client"
 
 import { ExperimentStateBadge } from "@/components/experiment/ExperimentStateBadge"
-import { formatCount, formatPercent, formatUpdatedAt } from "@/components/format"
+import { ProgressMeter } from "@/components/experiment/ProgressMeter"
+import { formatCount, formatUpdatedAt } from "@/components/format"
 import { notifyProblem } from "@/components/util/feedback"
 import { useCloneExperiment, useDeleteExperiment } from "@/lib/api/experiments"
 import type { ExperimentSummary, Id } from "@/lib/api/types"
 import { progressFraction } from "@/lib/experiment/status"
 import { usePermission } from "@/lib/project/permissions"
-import { ActionIcon, Anchor, Group, Menu, Progress, Table, Text } from "@mantine/core"
+import { ActionIcon, Anchor, Group, Menu, Table, Text } from "@mantine/core"
 import { modals } from "@mantine/modals"
 import { IconCopy, IconDots, IconTrash } from "@tabler/icons-react"
 import Link from "next/link"
@@ -51,7 +52,6 @@ export function ExperimentTable({
 }
 
 function ExperimentRow({ projectId, experiment }: { projectId: Id; experiment: ExperimentSummary }) {
-    const fraction = progressFraction(experiment.progress)
     return (
         <Table.Tr>
             <Table.Td>
@@ -69,17 +69,12 @@ function ExperimentRow({ projectId, experiment }: { projectId: Id; experiment: E
                         Not submitted
                     </Text>
                 ) : (
-                    <Group gap="xs" wrap="nowrap">
-                        <Progress
-                            value={fraction * 100}
-                            w={100}
-                            aria-label={`${experiment.name} progress`}
-                            color={experiment.state === "failed" ? "red" : "opendc"}
-                        />
-                        <Text size="xs" c="dimmed">
-                            {formatPercent(fraction)}
-                        </Text>
-                    </Group>
+                    <ProgressMeter
+                        fraction={progressFraction(experiment.progress)}
+                        failed={experiment.state === "failed"}
+                        width={100}
+                        label={`${experiment.name} progress`}
+                    />
                 )}
             </Table.Td>
             <Table.Td>
@@ -108,7 +103,6 @@ function ExperimentRowActions({ projectId, experiment }: { projectId: Id; experi
             onConfirm: () => remove.mutate(experiment.id, { onError: notifyProblem }),
         })
 
-    // Cloning and deleting both change the project, which a viewer may not.
     if (!canEdit) return null
 
     return (

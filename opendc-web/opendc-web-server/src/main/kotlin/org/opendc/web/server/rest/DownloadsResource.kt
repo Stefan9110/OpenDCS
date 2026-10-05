@@ -27,6 +27,7 @@ import jakarta.ws.rs.GET
 import jakarta.ws.rs.Path
 import jakarta.ws.rs.PathParam
 import jakarta.ws.rs.Produces
+import jakarta.ws.rs.core.HttpHeaders
 import jakarta.ws.rs.core.Response
 import jakarta.ws.rs.core.StreamingOutput
 import org.opendc.web.server.auth.Download
@@ -46,14 +47,17 @@ import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
+// The media types of the bodies that are not JSON.
+const val APPLICATION_ZIP = "application/zip"
+const val TEXT_PLAIN_UTF8 = "text/plain; charset=utf-8"
+
 private val WHITESPACE = Regex("\\s+")
 
 private val UNSAFE_IN_A_PATH = Regex("[^a-z0-9_-]")
 
 /**
- * What a signed download link fetches. Open to anyone holding a valid link, since following one is
- * how a browser downloads a file too large to hold, and a link cannot carry an access token. Whoever
- * was allowed to read the thing was checked when the link was made.
+ * What a signed download link fetches. Open to anyone holding a valid link: who may read the thing
+ * was checked when the link was made.
  */
 @Path("downloads")
 @PermitAll
@@ -63,7 +67,7 @@ class DownloadsResource(
 ) {
     @GET
     @Path("{ticket}")
-    @Produces("application/zip")
+    @Produces(APPLICATION_ZIP)
     fun fetch(
         @PathParam("ticket") ticket: String,
     ): Response =
@@ -81,8 +85,8 @@ class DownloadsResource(
 
 /**
  * What an experiment's archive holds: only what a unit certified, since an attempt cut off partway
- * can have published some of its files, and those must never be readable as a result. A 404 when
- * nothing has been produced yet, so a browser never follows a link onto an error.
+ * can have published some of its files. A 404 when nothing has been produced yet, so a browser never
+ * follows a link onto an error.
  */
 fun archiveKeys(
     experiment: Experiment,
@@ -100,9 +104,8 @@ fun archiveKeys(
 }
 
 /**
- * Everything the experiment's runs produced, as one zip, laid out the way a local run of the same
- * experiment lays out its output directory, so it can be read by the same tooling. Streamed rather
- * than assembled, because an experiment of many scenarios is far larger than worth holding.
+ * Everything the experiment's runs produced, as one streamed zip laid out like a local run's output
+ * directory, so the same tooling reads both.
  */
 fun archiveResponse(
     experiment: Experiment,
@@ -114,8 +117,7 @@ fun archiveResponse(
     val body =
         StreamingOutput { out ->
             ZipOutputStream(out).use { zip ->
-                // Parquet is compressed already, so deflating it again buys nothing and costs the
-                // server the whole archive's worth of work on the way out.
+                // Parquet is compressed already.
                 zip.setLevel(Deflater.NO_COMPRESSION)
                 for (key in keys) {
                     zip.putNextEntry(ZipEntry("$name/raw-output/${key.removePrefix("$prefix/")}"))
@@ -124,7 +126,7 @@ fun archiveResponse(
                 }
             }
         }
-    return Response.ok(body).header("Content-Disposition", "attachment; filename=\"$name.zip\"").build()
+    return zipAttachment(body, name)
 }
 
 /** A trace as a zip of its tables, so a workload and a carbon trace are each one download. */
@@ -149,13 +151,17 @@ fun traceContentResponse(
                 }
             }
         }
-    return Response.ok(body).header("Content-Disposition", "attachment; filename=\"$fileName.zip\"").build()
+    return zipAttachment(body, fileName)
 }
 
+private fun zipAttachment(
+    body: StreamingOutput,
+    name: String,
+): Response = Response.ok(body).header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"$name.zip\"").build()
+
 /**
- * An experiment's name as somewhere to unpack it. Names are written by people and end up in a header
- * and in every entry path, so anything that could be read as a directory of its own, or as the end
- * of the header, is dropped rather than escaped.
+ * An experiment's name as somewhere to unpack it. It ends up in a header and in every entry path, so
+ * anything that could read as a directory or end the header is dropped rather than escaped.
  */
 private fun archiveName(name: String): String =
     name

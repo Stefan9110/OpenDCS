@@ -47,12 +47,8 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * What a trace supplies to a run, and which opendc-trace tables it is made of. A workload carries
- * two, the others one each; a kind that needs a third is one entry in this list and no migration,
- * because a part is named by its table rather than by a position in a fixed set.
- *
- * The names come from [org.opendc.trace.conv], which is what the readers resolve against, so this
- * cannot drift into naming a table nothing can open.
+ * What a trace supplies to a run, and which opendc-trace tables it is made of. Table names come
+ * from [org.opendc.trace.conv] so they cannot drift from what the readers open.
  */
 enum class TraceKind(val tables: List<String>) {
     WORKLOAD(listOf(TABLE_TASKS, TABLE_FRAGMENTS)),
@@ -71,11 +67,7 @@ enum class TraceKind(val tables: List<String>) {
     }
 }
 
-/**
- * Where a trace came from, and with it whether anybody owns it. A built-in ships with the
- * deployment and is resolved from the repository, so it has no owner and no stored bytes; an
- * upload has both. This is the variant a nullable owner would otherwise have to stand in for.
- */
+/** Where a trace came from: a built-in ships with the deployment and has no owner; an upload has one. */
 enum class TraceOrigin {
     BUILTIN,
     UPLOADED,
@@ -198,8 +190,7 @@ class TraceGrant : PanacheEntityBase {
     lateinit var grantedAt: Instant
 
     companion object : PanacheCompanion<TraceGrant> {
-        // The trace is fetched with the grants because every caller reads it; left lazy, listing
-        // what somebody has been shared costs a query per row.
+        // The trace is fetched eagerly because every caller reads it; lazy, it costs a query per row.
         @Language("JPAQL")
         private const val SHARED_WITH = """
             SELECT g FROM TraceGrant g

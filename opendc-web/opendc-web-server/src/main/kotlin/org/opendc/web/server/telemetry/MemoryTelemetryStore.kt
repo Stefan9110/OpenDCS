@@ -28,12 +28,8 @@ import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Samples held in this server's own memory. What a development machine and the test suite use, and
- * what a single-server deployment can keep using.
- *
- * Nothing here survives a restart, which is the same guarantee the deployment backend gives with
- * persistence switched off. A server with more than one replica needs the shared one, or a browser
- * polling a chart would see it flicker between whichever replica answered.
+ * Samples held in this server's own memory, lost on restart. Several replicas need the shared Redis
+ * store instead, or a polled chart flickers between replicas.
  */
 class MemoryTelemetryStore(private val ttl: Duration) : TelemetryStore {
     private val reported = ConcurrentHashMap<RunKey, Reported>()
@@ -55,12 +51,7 @@ class MemoryTelemetryStore(private val ttl: Duration) : TelemetryStore {
         keys.forEach { reported.remove(it) }
     }
 
-    /**
-     * Removes what a store with expiry would have removed on its own.
-     *
-     * Swept on every call rather than on a timer: the map is only ever as large as the runs that have
-     * reported recently, and a sweep nobody is waiting on is a thread to shut down cleanly at exit.
-     */
+    // Swept on every call rather than on a timer, so there is no thread to shut down at exit.
     private fun expire() {
         val now = Instant.now()
         reported.entries.removeIf { it.value.until < now }

@@ -46,13 +46,8 @@ class ObjectStorageTest {
         val id = UUID.randomUUID()
 
         assertEquals("traces/$id/tasks.parquet", traceKey(id, "tasks"))
-        // Nothing about the key depends on who owns the trace, so renaming it or withdrawing a
-        // share leaves every object exactly where it was.
-        assertEquals(traceKey(id, "tasks"), traceKey(id, "tasks"))
     }
 
-    // A launcher beside a local store reads and writes the files where they lie, through the very
-    // URLs a remote one would be handed signed.
     @Test
     fun `hands a launcher URLs that read and write the object itself`() {
         val id = UUID.randomUUID()
@@ -67,7 +62,6 @@ class ObjectStorageTest {
         assertEquals(read, store.writeUrl(key, Duration.ofHours(1)))
     }
 
-    // Deleting an experiment is one prefix: its results, manifests, logs and outcomes all live under it.
     @Test
     fun `removes everything an experiment kept with one prefix`() {
         val id = UUID.randomUUID()
@@ -86,9 +80,7 @@ class ObjectStorageTest {
         assertTrue(ObjectStorage(config(ObjectStoreKind.LOCAL)).objectStore() is LocalObjectStore)
     }
 
-    // Building the client and signing a target is where a deployment against a third-party provider
-    // goes wrong, and it happens at boot. Nothing here reaches the network: the SDK connects on the
-    // first request, and signing a whole-file target is arithmetic over the credentials.
+    // Nothing here reaches the network: the SDK connects on the first request, and signing is local.
     @Test
     fun `an s3 store signs an upload target against a third-party endpoint`() {
         val store =
@@ -108,8 +100,6 @@ class ObjectStorageTest {
         store.close()
     }
 
-    // A bucket on a private network beside the server is reached by launchers at one address and by
-    // browsers at another; a URL signed for the wrong one is unreachable, or its signature invalid.
     @Test
     fun `an s3 store signs browser uploads for its public endpoint and launcher transfers for its own`() {
         val store =
@@ -125,8 +115,6 @@ class ObjectStorageTest {
         store.close()
     }
 
-    // A deployment that names S3 but forgets a credential must be told which key is missing, not
-    // handed a client that fails on the first upload with something from inside the SDK.
     @Test
     fun `an incomplete s3 configuration says which key is missing`() {
         val missing = assertThrows<IllegalStateException> { ObjectStorage(config(ObjectStoreKind.S3, bucket = null)).objectStore() }

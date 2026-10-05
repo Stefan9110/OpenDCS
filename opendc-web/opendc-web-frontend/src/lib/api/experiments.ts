@@ -16,8 +16,7 @@ import { type QueryClient, keepPreviousData, useMutation, useQuery, useQueryClie
 
 const LIVE_POLL_MS = 2000
 
-// An experiment is addressed by its own id alone, so its cache entries are keyed that way too. The
-// project only scopes the list it appears in.
+// An experiment is keyed by its own id alone; the project only scopes the list it appears in.
 export const experimentKeys = {
     list: (projectId: Id) => ["projects", projectId, "experiments"] as const,
     page: (projectId: Id, page: number) => ["projects", projectId, "experiments", page] as const,
@@ -169,11 +168,8 @@ export function useRetryScenario(experimentId: Id) {
 }
 
 /**
- * Takes the experiment a write returned, and drops what that write invalidated.
- *
- * Status and results have to go: their cached copies still describe a draft, and a query whose data
- * says draft does not poll, so leaving them would show a submitted experiment as one that never
- * started.
+ * Takes the experiment a write returned. Status and results are invalidated because their cached
+ * copies still say draft, and a draft does not poll.
  */
 function applyExperiment(queryClient: QueryClient, experiment: Experiment): void {
     queryClient.setQueryData(experimentKeys.detail(experiment.id), experiment)
@@ -194,10 +190,8 @@ export function useDeleteExperiment(projectId: Id) {
     const queryClient = useQueryClient()
     return useMutation({
         mutationFn: (experimentId: Id) => apiRequest<void>(`api/v1/experiments/${experimentId}`, { method: "DELETE" }),
-        // Drop the deleted experiment's queries instead of invalidating them. Invalidating refetches
-        // an experiment that no longer exists, and its 404 reaches the still-mounted page before the
-        // caller's redirect does. The detail key is a prefix of the status and results keys, so one
-        // removal covers all three.
+        // Removed rather than invalidated, or the refetch's 404 reaches the page before the redirect.
+        // The detail key is a prefix of the status and results keys, so this covers all three.
         onSuccess: (_result, experimentId) => {
             queryClient.removeQueries({ queryKey: experimentKeys.detail(experimentId) })
             queryClient.invalidateQueries({ queryKey: experimentKeys.list(projectId) })

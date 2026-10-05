@@ -37,10 +37,7 @@ import kotlin.io.path.isRegularFile
 
 @ConfigMapping(prefix = "opendc.frontend")
 interface FrontendConfig {
-    /**
-     * The directory holding the frontend's static export, which a distribution ships beside this
-     * server. Absent, as in development and the test suite, this server serves the API alone.
-     */
+    /** The frontend's static export. Absent, as in development and tests, only the API is served. */
     fun directory(): Optional<String>
 }
 
@@ -49,8 +46,7 @@ interface FrontendConfig {
  * needs no CORS and no second host.
  *
  * The export writes each page as `project.html` while the app links to `/project?id=...`, so a page
- * path without an extension is served the page it names: reloading or sharing a deep link then finds
- * it rather than a 404. The API and Quarkus' own endpoints never reach the filesystem.
+ * path without an extension is served the page it names, which keeps deep links working.
  */
 @ApplicationScoped
 class FrontendPages(private val config: FrontendConfig) {
@@ -87,6 +83,9 @@ class FrontendPages(private val config: FrontendConfig) {
         return file.startsWith(root) && file.isRegularFile()
     }
 }
+
+/** Where the REST API is mounted, relative to the origin. Has to match `quarkus.rest.path`. */
+const val API_ROOT = "api/v1"
 
 private const val INDEX_PAGE = "index.html"
 

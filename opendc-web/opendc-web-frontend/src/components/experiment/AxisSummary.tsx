@@ -37,11 +37,7 @@ export function AxisSummary({ spec, estimate }: { spec: ExperimentSpec; estimate
     )
 }
 
-/**
- * A swept axis can hold as many entries as someone cared to write, and seven of them stacked would
- * push the numbers underneath off the panel. The row keeps its first few and counts the rest behind
- * a control that shows them, so nothing is hidden without a way back to it.
- */
+// Past this a long axis would push the numbers below off the panel; the rest sit behind a toggle.
 const ENTRY_CAP = 4
 
 function AxisRow({ label, entries }: { label: string; entries: string[] }) {

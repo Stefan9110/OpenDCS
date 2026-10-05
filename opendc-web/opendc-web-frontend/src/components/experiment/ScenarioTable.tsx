@@ -1,6 +1,7 @@
 "use client"
 
 import { ScenarioStateBadge } from "@/components/experiment/ExperimentStateBadge"
+import { ProgressMeter } from "@/components/experiment/ProgressMeter"
 import { AXIS_LABELS, axisEntryLabels } from "@/components/experiment/axisLabels"
 import { formatPercent } from "@/components/format"
 import type { ScenarioStatus } from "@/lib/api/types"
@@ -14,34 +15,24 @@ import {
     scenarioCount,
 } from "@/lib/experiment/spec"
 import { isTerminalScenario, progressFraction } from "@/lib/experiment/status"
-import { ActionIcon, Anchor, Group, Paper, Progress, Stack, Table, Text, Tooltip } from "@mantine/core"
+import { ActionIcon, Anchor, Group, Paper, Stack, Table, Text, Tooltip } from "@mantine/core"
 import { IconRefresh } from "@tabler/icons-react"
 
 const MAX_HEIGHT = 520
 const INDEX_WIDTH = 56
 const STATE_WIDTH = 110
 const PROGRESS_WIDTH = 150
+const BAR_WIDTH = 90
+const BAR_WIDTH_BESIDE_RETRY = 62
 
-// What one axis column needs before its entries start reading as fragments. Past that the table
-// scrolls sideways rather than squeezing every column, which is what turned a state into "Queue...".
+// Narrower than this an axis column's entries read as fragments, so the table scrolls instead.
 const AXIS_MIN_WIDTH = 150
 
-/**
- * The columns that hold still while the axes scroll under them. They need a background of their
- * own, or the scrolling cells show through, and a layer above the ordinary cells. Mantine puts the
- * sticky header at 3, so the pinned header cells go above that and the pinned body cells below: the
- * header must cover the body, and both must cover whatever scrolls past.
- */
+// Pinned cells need their own background, and Mantine's sticky header sits at zIndex 3 between them.
 const PINNED = { bg: "var(--mantine-color-body)", style: { zIndex: 2 } } as const
 const PINNED_HEADER = { style: { zIndex: 5 } } as const
 
-/**
- * Where each pinned column sits, shared by its header and its cells so the two cannot drift apart.
- *
- * A phone has no room for all three: pinning 316px of them would leave an axis column a sliver to
- * scroll in. The bar is the part that goes, since it says nothing the percentage beside it does not,
- * and the state column takes the edge it leaves behind.
- */
+// Phones drop the progress column and the state column takes its edge.
 const INDEX_COLUMN = { w: INDEX_WIDTH, pos: "sticky", left: 0 } as const
 const STATE_COLUMN = { w: STATE_WIDTH, pos: "sticky", right: { base: 0, sm: PROGRESS_WIDTH } } as const
 const PROGRESS_COLUMN = { w: PROGRESS_WIDTH, pos: "sticky", right: 0, visibleFrom: "sm" } as const
@@ -64,8 +55,6 @@ export function ScenarioTable({
     const statusAt = new Map(statuses.map((status) => [status.scenarioIndex, status]))
     const started = statuses.length > 0
 
-    // What the columns need to all be readable. Narrower than this the table scrolls, and the
-    // pinned columns are what it scrolls under.
     const minWidth = INDEX_WIDTH + varying.length * AXIS_MIN_WIDTH + (started ? STATE_WIDTH + PROGRESS_WIDTH : 0)
 
     if (total === 0) {
@@ -179,7 +168,7 @@ function ScenarioOutcome({
                             </span>
                         </Tooltip>
                     )}
-                    {/* The reading the bar carries, for the width where the bar has no column. */}
+                    {/* Stands in for the progress column, which phones hide. */}
                     <Text size="xs" c="dimmed" hiddenFrom="sm">
                         {formatPercent(fraction)}
                     </Text>
@@ -187,16 +176,13 @@ function ScenarioOutcome({
             </Table.Td>
             <Table.Td {...PROGRESS_COLUMN} {...PINNED}>
                 <Group gap="xs" wrap="nowrap">
-                    <Progress
-                        value={fraction * 100}
-                        w={onRetry === undefined ? 90 : 62}
+                    <ProgressMeter
+                        fraction={fraction}
+                        failed={status.state === "failed"}
+                        width={onRetry === undefined ? BAR_WIDTH : BAR_WIDTH_BESIDE_RETRY}
                         size="sm"
-                        color={status.state === "failed" ? "red" : "opendc"}
-                        aria-label={`Scenario ${status.scenarioIndex} progress`}
+                        label={`Scenario ${status.scenarioIndex} progress`}
                     />
-                    <Text size="xs" c="dimmed">
-                        {formatPercent(fraction)}
-                    </Text>
                     {onRetry !== undefined && isTerminalScenario(status.state) && (
                         <Tooltip label="Run this scenario again" withArrow>
                             <ActionIcon

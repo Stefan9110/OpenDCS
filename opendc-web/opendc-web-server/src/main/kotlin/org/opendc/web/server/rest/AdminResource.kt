@@ -60,6 +60,8 @@ import java.time.Instant
 /** How many times its estimated makespan a running execution may take before it is flagged as overdue. */
 private const val STRAGGLER_FACTOR = 2.0
 
+private const val MILLIS_PER_SECOND = 1000.0
+
 private val LIVE = listOf(ExecutionState.QUEUED, ExecutionState.SUBMITTED, ExecutionState.RUNNING)
 
 @Language("JPAQL")
@@ -80,9 +82,8 @@ private const val ACCOUNTS_MATCHING = """
 """
 
 /**
- * What an operator looks at: executions on and off the platform, the platform's capacity, and the
- * accounts using it. Administrators only, and no bypass of project membership: the rows carry the
- * names an operator needs, without opening the experiments themselves.
+ * What an operator looks at. The rows carry the names an operator needs without opening the
+ * experiments themselves: there is no bypass of project membership.
  */
 @Path("admin")
 @RolesAllowed(Roles.ADMIN)
@@ -99,8 +100,8 @@ class AdminResource(
     @Path("executions")
     fun executions(
         @QueryParam("state") states: List<String>,
-        @QueryParam("limit") @DefaultValue("50") limit: Int,
-        @QueryParam("offset") @DefaultValue("0") offset: Int,
+        @QueryParam("limit") @DefaultValue(Window.DEFAULT_LIMIT) limit: Int,
+        @QueryParam("offset") @DefaultValue(Window.DEFAULT_OFFSET) offset: Int,
     ): Page<AdminExecution> {
         val wanted = if (states.isEmpty()) LIVE else states.map(::stateOf)
         val now = Instant.now()
@@ -128,7 +129,7 @@ class AdminResource(
     /** What the launcher wrote, collected when the execution ended. */
     @GET
     @Path("executions/{id}/logs")
-    @Produces("text/plain; charset=utf-8")
+    @Produces(TEXT_PLAIN_UTF8)
     fun logs(
         @PathParam("id") id: String,
     ): Response {
@@ -178,8 +179,8 @@ class AdminResource(
     @Path("users")
     fun users(
         @QueryParam("q") @DefaultValue("") q: String,
-        @QueryParam("limit") @DefaultValue("50") limit: Int,
-        @QueryParam("offset") @DefaultValue("0") offset: Int,
+        @QueryParam("limit") @DefaultValue(Window.DEFAULT_LIMIT) limit: Int,
+        @QueryParam("offset") @DefaultValue(Window.DEFAULT_OFFSET) offset: Int,
     ): Page<AdminAccount> {
         val pattern = "%${q.trim().lowercase().replace("!", "!!").replace("%", "!%").replace("_", "!_")}%"
         val matching = UserAccount.find(ACCOUNTS_MATCHING, pattern)
@@ -234,8 +235,6 @@ class AdminResource(
                 )
         }
 }
-
-private const val MILLIS_PER_SECOND = 1000.0
 
 private fun stateOf(raw: String): ExecutionState =
     ExecutionState.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
@@ -368,7 +367,7 @@ data class AdminAccount(
     val subject: String,
     val handle: HandleWire,
     val displayName: String,
-    val plan: WirePlan,
+    val plan: PlanWire,
     val isAdmin: Boolean,
     val status: AccountStatus,
     val createdAt: String,

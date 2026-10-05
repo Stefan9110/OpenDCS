@@ -46,9 +46,7 @@ class TraceIngestTest {
     private val store: ObjectStore by lazy { LocalObjectStore(root) }
     private val ingest: TraceIngest by lazy { TraceIngest(store) }
 
-    // The format a table is checked against is the kind's own name in lower case rather than a
-    // second string stored beside it. That is only safe while opendc-trace answers to every one of
-    // them, which is what this holds: a kind added without a reader fails here, not on an upload.
+    // A table is checked against the format named by its kind in lower case, so every kind needs a reader.
     @Test
     fun `every kind names a format opendc-trace can open`() {
         for (kind in TraceKind.entries) {
@@ -60,14 +58,12 @@ class TraceIngestTest {
     fun `a real carbon table is accepted and counted`() {
         val key = store("fixtures/traces/carbon.parquet")
 
-        val facts = ingest.inspect(TraceKind.CARBON, "carbon", key)
+        val size = ingest.inspect(TraceKind.CARBON, "carbon", key)
 
-        assertEquals(Files.size(ApiTest.fixturePath("traces/carbon.parquet")), facts.sizeBytes)
-        assertTrue(facts.rowCount > 0, "a real trace has rows")
+        assertEquals(Files.size(ApiTest.fixturePath("traces/carbon.parquet")), size.sizeBytes)
+        assertTrue(size.rowCount > 0, "a real trace has rows")
     }
 
-    // The count comes from the footer rather than from reading rows, which is what makes checking a
-    // ten-gigabyte table cost the same as a small one.
     @Test
     fun `a real workload's tables are accepted and counted`() {
         val tasks = ingest.inspect(TraceKind.WORKLOAD, "tasks", store("fixtures/traces/workload/tasks.parquet"))
@@ -87,8 +83,7 @@ class TraceIngestTest {
         assertEquals("carbon", problem.problem.issues.single().path)
     }
 
-    // A real parquet file of the wrong sort is the interesting case: it opens perfectly well, and
-    // only its columns give it away. Left unchecked it would fail inside a runner instead.
+    // A real parquet file of the wrong sort opens fine; only its columns give it away.
     @Test
     fun `a parquet file that is not the table it was filed as is refused`() {
         val key = store("fixtures/traces/carbon.parquet")

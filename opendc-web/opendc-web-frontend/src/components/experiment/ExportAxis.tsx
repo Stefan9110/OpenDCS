@@ -1,23 +1,18 @@
 "use client"
 
 import { AXIS_HELP } from "@/components/experiment/axisLabels"
-import { FieldLabel, UnitAdornment } from "@/components/topology/inspector/FieldLabel"
+import { FieldLabel, UnitAdornment } from "@/components/util/FieldLabel"
 import { DEFAULT_EXPORT_INTERVAL, type ExportSpec } from "@/lib/experiment/spec"
 import { amountIn, parseQuantity } from "@/lib/units"
 import { TagsInput } from "@mantine/core"
 
-// Every entry is counted in minutes, so the box says so once rather than each entry carrying a unit
-// of its own. A value stored in another unit is converted rather than refused: the document may
-// have been written by hand or by the SDK, neither of which owes this field its unit.
+// A value stored in another unit is converted for display rather than refused.
 const UNIT = "min"
 
 // Wide enough for the unit to sit clear of the last entry.
 const UNIT_WIDTH = 44
 
-/**
- * The snapshot intervals. Only the interval is edited here: an entry the document already carries
- * keeps its column selection and file list, which are not this field's to drop.
- */
+// Only the interval is edited; an existing entry keeps its columns and file list.
 export function ExportAxis({
     entries,
     onChange,
@@ -40,13 +35,11 @@ export function ExportAxis({
 function minutesOf(entry: ExportSpec): string {
     const wire = entry.exportInterval ?? DEFAULT_EXPORT_INTERVAL
     const parsed = parseQuantity("time", wire)
-    // Anything unreadable is shown as it was stored. Hiding it would take the entry with it on the
-    // next edit, and the scenarios it expands to along with it.
+    // Shown as stored when unreadable; hiding it would drop the entry on the next edit.
     return parsed.status === "ok" ? String(amountIn("time", parsed.base, UNIT)) : String(wire)
 }
 
-// A tag that still reads as an entry the document holds keeps that entry whole. Tags are matched in
-// the order they appear, so two entries written at the same interval stay two entries.
+// A tag matching an existing entry keeps it whole; matched in order, so equal intervals stay apart.
 function rebuild(tags: string[], entries: ExportSpec[]): ExportSpec[] {
     const remaining = [...entries]
 

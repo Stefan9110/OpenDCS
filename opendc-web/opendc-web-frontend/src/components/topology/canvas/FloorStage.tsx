@@ -3,6 +3,7 @@
 import { ClusterTile } from "@/components/topology/canvas/ClusterTile"
 import {
     SCALE_STEP,
+    TILE_BODY,
     TILE_INSET,
     TILE_SIZE,
     cellAtPoint,
@@ -202,14 +203,13 @@ function FloorGrid({ columns, rows, color }: { columns: number; rows: number; co
 function HoverCell({ cell, color }: { cell: FloorCell; color: string }) {
     const x = cell.x * TILE_SIZE + TILE_INSET
     const y = cell.y * TILE_SIZE + TILE_INSET
-    const body = TILE_SIZE - TILE_INSET * 2
     return (
         <Group>
             <Rect
                 x={x}
                 y={y}
-                width={body}
-                height={body}
+                width={TILE_BODY}
+                height={TILE_BODY}
                 cornerRadius={6}
                 stroke={color}
                 strokeWidth={2}
@@ -218,8 +218,8 @@ function HoverCell({ cell, color }: { cell: FloorCell; color: string }) {
             />
             <Text
                 x={x}
-                y={y + body / 2 - 12}
-                width={body}
+                y={y + TILE_BODY / 2 - 12}
+                width={TILE_BODY}
                 align="center"
                 text="+"
                 fontSize={26}

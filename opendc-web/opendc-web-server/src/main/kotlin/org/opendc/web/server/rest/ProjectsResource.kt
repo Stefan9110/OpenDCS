@@ -127,20 +127,17 @@ class ProjectsResource(
         @RestPath id: String,
     ) {
         val member = projectFor(identity.currentUser(), id, ProjectPermission.MANAGE)
-        // What the project's experiments still have on a platform or in the store goes once the
-        // rows are gone; the rows themselves go with the project through the schema's cascades.
+        // What the experiments hold on a platform or in the store; the rows go through the cascades.
         pipeline.discardAll(member.project)
-        // The membership that authorised this is loaded and still points at the project, and
-        // Hibernate will not flush a live row referencing one being deleted. Removing it through
-        // the session first settles that; every other child goes with the project through the
-        // schema's cascades, which the session never sees.
+        // The loaded membership still points at the project, and Hibernate will not flush a live row
+        // referencing one being deleted.
         member.delete()
         member.project.delete()
     }
 }
 
 @Serializable
-enum class WireProjectRole {
+enum class ProjectRoleWire {
     @SerialName("owner")
     OWNER,
 
@@ -151,11 +148,11 @@ enum class WireProjectRole {
     VIEWER,
 }
 
-fun ProjectRole.toWire(): WireProjectRole =
+fun ProjectRole.toWire(): ProjectRoleWire =
     when (this) {
-        ProjectRole.OWNER -> WireProjectRole.OWNER
-        ProjectRole.EDITOR -> WireProjectRole.EDITOR
-        ProjectRole.VIEWER -> WireProjectRole.VIEWER
+        ProjectRole.OWNER -> ProjectRoleWire.OWNER
+        ProjectRole.EDITOR -> ProjectRoleWire.EDITOR
+        ProjectRole.VIEWER -> ProjectRoleWire.VIEWER
     }
 
 /** A project as the caller sees it: identity plus the caller's role in it. */
@@ -163,7 +160,7 @@ fun ProjectRole.toWire(): WireProjectRole =
 data class ProjectSummary(
     val id: String,
     val name: String,
-    val role: WireProjectRole,
+    val role: ProjectRoleWire,
     val createdAt: String,
     val updatedAt: String,
 )

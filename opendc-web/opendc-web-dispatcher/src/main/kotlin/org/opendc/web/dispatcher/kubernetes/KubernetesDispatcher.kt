@@ -43,6 +43,7 @@ import org.opendc.web.dispatcher.LaunchRequest
 import org.opendc.web.dispatcher.PlatformEvent
 import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.dispatcher.PlatformVerdict
+import org.opendc.web.dispatcher.jobName
 import org.opendc.web.dispatcher.logTail
 import org.slf4j.LoggerFactory
 import java.time.Duration
@@ -53,47 +54,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
-/** Where executions run. Absent, it is the namespace the client was configured for. */
-sealed interface Namespace {
-    data object OfThisServer : Namespace
-
-    data class Named(val name: String) : Namespace
-}
-
-sealed interface PriorityClass {
-    data object ClusterDefault : PriorityClass
-
-    data class Named(val name: String) : PriorityClass
-}
-
-enum class PullPolicy(val wire: String) {
-    ALWAYS("Always"),
-    IF_NOT_PRESENT("IfNotPresent"),
-    NEVER("Never"),
-}
-
-/**
- * How executions are run on a cluster.
- *
- * @property slot The shape of one execution, which is what bags are packed for.
- * @property maxConcurrent How many Jobs may be in flight at once.
- * @property scratchMb The writable space each pod gets for staged inputs and output.
- * @property ttl How long a finished Job lingers if nothing deletes it. Only a safety net.
- * @property pendingTimeout How long a Job may wait to start before it is withdrawn.
- */
-data class KubernetesDispatcherConfig(
-    val namespace: Namespace,
-    val image: String,
-    val pullPolicy: PullPolicy,
-    val serviceAccount: String,
-    val priorityClass: PriorityClass,
-    val slot: ExecutionSlot,
-    val maxConcurrent: Int,
-    val scratchMb: Int,
-    val ttl: Duration,
-    val pendingTimeout: Duration,
-)
-
 /** How often every known Job is looked at again, which fires pending timeouts and redelivers. */
 private val SCAN_PERIOD = Duration.ofSeconds(30)
 
@@ -102,6 +62,9 @@ private val RESYNC_PERIOD = Duration.ofMinutes(5)
 
 /** How many lines of a pod's log are fetched for its tail. Trimmed to bytes afterwards. */
 private const val LOG_LINES = 4096
+
+/** Where executions run when neither the config nor the client names a namespace. */
+private const val DEFAULT_NAMESPACE = "default"
 
 /**
  * Runs each execution as one Job on a Kubernetes cluster.
@@ -118,7 +81,7 @@ class KubernetesDispatcher internal constructor(
 ) : Dispatcher {
     private val namespace: String =
         when (val namespace = config.namespace) {
-            Namespace.OfThisServer -> client.namespace ?: "default"
+            Namespace.OfThisServer -> client.namespace ?: DEFAULT_NAMESPACE
             is Namespace.Named -> namespace.name
         }
 

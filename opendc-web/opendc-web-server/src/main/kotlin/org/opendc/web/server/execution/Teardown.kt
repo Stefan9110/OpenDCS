@@ -38,11 +38,8 @@ data class StopRequested(val executionIds: List<UUID>)
 data class DiscardRequested(val experimentIds: List<UUID>)
 
 /**
- * What a cancel or a delete asks of things outside the database, done only after the transaction
- * that decided it has committed.
- *
- * Inside the transaction, a platform call would outlive a rollback as a stopped run nothing records
- * stopping, and would hold the rows it touched for as long as the platform took to answer.
+ * What a cancel or a delete asks of things outside the database, done only after its transaction has
+ * committed: inside it, a platform call would outlive a rollback and hold rows while it waits.
  */
 @ApplicationScoped
 class Teardown(
@@ -56,8 +53,7 @@ class Teardown(
             try {
                 dispatcher.cancel(executionId)
             } catch (e: Exception) {
-                // The platform still reports the run ending in its own time, or reconciliation finds
-                // it; the units it carried are already cancelled either way.
+                // The units are already cancelled; the platform or reconciliation reports the end.
                 LOG.warn("Could not ask the platform to stop execution {}", executionId, e)
             }
         }

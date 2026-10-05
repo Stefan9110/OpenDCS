@@ -128,8 +128,7 @@ function LinkCard({
     )
 }
 
-/** The count worked out on this draft's own axes, because the multiplication is easier to believe
- * against choices the reader has already made than against an invented example. */
+// Worked out on the draft's own axes rather than an invented example.
 function Expansion({ spec }: Readonly<{ spec: ExperimentSpec }>) {
     const axes = experimentAxes(spec)
     const shown = [...AXIS_ORDER].reverse().filter((key) => ALWAYS_SHOWN.has(key) || axes[key].length > 1)

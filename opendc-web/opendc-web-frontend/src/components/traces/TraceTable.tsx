@@ -5,8 +5,7 @@ import { TraceActions } from "@/components/traces/TraceActions"
 import type { Trace, TraceAccess } from "@/lib/api/types"
 import { Badge, Group, Paper, Stack, Table, Text } from "@mantine/core"
 
-// What the deployment ships comes first: it is the same list for everybody and the place to start
-// from, where the rest of the library is whatever this account happens to have gathered.
+// Built-in traces first: the same list for everybody, and the place to start.
 const ACCESS_ORDER: Record<TraceAccess, number> = { builtin: 0, owned: 1, shared: 2 }
 
 export function TraceTable({ traces }: { traces: Trace[] }) {

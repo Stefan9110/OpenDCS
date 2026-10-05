@@ -34,13 +34,7 @@ import org.opendc.sdk.runner.telemetry.table.powerSource.PowerSourceSample
 import org.opendc.sdk.runner.telemetry.table.service.ServiceSample
 import java.util.concurrent.CopyOnWriteArrayList
 
-/**
- * How many points one metric of one run is ever held at.
- *
- * Simulated time is not wall-clock time: a month-long trace exported every five simulated minutes is
- * eight thousand samples that can arrive in a thirty-second burst. Capping here rather than at the
- * server is what keeps a report the same size however long the trace is.
- */
+/** How many points one metric of one run is held at, so a report stays the same size however long the trace. */
 private const val SAMPLE_CAP = 512
 
 /** Nothing has been read yet. Simulated time starts at zero, so it cannot stand in for this. */
@@ -48,10 +42,7 @@ private const val NO_INSTANT = Long.MIN_VALUE
 
 /**
  * Watches the runs in this process so their progress can be reported while they are still going.
- *
- * The parquet a run leaves behind is the canonical account of it; this is the preview. It reads the
- * four tables the result charts are drawn from and never the task table, which is per-task and by far
- * the largest.
+ * Reads only the tables the result charts are drawn from, never the far larger task table.
  */
 class TelemetrySink : OutputSink {
     private val runs = CopyOnWriteArrayList<RunSamples>()
@@ -85,8 +76,6 @@ private class TelemetryMonitor(private val samples: RunSamples) : MetricExporter
         samples.record(
             reader.timestamp.toEpochMilli(),
             reader.hostName,
-            // The work this host got through and what it had to do it with, so the fleet's share is
-            // weighted by capacity rather than being an average of per-host shares.
             ResultMetric.HOST_CPU_UTILIZATION to Reading(reader.cpuUsage, reader.cpuCapacity),
             ResultMetric.HOST_POWER_DRAW to Reading(reader.powerDraw),
         )
@@ -122,17 +111,12 @@ private class TelemetryMonitor(private val samples: RunSamples) : MetricExporter
 }
 
 /**
- * What one `(scenario, seed)` run has reported.
+ * What one `(scenario, seed)` run has reported. Written from the run's thread and read from the
+ * poster's, so every path takes the lock.
  *
- * Written from the run's own thread and read from the one that posts, so every path takes the lock.
- * The engine hands the same instant over one row at a time -- once per host, once per power source --
- * and the tables of a tick all carry the clock reading it was taken at, so an instant is complete
- * exactly when a later one begins.
- *
- * Rows are kept by the entity that reported them rather than counted, because an instant is reported
- * more than once at the end of a run and the second report of a host is that host again. The engine
- * names every entity uniquely; a sample without a name is the single "missing" row the parquet
- * writes for it, so it is kept under one key here too.
+ * The engine hands an instant over one row per entity, so an instant is complete exactly when a later
+ * one begins. Rows are keyed by entity, not counted, because the last instant is reported twice; a
+ * sample without a name is the single "missing" row the parquet writes too.
  */
 private class RunSamples(
     private val scenarioIndex: Int,
@@ -200,11 +184,9 @@ private class RunSamples(
 /**
  * One metric's points, kept under [SAMPLE_CAP] however many instants arrive.
  *
- * Each stored point covers [stride] instants, folded the way the metric asks: a counter carried
- * forward, a gauge averaged, a queue depth taken at its worst. Overflow doubles the stride and pairs
- * the buffer up, which is exact because every point in it covers the same span. The instants
- * accumulated toward the next point are reported as a provisional last point, so a live chart keeps
- * moving between strides.
+ * Each point covers [stride] instants folded by the metric's reduction. Overflow doubles the stride
+ * and pairs the points up, which is exact because every point covers the same span. Instants pending
+ * toward the next point are reported as a provisional last point, so a live chart keeps moving.
  */
 private class PointBuffer(private val fold: Reduction) {
     private val points = mutableListOf<MetricPoint>()

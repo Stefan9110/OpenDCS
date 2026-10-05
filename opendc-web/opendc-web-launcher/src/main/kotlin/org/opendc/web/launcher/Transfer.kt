@@ -37,10 +37,12 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.exists
 import kotlin.io.path.name
 
-/** How long to wait before each attempt after the first. Three attempts in all. */
+/** How long to wait before each attempt after the first. */
 private val BACKOFF = listOf(Duration.ofSeconds(1), Duration.ofSeconds(4))
 
 private val CONNECT_TIMEOUT = Duration.ofSeconds(30)
+
+private const val TOO_MANY_REQUESTS = 429
 
 private val http: HttpClient by lazy {
     HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NORMAL).connectTimeout(CONNECT_TIMEOUT).build()
@@ -56,11 +58,8 @@ class Payload(
 fun Payload(path: Path): Payload = Payload(Files.size(path)) { Files.newInputStream(path) }
 
 /**
- * Writes [payload] to [target], a `file:` or `http(s):` URL.
- *
- * A file appears under its name only once it is whole: it is written beside its destination under a
- * dot-prefixed name, which a store's listing skips, and then moved into place. A URL is sent one PUT
- * whose length is declared, which is what a presigned upload expects.
+ * Writes [payload] to [target], a `file:` or `http(s):` URL. A file appears only once whole; a URL gets
+ * one PUT with a declared length, as a presigned upload expects.
  */
 fun publish(
     payload: Payload,
@@ -99,10 +98,8 @@ fun fetch(
 }
 
 /**
- * Puts the bytes [source] names at [path].
- *
- * A file beside this process is linked rather than copied where the filesystem allows it, since a
- * workload trace can be gigabytes that never needed a second copy.
+ * Puts the bytes [source] names at [path]. A local file is linked where the filesystem allows it, since
+ * a workload trace can be gigabytes that never needed a second copy.
  */
 fun stage(
     source: String,
@@ -112,12 +109,13 @@ fun stage(
     when (val location = locationOf(source)) {
         is Location.Local -> {
             val origin = existing(location.path, source)
+            val copy = { write(path) { Files.newInputStream(origin).use { input -> input.copyTo(it) } } }
             try {
                 Files.createSymbolicLink(path, origin.toAbsolutePath())
             } catch (e: IOException) {
-                write(path) { Files.newInputStream(origin).use { input -> input.copyTo(it) } }
+                copy()
             } catch (e: UnsupportedOperationException) {
-                write(path) { Files.newInputStream(origin).use { input -> input.copyTo(it) } }
+                copy()
             }
         }
         is Location.Remote -> fetch(source) { body -> write(path) { body.copyTo(it) } }
@@ -196,7 +194,7 @@ private fun expectSuccess(
     }
 }
 
-/** Runs [attempt] up to three times while it fails with an [IOException]. */
+/** Runs [attempt] again after each [BACKOFF] wait while it fails with an [IOException]. */
 private fun <T> retrying(
     url: String,
     attempt: () -> T,
@@ -214,5 +212,3 @@ private fun <T> retrying(
         throw LaunchFailure(EXIT_TRANSFER_FAILED, "Could not transfer ${redacted(url)}: ${e.message}", e)
     }
 }
-
-private const val TOO_MANY_REQUESTS = 429

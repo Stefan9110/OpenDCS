@@ -21,9 +21,6 @@ describe("idParam", () => {
         expect(idParam(params("id=%20abc%20"), "id")).toEqual({ status: "ok", value: "abc" })
     })
 
-    // Identifiers are opaque, so the client does not judge their shape. A value that looks wrong is
-    // passed to the server, which answers 404 exactly as it would for one that is well formed but
-    // belongs to somebody else.
     it("passes an id it cannot vouch for through to the server", () => {
         expect(idParam(params("id=not-a-uuid"), "id")).toEqual({ status: "ok", value: "not-a-uuid" })
     })

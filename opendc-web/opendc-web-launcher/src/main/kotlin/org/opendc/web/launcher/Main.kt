@@ -47,7 +47,7 @@ private const val RUN = "run"
 /** A failure message is a marker's payload and a log line, not a stack dump. */
 private const val MESSAGE_CAP = 2000
 
-private const val MEGABYTE = 1024.0 * 1024.0
+private const val KB_PER_MB = 1024.0
 
 private val logger = KotlinLogging.logger {}
 
@@ -56,9 +56,8 @@ fun main(): Unit = exitProcess(launch(System.getenv(MANIFEST_URL_VARIABLE).orEmp
 /**
  * Runs the manifest at [manifestUrl] and returns the code to exit with.
  *
- * Everything is fetched and written inside a working directory of its own under [reportDir], which
- * is removed again before returning. What stays in [reportDir] is the peak-memory report, for the
- * platform to read back after the process has gone.
+ * Everything happens in a working directory under [reportDir] that is removed before returning; only
+ * the peak-memory report stays behind.
  */
 internal fun launch(
     manifestUrl: String,
@@ -94,9 +93,8 @@ private fun readManifest(url: String): LaunchManifest {
 /**
  * Stages the inputs, runs every unit, and publishes what each one produced as it finishes.
  *
- * A unit's failure is its own: it is published as that unit's outcome and the rest carry on. The
- * process fails only for what is nobody's unit, such as an input that could not be staged or an
- * outcome that could not be published.
+ * A unit's failure is published as its outcome and the rest carry on. The process fails only for what
+ * is nobody's unit, such as an input that could not be staged or an outcome that could not be published.
  */
 private fun run(
     manifest: LaunchManifest,
@@ -110,8 +108,8 @@ private fun run(
     val telemetry = TelemetrySink()
     val reports =
         reporting(manifest.telemetry, telemetry).use {
-            val threads = manifest.parallelism.coerceIn(1, maxOf(1, minOf(manifest.units.size, Runtime.getRuntime().availableProcessors())))
-            val pool = Executors.newFixedThreadPool(threads)
+            val useful = minOf(manifest.units.size, Runtime.getRuntime().availableProcessors()).coerceAtLeast(1)
+            val pool = Executors.newFixedThreadPool(manifest.parallelism.coerceIn(1, useful))
             try {
                 manifest.units.map { unit -> pool.submit<UnitReport> { runUnit(unit, workDir, telemetry) } }.map { it.get() }
             } finally {
@@ -205,11 +203,7 @@ private fun simulate(
     }
 }
 
-/**
- * Resolves the paths the server rewrote every reference to, against the working directory.
- *
- * A name reaching this point is the server having failed to resolve it, not something to guess at.
- */
+/** Resolves staged paths against [workDir]. A name reaching this point is the server's failure to resolve it. */
 private fun staged(workDir: Path): ResourceProvisioner {
     val files = FileSystemResourceProvisioner(workDir)
     return ResourceProvisioner { reference ->
@@ -234,11 +228,8 @@ private fun inside(
 }
 
 /**
- * Reports what [sink] measures for as long as the runs last, or does nothing where the manifest names
- * nowhere to report to.
- *
- * The sink is attached either way, so a manifest run by hand takes the same path as one a server
- * wrote and cannot behave differently for want of a listener.
+ * Reports what [sink] measures for as long as the runs last, if [target] names somewhere. The sink is
+ * attached either way, so a manifest run by hand takes the same path as one a server wrote.
  */
 private fun reporting(
     target: TelemetryTarget,
@@ -249,12 +240,7 @@ private fun reporting(
         is TelemetryTarget.Endpoint -> TelemetryPoster(target, sink::report).also { it.start() }
     }
 
-/**
- * Writes the process's own account of its peak memory.
- *
- * Written in place, never renamed into place, because a platform may have mounted that very path to
- * read it back after the process exits.
- */
+/** Written in place, never renamed into place: a platform may have mounted that very path to read it back. */
 private fun writePeakMemory(file: Path) {
     val text = SdkJson.json.encodeToString(PeakMemory.serializer(), peakMemory())
     try {
@@ -278,13 +264,10 @@ private fun peakMemory(): PeakMemory {
             .getMemoryPoolMXBeans()
             .filter { it.type == MemoryType.HEAP }
             .sumOf { it.peakUsage?.used ?: 0L }
-    return PeakMemory.Measured(residentMb = residentKb / 1024.0, liveHeapMb = liveHeap / MEGABYTE)
+    return PeakMemory.Measured(residentMb = residentKb / KB_PER_MB, liveHeapMb = liveHeap / BYTES_PER_MB)
 }
 
-/**
- * The cause chain is walked because a run's failure arrives wrapped in the pool's. Anything
- * unrecognized counts as a simulation error, which is never retried.
- */
+/** A run's failure arrives wrapped in the pool's. Anything unrecognized is a simulation error, never retried. */
 private fun exitCodeOf(error: Throwable): Int =
     generateSequence(error) { it.cause }.filterIsInstance<LaunchFailure>().firstOrNull()?.exitCode
         ?: EXIT_SIMULATION_ERROR

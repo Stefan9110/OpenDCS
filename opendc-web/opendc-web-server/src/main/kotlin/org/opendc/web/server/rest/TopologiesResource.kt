@@ -55,8 +55,7 @@ data class TopologyTemplateWire(
     val name: String,
     val topology: JsonElement,
     val topologyHash: String,
-    // A topology nobody has arranged yet has no layout, and the field is then absent rather than an
-    // explicit null: the client derives a floor plan itself, and "null" would read as a real value.
+    // Absent rather than null for a topology nobody has arranged, so the client derives a floor plan.
     @EncodeDefault(EncodeDefault.Mode.NEVER)
     val layout: JsonElement? = null,
     val createdAt: String,
@@ -79,11 +78,10 @@ data class TopologyUpdateRequest(
 )
 
 /**
- * Topology templates as flat resources: the project is a query or body field, never a path
- * segment. The topology document is validated sdk-model content stored in canonical form; the
- * layout is server-opaque presentation state stored verbatim.
+ * Topology templates as flat resources: the project is a query or body field, never a path segment.
+ * The topology is stored validated and canonical; the layout is opaque and stored verbatim.
  */
-@Path("/topologies")
+@Path("topologies")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
 class TopologiesResource(

@@ -31,13 +31,12 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
-import kotlinx.serialization.json.encodeToJsonElement
 import org.opendc.sdk.model.experiment.ExperimentSpec
 import org.opendc.sdk.model.serialization.SdkJson
 import org.opendc.sdk.model.topology.TopologySpec
+import org.opendc.web.server.model.sha256Hex
 import org.opendc.web.server.rest.DocumentIssue
 import org.opendc.web.server.rest.invalidDocument
-import java.security.MessageDigest
 
 /**
  * The server's single JSON boundary around sdk-model documents, derived from [SdkJson] so the SDK
@@ -55,11 +54,8 @@ class SpecCodec {
     private val strict: Json = Json(from = SdkJson.strictJson) { prettyPrint = false }
 
     /**
-     * The wire form. Defaults are deliberately not encoded: a field the server has no value for is
-     * then absent rather than an explicit null. Clients read an absent field as "nothing here",
-     * whereas a null is a value they must remember to guard on every access, and forgetting once is
-     * a crash. Stored documents are unaffected: they travel as [JsonElement] trees, which serialize
-     * as-is.
+     * The wire form, which omits defaults so a field without a value is absent rather than null.
+     * Stored documents travel as [JsonElement] trees and are unaffected.
      */
     @Produces
     @Singleton
@@ -75,12 +71,8 @@ class SpecCodec {
     }
 
     /**
-     * A topology as data centers alone.
-     *
-     * A document written before data centers existed is converted by the SDK, which is lossy past the
-     * first cluster's power source, and then forgets the clusters it was converted from. Nothing
-     * reads them any more, and keeping them would leave two answers to where a cluster's power comes
-     * from.
+     * A topology as data centers alone. A cluster-form document is converted by the SDK (lossy past
+     * the first cluster's power source) and its clusters dropped, so power has one source of truth.
      */
     fun decodeTopology(document: JsonElement): TopologySpec {
         requireDataCenterForm(document, "")
@@ -91,14 +83,9 @@ class SpecCodec {
 
     fun canonical(spec: TopologySpec): String = json.encodeToString<TopologySpec>(spec)
 
-    fun toElement(spec: ExperimentSpec): JsonElement = json.encodeToJsonElement(spec)
-
     fun parseStored(document: String): JsonElement = json.parseToJsonElement(document)
 
-    fun hash(canonical: String): String =
-        MessageDigest.getInstance("SHA-256").digest(canonical.encodeToByteArray()).joinToString("") { byte ->
-            "%02x".format(byte)
-        }
+    fun hash(canonical: String): String = sha256Hex(canonical)
 
     /**
      * Refuses the two shapes the SDK's conversion cannot make sense of: data centers next to the
@@ -131,9 +118,7 @@ class SpecCodec {
                 },
         )
 
-    // The unit parsers inside sdk-model throw bare RuntimeExceptions for unparseable quantities
-    // (e.g. "3 lightyears"), not SerializationExceptions, so the net here is deliberately wide;
-    // anything thrown while decoding a user document is a validation failure of that document.
+    // Wide on purpose: sdk-model's unit parsers throw bare RuntimeExceptions for quantities like "3 lightyears".
     private fun <T> decode(
         kind: String,
         block: () -> T,

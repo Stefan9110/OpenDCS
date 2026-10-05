@@ -26,7 +26,9 @@ import io.fabric8.kubernetes.api.model.HasMetadata
 import io.fabric8.kubernetes.api.model.Quantity
 import io.fabric8.kubernetes.api.model.batch.v1.Job
 import io.fabric8.kubernetes.api.model.batch.v1.JobBuilder
+import org.opendc.web.dispatcher.EXIT_ON_OUT_OF_MEMORY
 import org.opendc.web.dispatcher.LaunchRequest
+import org.opendc.web.dispatcher.jobName
 import org.opendc.web.launcher.MANIFEST_URL_VARIABLE
 import org.opendc.web.launcher.PEAK_MEMORY_FILE
 import java.util.UUID
@@ -39,10 +41,7 @@ const val MANAGED_BY_LABEL = "app.kubernetes.io/managed-by"
 /** Names the execution an object belongs to. The public id is the only handle there is. */
 const val EXECUTION_LABEL = "opendc.org/execution"
 
-/**
- * Why this server stopped a Job, written onto the Job before it is deleted, so any replica and any
- * restart reads the same verdict from the cluster rather than from memory that can be lost.
- */
+/** Why this server stopped a Job, written onto it before deletion so any replica reads the same verdict. */
 const val STOP_REASON = "opendc.org/stop-reason"
 
 const val STOP_MESSAGE = "opendc.org/stop-message"
@@ -59,8 +58,6 @@ private const val GRACE_SECONDS = 10L
 
 /** What the image's start script reads its JVM options from. */
 private const val LAUNCHER_OPTS = "OPENDC_LAUNCHER_OPTS"
-
-fun jobName(executionId: UUID): String = "opendc-$executionId"
 
 /** The execution [this] belongs to. Only objects selected by [MANAGED_BY] are ever asked. */
 fun HasMetadata.executionId(): UUID = UUID.fromString(metadata.labels.getValue(EXECUTION_LABEL))
@@ -128,7 +125,7 @@ fun executionJob(
         .endEnv()
         .addNewEnv()
         .withName(LAUNCHER_OPTS)
-        .withValue("-Xmx${grant.heapMb}m -XX:+ExitOnOutOfMemoryError")
+        .withValue("-Xmx${grant.heapMb}m $EXIT_ON_OUT_OF_MEMORY")
         .endEnv()
         .withNewResources()
         .addToRequests("cpu", Quantity("${grant.parallelism}"))

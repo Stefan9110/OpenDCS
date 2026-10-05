@@ -36,6 +36,7 @@ import org.apache.sshd.core.CoreModuleProperties
 import org.apache.sshd.sftp.client.SftpClient
 import org.apache.sshd.sftp.client.SftpClientFactory
 import org.apache.sshd.sftp.common.SftpException
+import org.opendc.web.dispatcher.NO_EXIT_CODE
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.nio.file.Files
@@ -47,6 +48,7 @@ private val CONNECT_TIMEOUT = Duration.ofSeconds(20)
 private val AUTH_TIMEOUT = Duration.ofSeconds(20)
 private val COMMAND_TIMEOUT = Duration.ofMinutes(2)
 private val HEARTBEAT = Duration.ofSeconds(30)
+private const val DEFAULT_PORT = 22
 
 /** How the head node is reached. */
 data class SshTarget(
@@ -77,7 +79,7 @@ sealed interface JumpHost {
             val user = spec.substringBefore('@', defaultUser)
             val address = spec.substringAfter('@')
             val host = address.substringBefore(':')
-            val port = address.substringAfter(':', "22").toInt()
+            val port = address.substringAfter(':', "$DEFAULT_PORT").toInt()
             return Via(user, host, port)
         }
     }
@@ -122,7 +124,7 @@ class SshConnection(private val target: SshTarget) : AutoCloseable {
                 channel.err = err
                 channel.open().verify(COMMAND_TIMEOUT)
                 channel.waitFor(EnumSet.of(ClientChannelEvent.CLOSED), COMMAND_TIMEOUT)
-                return CommandResult(channel.exitStatus ?: -1, out.toString(Charsets.UTF_8), err.toString(Charsets.UTF_8))
+                return CommandResult(channel.exitStatus ?: NO_EXIT_CODE, out.toString(Charsets.UTF_8), err.toString(Charsets.UTF_8))
             }
         } catch (e: IOException) {
             drop()

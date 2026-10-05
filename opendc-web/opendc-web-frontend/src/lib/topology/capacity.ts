@@ -38,7 +38,7 @@ export type SupplyShare =
  */
 export const UNLIMITED_SUPPLY_W = 2 ** 63
 
-const WATTS_PER_KW = 1000
+export const WATTS_PER_KW = 1000
 
 const EMPTY: Capacity = { dataCenters: 0, clusters: 0, hosts: 0, cores: 0, gpus: 0, memoryMiB: 0, peakPowerW: 0 }
 

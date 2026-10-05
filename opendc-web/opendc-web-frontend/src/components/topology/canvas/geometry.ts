@@ -2,6 +2,7 @@ import type { FloorCell, FloorLayout } from "@/lib/topology/layout"
 
 export const TILE_SIZE = 132
 export const TILE_INSET = 6
+export const TILE_BODY = TILE_SIZE - TILE_INSET * 2
 export const MIN_SCALE = 0.35
 export const MAX_SCALE = 2.5
 export const SCALE_STEP = 1.15

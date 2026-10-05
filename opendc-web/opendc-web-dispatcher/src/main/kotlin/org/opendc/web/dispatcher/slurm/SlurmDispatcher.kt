@@ -30,6 +30,7 @@ import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.dispatcher.Launch
 import org.opendc.web.dispatcher.LaunchRequest
+import org.opendc.web.dispatcher.NO_EXIT_CODE
 import org.opendc.web.dispatcher.PlatformEvent
 import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.dispatcher.PlatformVerdict
@@ -39,7 +40,6 @@ import org.opendc.web.launcher.PeakMemory
 import org.opendc.web.launcher.fetch
 import org.slf4j.LoggerFactory
 import java.io.IOException
-import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -48,69 +48,30 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
-/** The partition jobs are submitted to. */
-sealed interface Partition {
-    data object ClusterDefault : Partition
-
-    data class Named(val name: String) : Partition
-}
-
-/**
- * How executions are run on a SLURM cluster reached over SSH.
- *
- * @property remoteRoot Where everything is kept on the cluster's shared filesystem.
- * @property java The JRE the compute nodes run the launcher with, Java 21 or newer.
- * @property launcherLib The `lib` directory of the launcher distribution this server ships.
- * @property sbatchOptions Site flags, such as an account or a QOS, passed to every submission.
- * @property slot One node's cores and memory, and the longest a job may run here.
- * @property maxJobs How many jobs may be pending or running at once.
- * @property pendingTimeout How long a job may wait to be accepted or started before it is withdrawn.
- * @property pollInterval How often the queue is asked about. Mind the site's etiquette.
- * @property recordGrace How long a job gone from the queue is given for its exit record to show up
- *           on the shared filesystem, whose attribute caching can hide a fresh file for a while.
- * @property cacheRetention How long a cached trace or an old launcher is kept after its last use.
- */
-data class SlurmDispatcherConfig(
-    val ssh: SshTarget,
-    val remoteRoot: String,
-    val java: String,
-    val launcherLib: Path,
-    val partition: Partition,
-    val sbatchOptions: List<String>,
-    val slot: ExecutionSlot,
-    val maxJobs: Int,
-    val pendingTimeout: Duration,
-    val pollInterval: Duration,
-    val recordGrace: Duration,
-    val cacheRetention: Duration,
-)
-
 /** The oldest Java the launcher runs on. */
 private const val MINIMUM_JAVA = 21
 
-private const val NO_CODE = -1
+/** How many executions are staged or collected at once. */
+private const val TRANSFER_THREADS = 2
 
 private val SWEEP_PERIOD = Duration.ofHours(1)
 
 /**
- * Runs each execution as one batch job on a SLURM cluster whose compute nodes cannot reach this
- * server: the staged transport.
+ * Runs each execution as one batch job on a SLURM cluster whose compute nodes cannot reach this server.
  *
- * Launching only records the execution. Staging runs on a small transfer pool: the launcher this
- * server ships is uploaded once per version, every input is put in a cache on the shared filesystem,
- * and the manifest is rewritten to read from there and write into the execution's own directory.
- * Only then is the job submitted, with a wrapper that records how it ended, since the cluster keeps
- * no accounting to ask. Once the job is gone from the queue, every unit that certified its outcome is
- * copied back to the signed targets the server handed out, before the end is reported.
+ * Launching only records the execution. A transfer pool then uploads the launcher once per version,
+ * caches every input on the shared filesystem and rewrites the manifest to use them, and submits the
+ * job with a wrapper that records how it ended, since the cluster keeps no accounting to ask. Once
+ * the job leaves the queue, every certified unit is copied back to the server's signed targets.
  *
- * One control thread owns every execution's state, polls the queue, and delivers events, so nothing
- * here races itself. It assumes it is the only dispatcher using its remote root.
+ * One control thread owns every execution's state, polls the queue and delivers events. It assumes it
+ * is the only dispatcher using its remote root.
  */
 class SlurmDispatcher(private val config: SlurmDispatcherConfig) : Dispatcher {
     private val ssh = SshConnection(config.ssh)
     private val distribution = LauncherDistribution(config.launcherLib)
     private val control = Executors.newSingleThreadScheduledExecutor { Thread(it, "opendc-slurm-control").apply { isDaemon = true } }
-    private val transfers = Executors.newFixedThreadPool(2) { Thread(it, "opendc-slurm-transfer").apply { isDaemon = true } }
+    private val transfers = Executors.newFixedThreadPool(TRANSFER_THREADS) { Thread(it, "opendc-slurm-transfer").apply { isDaemon = true } }
     private val listener = AtomicReference<(PlatformEvent) -> Unit>()
     private val tracked = ConcurrentHashMap<UUID, Tracked>()
 
@@ -225,7 +186,7 @@ class SlurmDispatcher(private val config: SlurmDispatcherConfig) : Dispatcher {
         val minutes =
             when (cap) {
                 TimeCap.Unlimited -> slurmMinutes(request.grant.timeLimitSeconds)
-                is TimeCap.Limited -> minOf(slurmMinutes(request.grant.timeLimitSeconds), cap.seconds / 60)
+                is TimeCap.Limited -> minOf(slurmMinutes(request.grant.timeLimitSeconds), cap.seconds / SECONDS_PER_MINUTE)
             }
         val script = JobScript(remote.layout.execution(id), launcher, config.java)
         val command = sbatchCommand(id, request.grant, minutes.coerceAtLeast(1), script, config.partition, config.sbatchOptions)
@@ -341,7 +302,7 @@ class SlurmDispatcher(private val config: SlurmDispatcherConfig) : Dispatcher {
         }
         return when (val ending = ending(records, tail)) {
             is JobEnding.Ended -> ending.outcome
-            is JobEnding.Vanished -> ExitOutcome(ExitReason.UNKNOWN, NO_CODE, ending.message, ending.span, ending.peak, tail)
+            is JobEnding.Vanished -> ExitOutcome(ExitReason.UNKNOWN, NO_EXIT_CODE, ending.message, ending.span, ending.peak, tail)
         }
     }
 
@@ -564,7 +525,7 @@ class SlurmDispatcher(private val config: SlurmDispatcherConfig) : Dispatcher {
         private fun outcome(
             reason: ExitReason,
             message: String,
-        ) = ExitOutcome(reason, NO_CODE, message, PlatformSpan.NotStarted, PeakMemory.Unmeasured, "")
+        ) = ExitOutcome(reason, NO_EXIT_CODE, message, PlatformSpan.NotStarted, PeakMemory.Unmeasured, "")
 
         private fun tighter(
             left: TimeCap,

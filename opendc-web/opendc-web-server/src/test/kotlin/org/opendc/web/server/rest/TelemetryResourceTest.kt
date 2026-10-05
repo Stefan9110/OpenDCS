@@ -41,11 +41,7 @@ import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.Experiment
 import java.util.UUID
 
-/**
- * The one endpoint a runner ever calls, and the only one whose caller is a token rather than a
- * person. What it writes drives every progress bar in the frontend, and what it refuses is the only
- * thing standing between a launcher and somebody else's experiment.
- */
+/** The one endpoint whose caller is a launcher's token rather than a person. */
 @QuarkusTest
 class TelemetryResourceTest {
     @Inject
@@ -85,10 +81,7 @@ class TelemetryResourceTest {
             .body("scenarios[0].completedTasks", equalTo(3))
     }
 
-    // How much work there is is read off the document, so the bar has a scale from the moment the
-    // experiment is submitted. Waiting for a launcher to report one meant a queued experiment read
-    // nought of nought, and every scenario that started afterwards moved the denominator under a bar
-    // that had already filled.
+    // The total is read off the document, so a bar has a fixed scale from the moment of submission.
     @Test
     fun `knows how much work an experiment is before any of it has run`() {
         val experiment = submitted()
@@ -135,9 +128,7 @@ class TelemetryResourceTest {
             .body("totalTasks", equalTo(TASK_COUNT))
     }
 
-    // The bar is the one thing a reader is watching at the moment they press the button. Leaving the
-    // finished attempt's count would show the scenario as complete until the new run reported over
-    // the top of it, which is the whole of the wait.
+    // Otherwise the scenario would read complete until the new run reported over the top of it.
     @Test
     fun `running a scenario again puts its progress back to nothing`() {
         val experiment = running()
@@ -152,8 +143,7 @@ class TelemetryResourceTest {
             .then()
             .body("completedTasks", equalTo(0))
             .body("state", equalTo("queued"))
-            // The denominator is a property of the workload rather than of the attempt, so the bar
-            // reads nought of eight rather than losing its scale for a moment.
+            // The denominator belongs to the workload, not the attempt.
             .body("totalTasks", equalTo(TASK_COUNT))
     }
 
@@ -296,12 +286,7 @@ class TelemetryResourceTest {
     /** An experiment whose single unit the platform has been handed, so a token exists for it. */
     private fun running(): String = submitted().also { loop.drain() }
 
-    /**
-     * The credential the server handed the launcher, read from the manifest it was written into.
-     *
-     * Nowhere else has it: the plaintext exists for exactly as long as it takes to write a manifest,
-     * which is the point of storing only its hash.
-     */
+    /** The credential the server handed the launcher, read from its manifest: only the hash is stored. */
     private fun tokenFor(experiment: String): String {
         val target = dispatcher.manifestOf(executionOf(experiment)).telemetry
         check(target is TelemetryTarget.Endpoint) { "$experiment was launched with nowhere to report to" }

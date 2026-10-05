@@ -1,31 +1,35 @@
-import type { ExecutionPhase } from "@/lib/api/admin"
+import type { ExecutionPhase, ExecutionState } from "@/lib/api/admin"
 
 export interface PhaseBadge {
     label: string
     color: string
 }
 
+export const STATE_BADGES: Record<ExecutionState, PhaseBadge> = {
+    queued: { label: "Queued", color: "blue" },
+    submitted: { label: "Submitted", color: "cyan" },
+    running: { label: "Running", color: "opendc" },
+    succeeded: { label: "Succeeded", color: "green" },
+    failed: { label: "Failed", color: "red" },
+    cancelled: { label: "Cancelled", color: "gray" },
+}
+
+const OVERDUE_BADGE: PhaseBadge = { label: "Overdue", color: "orange" }
+
 /** How an execution's phase reads in a list: a running one past twice its estimate stands out. */
 export function phaseBadge(phase: ExecutionPhase): PhaseBadge {
     switch (phase.type) {
         case "queued":
-            return { label: "Queued", color: "blue" }
         case "submitted":
-            return { label: "Submitted", color: "cyan" }
+            return STATE_BADGES[phase.type]
         case "running":
-            return phase.straggler ? { label: "Overdue", color: "orange" } : { label: "Running", color: "opendc" }
+            return phase.straggler ? OVERDUE_BADGE : STATE_BADGES.running
         case "ended":
-            return endedBadge(phase.state)
+            return STATE_BADGES[phase.state]
     }
 }
 
-function endedBadge(state: string): PhaseBadge {
-    if (state === "succeeded") return { label: "Succeeded", color: "green" }
-    if (state === "failed") return { label: "Failed", color: "red" }
-    return { label: "Cancelled", color: "gray" }
-}
-
-/** When the execution last changed phase, which is the one time a list of them is sorted by in a reader's head. */
+/** When the execution last changed phase. */
 export function phaseSince(phase: ExecutionPhase, createdAt: string): string {
     switch (phase.type) {
         case "queued":

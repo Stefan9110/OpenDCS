@@ -1,15 +1,11 @@
 "use client"
 
-import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
+import { FieldLabel } from "@/components/util/FieldLabel"
 import type { CatalogEntry } from "@/lib/api/types"
 import { Select, Text, Tooltip } from "@mantine/core"
 import type { UseQueryResult } from "@tanstack/react-query"
 
-/**
- * A picker over whatever the caller fetched. The options are passed in rather than named here
- * because they no longer all come from one place: option lists are reflected from the simulator,
- * while traces are a library that belongs to somebody and is scoped to a kind.
- */
+// Options are passed in because they come from both simulator catalogs and the trace library.
 export function CatalogSelect({
     label,
     entries,

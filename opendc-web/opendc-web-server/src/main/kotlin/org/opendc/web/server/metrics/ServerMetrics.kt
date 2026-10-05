@@ -48,10 +48,7 @@ enum class LaunchOutcome {
 
 /**
  * What the execution loop does, counted. Every tag value is registered up front, so a dashboard
- * shows a zero rather than no data, and no value outside a closed set can multiply the series.
- *
- * It starts with the application: injected, it is a proxy until first used, which would leave the
- * counters unregistered until the first launch.
+ * shows a zero rather than no data, and starts eagerly so the counters exist before the first launch.
  */
 @Startup
 @ApplicationScoped

@@ -17,7 +17,6 @@ export interface CanvasPalette {
     muted: string
     hover: string
     meterTrack: string
-    meterFill: string
     energyFill: string
     meterOver: string
 }
@@ -43,7 +42,6 @@ export function useCanvasPalette(): CanvasPalette {
         muted: dark ? shade("dark", 1) : shade("gray", 6),
         hover: shade("opendc", 5),
         meterTrack: dark ? shade("dark", 4) : shade("gray", 2),
-        meterFill: shade("opendc", 6),
         energyFill: shade("yellow", dark ? 5 : 6),
         meterOver: shade("red", 6),
     }

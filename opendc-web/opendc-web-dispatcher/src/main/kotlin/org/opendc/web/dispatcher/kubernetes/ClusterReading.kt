@@ -29,11 +29,15 @@ import io.fabric8.kubernetes.api.model.Pod
 import io.fabric8.kubernetes.api.model.Quantity
 import io.fabric8.kubernetes.api.model.batch.v1.Job
 import org.opendc.web.dispatcher.CapacitySnapshot
+import org.opendc.web.dispatcher.EXIT_KILLED
+import org.opendc.web.dispatcher.EXIT_TERMINATED
 import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
+import org.opendc.web.dispatcher.NO_EXIT_CODE
 import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.dispatcher.launcherExitMessage
 import org.opendc.web.dispatcher.launcherExitReason
+import org.opendc.web.launcher.BYTES_PER_MB
 import org.opendc.web.launcher.PeakMemory
 import org.opendc.web.launcher.peakMemoryOf
 import java.time.Instant
@@ -42,11 +46,7 @@ import java.time.Instant
 private val PERMANENT_WAITING = setOf("InvalidImageName", "ErrImageNeverPull", "CreateContainerConfigError")
 
 /** What a container killed by a signal exits with, which says nothing about why. */
-private val SIGNALLED = setOf(137, 143)
-
-private const val NO_CODE = -1
-
-private const val MEBIBYTE = 1024.0 * 1024.0
+private val SIGNALLED = setOf(EXIT_KILLED, EXIT_TERMINATED)
 
 /** Where an execution stands, as its Job and pod show it. */
 internal sealed interface JobState {
@@ -101,7 +101,7 @@ internal fun jobState(
         return ended(ExitReason.UNKNOWN, "disrupted: ${disruption.reason.orEmpty()}", terminated)
     }
     if (terminated != null) {
-        val code = terminated.exitCode ?: NO_CODE
+        val code = terminated.exitCode ?: NO_EXIT_CODE
         val reason = if (code in SIGNALLED) ExitReason.UNKNOWN else launcherExitReason(code)
         return ended(reason, launcherExitMessage(code), terminated)
     }
@@ -146,14 +146,14 @@ internal fun capacityOf(
     val live = pods.filter { it.status?.phase == "Pending" || it.status?.phase == "Running" }
     val requests = live.flatMap { pod -> pod.spec?.containers.orEmpty().map { it.resources?.requests.orEmpty() } }
     val allocatedCores = requests.sumOf { amount(it["cpu"]) }
-    val allocatedMemory = requests.sumOf { amount(it["memory"]) } / MEBIBYTE
+    val allocatedMemory = requests.sumOf { amount(it["memory"]) } / BYTES_PER_MB
     if (usable.isEmpty()) {
         return ceiling.copy(allocatedCores = allocatedCores.toInt(), allocatedMemoryMb = allocatedMemory)
     }
     val allocatable = usable.map { it.status?.allocatable.orEmpty() }
     return CapacitySnapshot(
         totalCores = allocatable.sumOf { amount(it["cpu"]).toInt() },
-        totalMemoryMb = allocatable.sumOf { amount(it["memory"]) } / MEBIBYTE,
+        totalMemoryMb = allocatable.sumOf { amount(it["memory"]) } / BYTES_PER_MB,
         allocatedCores = allocatedCores.toInt(),
         allocatedMemoryMb = allocatedMemory,
     )
@@ -179,7 +179,7 @@ private fun ended(
     JobState.Ended(
         ExitOutcome(
             reason = reason,
-            exitCode = terminated?.exitCode ?: NO_CODE,
+            exitCode = terminated?.exitCode ?: NO_EXIT_CODE,
             message = message,
             span = span(instant(terminated?.startedAt), instant(terminated?.finishedAt)),
             peakMemory = terminated?.message?.let(::peakMemoryOf) ?: PeakMemory.Unmeasured,

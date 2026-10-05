@@ -51,11 +51,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.UUID
 
-/**
- * Once a run has stopped, its parquet is what it produced and the samples it posted along the way are
- * a preview that expires. Reading the files back is where a chart stops being a live guess and becomes
- * the result, so what matters here is that the numbers coming out are the ones in the files.
- */
+/** A stopped run is charted from its parquet, so the numbers coming out must be the ones in the files. */
 @QuarkusTest
 class ExperimentResultsTest {
     @Inject
@@ -85,7 +81,6 @@ class ExperimentResultsTest {
                 .path("id")
     }
 
-    // The samples say one thing and the file says another. The file is what the run produced.
     @Test
     fun `a finished run is charted from its parquet rather than from what it posted`() {
         val experiment = running()
@@ -97,8 +92,6 @@ class ExperimentResultsTest {
         assertEquals(0.1, valueOf(results(experiment), ResultMetric.HOST_CPU_UTILIZATION))
     }
 
-    // A topology has many hosts and a chart has one line. Adding a share of capacity, or averaging
-    // watts, would each report a fleet that does not exist.
     @Test
     fun `adds the hosts of an instant for power and weighs them by capacity for utilization`() {
         val experiment = running()
@@ -115,9 +108,6 @@ class ExperimentResultsTest {
         assertEquals(0.3, valueOf(charted, ResultMetric.HOST_CPU_UTILIZATION))
     }
 
-    // A fleet of a few large machines and one of many small ones, getting through exactly the same
-    // work, have to read the same. Averaging each host's own share instead lets the shape of the
-    // topology move a number that is meant to describe the work.
     @Test
     fun `reports the same utilization for two fleets that got through the same work`() {
         val fewLarge = running()
@@ -141,8 +131,7 @@ class ExperimentResultsTest {
         assertEquals(0.108, valueOf(results(manySmall), ResultMetric.HOST_CPU_UTILIZATION), 1e-9)
     }
 
-    // The writer records the closing instant twice, once on the export interval and once the moment
-    // the last task is removed. Counting the second pass as more hosts doubles the fleet.
+    // The writer records the closing instant twice: on the export interval and when the last task ends.
     @Test
     fun `counts an instant the writer recorded twice only once`() {
         val experiment = running()
@@ -169,8 +158,6 @@ class ExperimentResultsTest {
         assertEquals(true, results(experiment).getBoolean("complete"))
     }
 
-    // Running a scenario again writes over the same output, so a chart still showing the earlier
-    // attempt would be showing a result with no file behind it.
     @Test
     fun `forgets what a scenario measured once it has been run again`() {
         val experiment = running()
@@ -186,8 +173,6 @@ class ExperimentResultsTest {
         assertEquals(0.8, valueOf(results(experiment), ResultMetric.HOST_CPU_UTILIZATION))
     }
 
-    // A run that failed before it could publish still posted samples on the way down, and half a
-    // chart of what went wrong is worth more than none.
     @Test
     fun `falls back to what a failed run managed to post`() {
         val experiment = running()
@@ -266,8 +251,7 @@ class ExperimentResultsTest {
                     SimpleGroup(HOST_SCHEMA).apply {
                         add("timestamp", row.t)
                         add("host_name", row.host)
-                        // The simulator writes its measurements as 32-bit floats, so a fixture that
-                        // wrote doubles would be testing a file shape no run ever produces.
+                        // Floats, because the simulator writes its measurements as 32-bit floats.
                         add("cpu_usage", row.usage.toFloat())
                         add("cpu_capacity", row.capacity.toFloat())
                         add("power_draw", row.power.toFloat())

@@ -8,8 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const noop = () => {}
 
-// The menu only renders once the server has answered who the request acts as, so both session
-// endpoints have to resolve before the drawer exists to open.
+// The menu renders only once both /config and /me have answered.
 function mockSession() {
     const profile = {
         displayName: "Developer",

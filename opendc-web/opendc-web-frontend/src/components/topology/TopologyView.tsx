@@ -27,8 +27,7 @@ export function TopologyView() {
     return <LoadedTopology templateId={topologyId.value} />
 }
 
-// The template carries its own floor plan, so one query loads the whole document. Keying the builder
-// on the template id keeps it mounted across saves: it owns the document once it is open.
+// Keyed on the template id so the builder, which owns the document once open, survives saves.
 function LoadedTopology({ templateId }: { templateId: Id }) {
     const template = useTopology(templateId)
 

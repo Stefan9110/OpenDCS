@@ -3,10 +3,14 @@ export type QuantityKind = "frequency" | "dataSize" | "dataRate" | "power" | "ti
 /** A measurement as the model stores it: a number in the base unit, or text naming its own unit. */
 export type Quantity = number | string
 
+const SECOND_MS = 1e3
+const MINUTE_MS = 60_000
+const HOUR_MS = 3.6e6
+const DAY_MS = 86_400_000
+
 /**
- * Every unit a quantity may be written in, largest first, with how many base units it is worth.
- * This is the one place unit names exist: the type a field accepts and the ladder a value is
- * displayed on both come from here, so a name cannot be offered by one and unknown to the other.
+ * Every unit a quantity may be written in, largest first, with how many base units it is worth. The
+ * only source of unit names, for both the type a field accepts and the ladder a value is shown on.
  */
 const LADDER = {
     frequency: [
@@ -31,9 +35,9 @@ const LADDER = {
         ["W", 1],
     ],
     time: [
-        ["h", 3.6e6],
-        ["min", 60_000],
-        ["s", 1e3],
+        ["h", HOUR_MS],
+        ["min", MINUTE_MS],
+        ["s", SECOND_MS],
         ["ms", 1],
     ],
 } as const satisfies Record<QuantityKind, ReadonlyArray<readonly [string, number]>>
@@ -41,10 +45,7 @@ const LADDER = {
 /** A unit a quantity of kind [K] may be written in. */
 export type Unit<K extends QuantityKind = QuantityKind> = (typeof LADDER)[K][number][0]
 
-/**
- * What a bare number in the model is counted in. These fields store a plain number rather than a
- * measurement, so the unit is the editor's to state and never travels in the document.
- */
+/** What a bare-number field is counted in; the unit never travels in the document. */
 export const SCALAR_UNIT = {
     energy: "kWh",
     power: "W",
@@ -54,11 +55,7 @@ export const SCALAR_UNIT = {
 /** Anything the editor prints beside a number. */
 export type UnitLabel = Unit | (typeof SCALAR_UNIT)[keyof typeof SCALAR_UNIT]
 
-/**
- * The unit a measurement field is written in unless it names another. A field reads and writes one
- * unit only, so it is a plain number with its unit printed beside it and nobody has to know how the
- * model spells its units in order to type a value.
- */
+/** The one unit a measurement field reads and writes, printed beside a plain number. */
 export const DEFAULT_UNIT: { [K in QuantityKind]: Unit<K> } = {
     frequency: "GHz",
     dataSize: "GiB",
@@ -76,14 +73,11 @@ const BASE_UNIT: { [K in QuantityKind]: Unit<K> } = {
     time: "ms",
 }
 
-// Reading what the model wrote /////////////////////////////////////////////////////////////////
-
 export type QuantityValue = { status: "ok"; base: number } | { status: "unspecified" } | { status: "invalid" }
 
 /**
- * Reads a stored measurement into its base unit. This has to accept every spelling the backend
- * accepts, not just the ones the editor writes: values arrive from the SDK's own formatter, which
- * prints "10.000000 KWatts", and from documents people import.
+ * Reads a stored measurement into its base unit, accepting every spelling the backend does: values
+ * also come from the SDK's formatter ("10.000000 KWatts") and from imported documents.
  */
 export function parseQuantity(kind: QuantityKind, wire: Quantity): QuantityValue {
     if (typeof wire === "number") {
@@ -105,22 +99,15 @@ export function parseQuantity(kind: QuantityKind, wire: Quantity): QuantityValue
     return classify(amount * factor)
 }
 
-// The model reads any negative value as "this was never specified", so the editor must not show
-// one as a measurement of minus something.
+// The model reads any negative value as "never specified".
 function classify(base: number): QuantityValue {
     return base < 0 ? { status: "unspecified" } : { status: "ok", base }
 }
 
 const NUMBER_AND_SUFFIX = /^\s*([\d.e-]+)\s*(.*?)\s*$/
 
-// A duration comes back written the way the backend prints it, which is ISO-8601: a "5 min" saved
-// from here returns as "PT5M", because TimeDelta serializes through Duration.toString().
+// TimeDelta serializes through Duration.toString(), so a "5 min" saved from here returns as "PT5M".
 const ISO_DURATION = /^P(?:([\d.]+)D)?(?:T(?:([\d.]+)H)?(?:([\d.]+)M)?(?:([\d.]+)S)?)?$/
-
-const DAY_MS = 86_400_000
-const HOUR_MS = 3.6e6
-const MINUTE_MS = 60_000
-const SECOND_MS = 1e3
 
 function isoDuration(wire: string): number | undefined {
     const parts = ISO_DURATION.exec(wire.trim())
@@ -137,10 +124,8 @@ function isoDuration(wire: string): number | undefined {
 }
 
 /**
- * Every spelling of a duration the backend's own parser matches, in milliseconds. Written out
- * rather than assembled from prefixes because "m" is minutes here while "ms" is milliseconds, and a
- * prefix scheme would have to special-case that anyway. Sub-millisecond spellings are left out: the
- * base unit is the millisecond, so they would only ever arrive as a fraction of one.
+ * Every duration spelling the backend's parser matches, in milliseconds. Written out rather than
+ * built from prefixes because "m" is minutes but "ms" is milliseconds.
  */
 const TIME_UNITS = new Map<string, number>([
     ["ms", 1],
@@ -254,8 +239,6 @@ function dataFactor(suffix: string, baseUnitsPerByte: number): number | undefine
     return undefined
 }
 
-// Showing a value //////////////////////////////////////////////////////////////////////////////
-
 /** Renders [base] on the largest unit that keeps the number short, for read-only display. */
 export function formatQuantity(kind: QuantityKind, base: number): string {
     if (!Number.isFinite(base)) return `0 ${BASE_UNIT[kind]}`
@@ -281,8 +264,7 @@ function naturalUnit<K extends QuantityKind>(kind: K, base: number): Unit<K> {
     const ladder = ladderOf(kind)
     const step = ladder.find(([, scale]) => Math.abs(base) >= scale)
     if (step !== undefined) return step[0]
-    // Smaller than every step, zero included: show it on the smallest rather than as a long run of
-    // leading zeroes on the largest.
+    // Smaller than every step, zero included: show it on the smallest unit.
     const smallest = ladder[ladder.length - 1]
     return smallest === undefined ? BASE_UNIT[kind] : smallest[0]
 }

@@ -31,6 +31,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import org.opendc.web.server.rest.API_ROOT
 import org.opendc.web.server.rest.ApiProblem
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -69,9 +70,8 @@ data class DownloadLink(
 @ConfigMapping(prefix = "opendc.downloads")
 interface DownloadConfig {
     /**
-     * The key links are signed with, base64, at least 32 bytes. Several servers behind one address
-     * have to share it; a single one may leave it unset and use a key of its own for as long as it
-     * runs, which only means links do not survive a restart.
+     * Base64, at least 32 bytes, shared by every replica. Unset, each server signs with a random key
+     * and links do not survive a restart.
      */
     fun signingKey(): Optional<String>
 }
@@ -83,10 +83,8 @@ private const val ALGORITHM = "HmacSHA256"
 private const val KEY_BYTES = 32
 
 /**
- * Signs and checks download links. A link is a capability, exactly like a presigned URL: whoever
- * holds it may fetch what it names until it expires, without an account. That is what lets a browser
- * download a large file by following a link, which cannot carry an access token, instead of holding
- * the whole of it in memory.
+ * Signs and checks download links. A link is a capability, like a presigned URL: whoever holds it may
+ * fetch what it names until it expires, which lets a browser follow it without an access token.
  */
 @ApplicationScoped
 class DownloadLinks(config: DownloadConfig) {
@@ -106,7 +104,7 @@ class DownloadLinks(config: DownloadConfig) {
         val expiresAt = now.plus(LIFETIME)
         val payload = Json.encodeToString(DownloadGrant.serializer(), DownloadGrant(download, expiresAt.epochSecond)).encodeToByteArray()
         val ticket = "${encode(payload)}.${encode(mac(payload))}"
-        return DownloadLink(url = "api/v1/downloads/$ticket", expiresAt = expiresAt.toString())
+        return DownloadLink(url = "$API_ROOT/downloads/$ticket", expiresAt = expiresAt.toString())
     }
 
     /** What [ticket] grants, or a 404 when it was not signed here or has run out. */
@@ -135,10 +133,11 @@ class DownloadLinks(config: DownloadConfig) {
         return grant.download
     }
 
-    private fun mac(payload: ByteArray): ByteArray =
-        Mac.getInstance(
-            ALGORITHM,
-        ).apply { init(SecretKeySpec(key, ALGORITHM)) }.doFinal(payload)
+    private fun mac(payload: ByteArray): ByteArray {
+        val mac = Mac.getInstance(ALGORITHM)
+        mac.init(SecretKeySpec(key, ALGORITHM))
+        return mac.doFinal(payload)
+    }
 
     private fun encode(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 

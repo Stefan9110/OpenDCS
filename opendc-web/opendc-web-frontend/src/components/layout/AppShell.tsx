@@ -6,9 +6,11 @@ import { AppFooter } from "./AppFooter"
 import { AppHeader } from "./AppHeader"
 import { AuthGate } from "./AuthGate"
 
+const HEADER_HEIGHT = 56
+
 export function AppShell({ children }: { children: ReactNode }) {
     return (
-        <MantineAppShell header={{ height: 56 }} withBorder={false}>
+        <MantineAppShell header={{ height: HEADER_HEIGHT }} withBorder={false}>
             <MantineAppShell.Header>
                 <AppHeader />
             </MantineAppShell.Header>

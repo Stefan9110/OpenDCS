@@ -68,10 +68,7 @@ enum class TraceKindWire {
     FAILURE,
 }
 
-/**
- * How the caller came by a trace, which is what tells the library which rows it may change: a
- * built-in belongs to the deployment, and one shared with you belongs to somebody else.
- */
+/** How the caller came by a trace, which decides whether they may change it. */
 @Serializable
 enum class TraceAccessWire {
     @SerialName("builtin")
@@ -84,18 +81,15 @@ enum class TraceAccessWire {
     SHARED,
 }
 
-/** One table of a trace, and how much of it arrived. */
 @Serializable
 data class TraceTable(
     val name: String,
     val sizeBytes: Long,
-    /** Rows in the table, which is the one place "row" means what it means in a parquet file. */
     val rowCount: Long? = null,
 )
 
-// The slug is the name an experiment references, and the public id is what this API addresses. The
-// two are separate because the slug may be corrected while nothing points at it, and an identifier
-// that can change cannot be the one in URLs.
+// The slug is what an experiment references and may be corrected while nothing does; the public id
+// never changes, so it is what URLs address.
 @Serializable
 data class TraceWire(
     val id: String,
@@ -115,13 +109,7 @@ data class TraceKindTables(
     val tables: List<String>,
 )
 
-/**
- * A file about to be sent, and how large it is.
- *
- * The size is given before a byte moves because that is when it is needed: how a file is cut into
- * parts, and therefore how many connections may carry it at once, is decided while the targets are
- * being handed out.
- */
+/** A file about to be sent. Its size decides how it is cut into parts when the targets are handed out. */
 @Serializable
 data class UploadedFile(
     val table: String,
@@ -144,10 +132,7 @@ data class UploadPart(
     val length: Long,
 )
 
-/**
- * Where to send one table's bytes. More than one part means they may go at once, which is what
- * takes a large trace off the speed of a single connection.
- */
+/** Where to send one table's bytes. Several parts may be sent at once. */
 @Serializable
 data class UploadSlot(
     val table: String,
@@ -190,11 +175,8 @@ class TracesResource(
     private val links: DownloadLinks,
 ) {
     /**
-     * The caller's library: what the deployment ships, what they uploaded, what others shared.
-     *
-     * A trace whose upload never finished is not among them. Registering, uploading and completing
-     * are three requests, but nobody outside the upload sees a trace between the first and the
-     * last: it appears whole or not at all.
+     * The caller's library: what the deployment ships, what they uploaded, what others shared. A trace
+     * whose upload never finished is not among them.
      */
     @GET
     fun list(
@@ -209,8 +191,7 @@ class TracesResource(
                     TraceGrant.findSharedWith(user.id).map { it.trace to TraceAccessWire.SHARED }
             ).filter { (trace, _) -> wanted == null || trace.kind == wanted }
 
-        // One query for every trace's tables rather than one per trace, and it answers both what a
-        // trace holds and whether it is finished.
+        // One query answers both what each trace holds and whether it is finished.
         val tables = tablesOf(found.map { (trace, _) -> trace.id })
         return found
             .filter { (trace, _) -> tables.holdsAll(trace) }
@@ -218,10 +199,7 @@ class TracesResource(
             .map { (trace, access) -> trace.toWire(access, tables[trace.id].orEmpty()) }
     }
 
-    /**
-     * What may be uploaded and which files each kind is made of, so an upload form does not have
-     * to carry its own copy of that and fall out of step with the readers.
-     */
+    /** Which tables each kind of trace is made of, so an upload form needs no copy of its own. */
     @GET
     @Path("kinds")
     fun kinds(): List<TraceKindTables> = TraceKind.entries.map { TraceKindTables(it.toWire(), it.tables) }
@@ -236,12 +214,8 @@ class TracesResource(
     }
 
     /**
-     * Claims a name and hands back somewhere to put each table.
-     *
-     * The bytes do not come through here. Object storage can be written to from a browser, so a
-     * trace of any size goes straight there and this server only ever sees the name of it; where
-     * storage is a directory on a development machine there is nowhere to point at, so the slot
-     * names an endpoint on this server instead.
+     * Claims a name and hands back somewhere to put each table: object storage directly where the
+     * browser can reach it, otherwise [putTable] on this server.
      */
     @POST
     @Transactional
@@ -249,9 +223,8 @@ class TracesResource(
         val kind = traceKind(request.kind)
         val owner = identity.currentUser()
         val slug = "${owner.handle}/${traceName(request.name)}"
-        // Settled before anything is created: handing out a target for a large file opens an
-        // upload in storage, and getting that far only to refuse the request would leave one open
-        // that nothing is ever going to finish or clear away.
+        // Before anything is created: a target for a large file opens an upload in storage that a
+        // refused request would leave open.
         val sizes = declaredSizes(kind, request.files)
         disposal.claim(slug, owner)
         val trace = Trace.unfinished(slug, kind, owner, request.description.cleaned(), Instant.now())
@@ -261,11 +234,8 @@ class TracesResource(
     }
 
     /**
-     * Takes one table's bytes, for a store a browser cannot write to directly.
-     *
-     * Any content type: this reads raw bytes and has no use for what the sender calls them, while a
-     * browser handed a .parquet file names no type at all and would be turned away by a stricter
-     * rule.
+     * Takes one table's bytes, for a store a browser cannot write to directly. Any content type, since
+     * a browser names none for a .parquet file.
      */
     @PUT
     @Path("{id}/tables/{table}")
@@ -284,11 +254,8 @@ class TracesResource(
     }
 
     /**
-     * Checks that what was uploaded is what it was filed as, and makes the trace usable.
-     *
-     * Only the parquet footer is read, so this costs the same for a ten-megabyte table and a
-     * ten-gigabyte one, and a file that is not the table it claims to be is refused here rather
-     * than in the middle of somebody's run.
+     * Checks that what was uploaded is what it was filed as, reading only the parquet footers, and
+     * makes the trace usable.
      */
     @POST
     @Path("{id}/complete")
@@ -297,8 +264,7 @@ class TracesResource(
         @PathParam("id") id: String,
     ): TraceWire {
         val trace = owned(id)
-        // A table large enough to have been sent in parts becomes an object only here, since only
-        // now is the browser finished sending them.
+        // A table sent in parts becomes an object only now that the browser has sent them all.
         val missing = trace.kind.tables.filterNot { store.completeUpload(traceKey(trace.publicId, it)) }
         if (missing.isNotEmpty()) {
             throw conflict("The bytes for ${missing.joinToString(", ")} never arrived")
@@ -308,10 +274,7 @@ class TracesResource(
         return trace.toWire(TraceAccessWire.OWNED)
     }
 
-    /**
-     * The description is free text and always the owner's to change. The name is what documents
-     * reference, so it may only be corrected while nothing references it.
-     */
+    /** The name is what documents reference, so it may only be corrected while nothing references it. */
     @PATCH
     @Path("{id}")
     @Transactional
@@ -351,14 +314,9 @@ class TracesResource(
         return Response.status(204).build()
     }
 
-    /**
-     * The trace as a zip of its tables. One archive rather than a file per table keeps a two-file
-     * workload and a one-file carbon trace the same single download, and the entries inside are
-     * laid out the way a reader expects to find them.
-     */
     @GET
     @Path("{id}/content")
-    @Produces("application/zip")
+    @Produces(APPLICATION_ZIP)
     fun content(
         @PathParam("id") id: String,
     ): Response = traceContentResponse(visible(id), store)
@@ -425,12 +383,10 @@ class TracesResource(
         when (val target = store.uploadTarget(traceKey(trace.publicId, table), sizeBytes)) {
             is UploadTarget.Direct ->
                 UploadSlot(table, target.parts.map { UploadPart(it.url, it.offset, it.length) }, direct = true)
-            // A store the browser cannot reach takes the whole file in one request to this server,
-            // so there is one part and it covers everything.
             UploadTarget.ThroughServer ->
                 UploadSlot(
                     table,
-                    listOf(UploadPart("api/v1/traces/${trace.publicId}/tables/$table", 0, sizeBytes)),
+                    listOf(UploadPart("$API_ROOT/traces/${trace.publicId}/tables/$table", 0, sizeBytes)),
                     direct = false,
                 )
         }
@@ -442,11 +398,7 @@ class TracesResource(
         return trace
     }
 
-    /**
-     * A trace the caller may change. One they cannot see at all is a miss; one they can see but do
-     * not own is a refusal, because pretending it is absent would contradict the listing they just
-     * read it from.
-     */
+    /** A trace the caller may change. One they can see but do not own is a 403, not a 404. */
     private fun owned(id: String): Trace {
         val trace = visible(id)
         return when (accessTo(trace)) {
@@ -466,7 +418,6 @@ class TracesResource(
         }
     }
 
-    /** Every table of the given traces, grouped by the trace it belongs to. */
     private fun tablesOf(traceIds: List<Long>): Map<Long, List<TracePart>> =
         if (traceIds.isEmpty()) emptyMap() else TracePart.list("trace.id in ?1", traceIds).groupBy { it.trace.id }
 
@@ -491,8 +442,7 @@ class TracesResource(
     }
 }
 
-// A kind nobody serves is a mistake in the request, not an empty library: answering [] would tell a
-// caller who misspelled "carbon" that they simply have no carbon traces.
+// A misspelled kind is refused rather than answered with an empty library.
 fun traceKind(raw: String): TraceKind =
     when (raw) {
         "workload" -> TraceKind.WORKLOAD
@@ -505,13 +455,7 @@ fun traceKind(raw: String): TraceKind =
             )
     }
 
-/**
- * How large each of [kind]'s tables is said to be, refusing the registration unless every one of
- * them is accounted for.
- *
- * A file of no bytes is turned away here too. Nothing empty is a parquet table, and saying so now
- * costs the caller a round trip instead of an upload.
- */
+/** How large each of [kind]'s tables is said to be, refusing any that is missing or empty. */
 private fun declaredSizes(
     kind: TraceKind,
     files: List<UploadedFile>,
@@ -527,8 +471,7 @@ private fun declaredSizes(
     return given
 }
 
-// The slug goes into documents, URLs and object keys, so it holds to what all three accept. The
-// owner's handle and a separating slash are added around it, and are not the caller's to supply.
+// What documents, URLs and object keys all accept. The owner's handle and a slash are added in front.
 private val TRACE_NAME = Regex("[a-z0-9][a-z0-9._-]{0,99}")
 
 fun traceName(raw: String): String {

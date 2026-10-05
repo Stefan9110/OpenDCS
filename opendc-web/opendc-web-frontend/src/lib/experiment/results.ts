@@ -21,6 +21,8 @@ interface MetricDefinition {
     total: MetricScale
 }
 
+const JOULES_PER_KWH = 3_600_000
+
 export const RESULT_METRICS = [
     {
         id: "host.cpu_utilization",
@@ -29,11 +31,7 @@ export const RESULT_METRICS = [
         label: "CPU utilization",
         description: "Share of the fleet's CPU capacity that is actually doing work.",
         reduce: "mean",
-        // A decimal place, because this is the one metric whose honest range spans three orders of
-        // magnitude: a fleet sized for its workload sits near 40%, and one sized for a much larger
-        // one sits below 1%. Rounded to whole percents the second reads as a flat zero, and every
-        // axis tick collapses to the same label, which is the reading being deleted rather than
-        // blurred.
+        // One decimal, or an oversized fleet below 1% reads as a flat zero on every tick.
         sample: { unit: "%", scale: 100, decimals: 1 },
         total: { unit: "%", scale: 100, decimals: 1 },
     },
@@ -64,8 +62,8 @@ export const RESULT_METRICS = [
         label: "Energy used",
         description: "Energy drawn from the power sources since the previous sample.",
         reduce: "sum",
-        sample: { unit: "kWh", scale: 1 / 3_600_000, decimals: 2 },
-        total: { unit: "kWh", scale: 1 / 3_600_000, decimals: 0 },
+        sample: { unit: "kWh", scale: 1 / JOULES_PER_KWH, decimals: 2 },
+        total: { unit: "kWh", scale: 1 / JOULES_PER_KWH, decimals: 0 },
     },
     {
         id: "powerSource.carbon_emission",
@@ -144,8 +142,8 @@ export const RESULT_METRICS = [
         label: "Battery charge",
         description: "Energy stored in the batteries, summed over the topology.",
         reduce: "mean",
-        sample: { unit: "kWh", scale: 1 / 3_600_000, decimals: 1 },
-        total: { unit: "kWh", scale: 1 / 3_600_000, decimals: 1 },
+        sample: { unit: "kWh", scale: 1 / JOULES_PER_KWH, decimals: 1 },
+        total: { unit: "kWh", scale: 1 / JOULES_PER_KWH, decimals: 1 },
     },
 ] as const satisfies readonly MetricDefinition[]
 
@@ -175,8 +173,7 @@ export interface ExperimentResults {
     experimentId: string
     // Resolution the simulation actually exported at.
     exportIntervalMs: number
-    // Resolution these points are reported at. A trace covering months exports far more samples than
-    // a chart has pixels, so the server reduces them into buckets and says how wide a bucket is.
+    // Width of the buckets the server folds a long trace into before reporting it.
     bucketMs: number
     complete: boolean
     scenarios: ScenarioResults[]
@@ -226,9 +223,7 @@ export function reduceMetric(scenario: ScenarioResults, metric: MetricId): Reduc
     return reduceSeries(seriesOf(scenario, metric).points, metricById(metric).reduce)
 }
 
-// Reduces a series to at most `buckets` points, applying the metric's own reduction inside each
-// bucket: additive columns are summed, gauges averaged, counters carried forward. Applying the wrong
-// one here would not just blur the line, it would misreport the total.
+// Each bucket uses the metric's own reduction; any other one would misreport the total.
 export function bucketPoints(points: readonly ResultPoint[], buckets: number, mode: ReduceMode): ResultPoint[] {
     if (buckets <= 0) return []
     if (points.length <= buckets) return [...points]

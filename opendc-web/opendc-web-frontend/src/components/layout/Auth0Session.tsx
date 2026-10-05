@@ -10,9 +10,8 @@ import type { ReactNode } from "react"
 type Auth0Settings = Extract<AuthSettings, { type: "auth0" }>
 
 /**
- * Signs in through the Auth0 tenant the server named. Tokens are kept in local storage and renewed
- * with refresh tokens, since browsers block the third-party cookies a silent renewal would need,
- * and a session held only in memory would end at every reload.
+ * Signs in through the Auth0 tenant the server named. Tokens live in local storage and renew by
+ * refresh token: browsers block the third-party cookies silent renewal needs.
  */
 export function Auth0Session({ settings, children }: Readonly<{ settings: Auth0Settings; children: ReactNode }>) {
     const router = useRouter()

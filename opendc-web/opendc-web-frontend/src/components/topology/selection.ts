@@ -28,10 +28,7 @@ export function selectHost(at: HostAddress): Selection {
     return { kind: "host", dataCenter: at.dataCenter, cluster: at.cluster, host: at.host }
 }
 
-/**
- * Opens a host group, or closes it if it is the one already open. Without the second half there is
- * no way back out of a group short of Escape, which drops the cluster as well.
- */
+// Closing the open group again is the only way out of it short of Escape, which drops the cluster.
 export function toggleHost(selection: Selection, at: HostAddress): Selection {
     const open =
         selection.kind === "host" &&

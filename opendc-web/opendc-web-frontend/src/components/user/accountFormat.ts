@@ -3,6 +3,10 @@ import dayjs from "dayjs"
 
 const euro = new Intl.NumberFormat("en-IE", { style: "currency", currency: "EUR" })
 
+const BUDGET_DANGER_PERCENT = 90
+
+const BUDGET_WARNING_PERCENT = 75
+
 export function budgetPercent({ usedSeconds, cap }: BudgetWindow): number {
     // An uncapped window has no proportion to show, so the bar stays empty rather than full.
     if (cap.type === "unlimited") return 0
@@ -11,8 +15,8 @@ export function budgetPercent({ usedSeconds, cap }: BudgetWindow): number {
 }
 
 export function budgetColor(percent: number): string {
-    if (percent >= 90) return "red"
-    if (percent >= 75) return "yellow"
+    if (percent >= BUDGET_DANGER_PERCENT) return "red"
+    if (percent >= BUDGET_WARNING_PERCENT) return "yellow"
     return "opendc"
 }
 

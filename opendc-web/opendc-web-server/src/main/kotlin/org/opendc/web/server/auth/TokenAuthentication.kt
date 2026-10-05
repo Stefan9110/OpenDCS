@@ -34,9 +34,9 @@ import io.quarkus.security.runtime.QuarkusSecurityIdentity
 import io.quarkus.vertx.http.runtime.security.ChallengeData
 import io.quarkus.vertx.http.runtime.security.HttpAuthenticationMechanism
 import io.smallrye.mutiny.Uni
-import io.vertx.core.http.HttpHeaders
 import io.vertx.ext.web.RoutingContext
 import jakarta.enterprise.context.ApplicationScoped
+import jakarta.ws.rs.core.HttpHeaders
 import org.opendc.web.server.model.AccessToken
 import org.opendc.web.server.model.AccountState
 import org.opendc.web.server.model.EXECUTION_TOKEN_PREFIX
@@ -44,7 +44,10 @@ import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.PAT_PREFIX
 import java.time.Instant
 
-private const val BEARER = "Bearer "
+/** The scheme of every credential this server accepts, and of the challenge a 401 carries. */
+const val BEARER_SCHEME = "Bearer"
+
+private const val BEARER = "$BEARER_SCHEME "
 
 /** Every token this server mints starts so, which is what tells one apart from an Auth0 JWT. */
 private const val OPENDC_TOKEN = "odc_"
@@ -74,7 +77,7 @@ class OpaqueTokenMechanism : HttpAuthenticationMechanism {
     }
 
     override fun getChallenge(context: RoutingContext): Uni<ChallengeData> =
-        Uni.createFrom().item(ChallengeData(401, "WWW-Authenticate", "Bearer"))
+        Uni.createFrom().item(ChallengeData(401, HttpHeaders.WWW_AUTHENTICATE, BEARER_SCHEME))
 
     override fun getCredentialTypes(): Set<Class<out AuthenticationRequest>> = setOf(OpaqueTokenRequest::class.java)
 

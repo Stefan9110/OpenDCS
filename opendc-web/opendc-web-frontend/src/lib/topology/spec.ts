@@ -169,7 +169,6 @@ export const DEFAULT_DATA_CENTER_NAME = "DC"
 export const DEFAULT_CLUSTER_NAME = "Cluster"
 export const DEFAULT_HOST_NAME = "Host"
 export const DEFAULT_COUNT = 1
-export const DEFAULT_POWER_MODEL_TYPE = "linear"
 
 export function clusterCount(cluster: ClusterSpec): number {
     return cluster.count ?? DEFAULT_COUNT

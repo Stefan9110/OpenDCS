@@ -7,7 +7,7 @@ import { FailureBudgetAxis } from "@/components/experiment/FailureBudgetAxis"
 import { AXIS_HELP, AXIS_LABELS, RUNS_HELP, RUNS_LABEL, axisEntryLabels } from "@/components/experiment/axisLabels"
 import { bindFailureModels, bindSchedulers, bindTopologies, bindWorkloads } from "@/components/experiment/draftAxes"
 import { formatCount, formatSimulationBudget } from "@/components/format"
-import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
+import { FieldLabel } from "@/components/util/FieldLabel"
 import { notifyProblem } from "@/components/util/feedback"
 import { useCatalog } from "@/lib/api/catalogs"
 import { useSaveExperimentDraft } from "@/lib/api/experiments"
@@ -29,6 +29,7 @@ import { useDebouncedCallback } from "@mantine/hooks"
 import { useState } from "react"
 
 const SAVE_DELAY_MS = 600
+const MAX_RUNS = 32
 
 export function DraftEditor({ experiment }: { experiment: Experiment }) {
     const [spec, setSpec] = useState(experiment.spec)
@@ -57,7 +58,6 @@ export function DraftEditor({ experiment }: { experiment: Experiment }) {
     const allocation = bindSchedulers(allocationPolicyAxis(spec), schedulers.data ?? [])
     const failures = bindFailureModels(failureModelAxis(spec), prefabs.data ?? [])
 
-    // A viewer reads the draft with every control disabled, rather than through a second layout.
     return (
         <Paper withBorder radius="md" p="md">
             <Fieldset variant="unstyled" disabled={!canEdit}>
@@ -99,8 +99,7 @@ export function DraftEditor({ experiment }: { experiment: Experiment }) {
 
                     <FailureBudgetAxis
                         entries={axes.maxNumFailures}
-                        // An axis left empty expands to no scenarios at all, so an empty field drops the
-                        // key instead and the model's own default stands.
+                        // An empty axis expands to no scenarios, so clearing it drops the key instead.
                         onChange={(next) =>
                             edit((current) => ({ ...current, maxNumFailures: next.length === 0 ? undefined : next }))
                         }
@@ -116,16 +115,14 @@ export function DraftEditor({ experiment }: { experiment: Experiment }) {
                     <NumberInput
                         label={<FieldLabel label={RUNS_LABEL} help={RUNS_HELP} />}
                         min={1}
-                        max={32}
+                        max={MAX_RUNS}
                         value={experimentRuns(spec)}
                         onChange={(value) =>
                             edit((current) => ({ ...current, runs: typeof value === "number" ? value : DEFAULT_RUNS }))
                         }
                     />
 
-                    {/* The only setting here with more than one field to it, so the only one worth
-                    folding away. Its control carries what the axis holds, to keep that readable
-                    while it is shut. */}
+                    {/* The control summarises the axis so it stays readable while folded. */}
                     <Accordion variant="contained" chevronPosition="left">
                         <Accordion.Item value="checkpointModels">
                             <Accordion.Control>

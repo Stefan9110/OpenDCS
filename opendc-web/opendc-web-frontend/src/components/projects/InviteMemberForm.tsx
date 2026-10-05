@@ -1,13 +1,12 @@
 "use client"
 
-import { ROLE_OPTIONS } from "@/components/projects/MemberRow"
+import { ROLE_OPTIONS, ROLE_SELECT_WIDTH } from "@/components/projects/MemberRow"
 import { notifyProblem } from "@/components/util/feedback"
 import { useInviteMember } from "@/lib/api/members"
 import type { Id, ProjectRole } from "@/lib/api/types"
 import { Button, Group, Select, TextInput } from "@mantine/core"
 import { useState } from "react"
 
-/** Adds someone to a project by the handle they chose. */
 export function InviteMemberForm({ projectId }: Readonly<{ projectId: Id }>) {
     const invite = useInviteMember(projectId)
     const [handle, setHandle] = useState("")
@@ -32,7 +31,7 @@ export function InviteMemberForm({ projectId }: Readonly<{ projectId: Id }>) {
                     flex={1}
                 />
                 <Select
-                    w={110}
+                    w={ROLE_SELECT_WIDTH}
                     data={ROLE_OPTIONS}
                     value={role}
                     allowDeselect={false}

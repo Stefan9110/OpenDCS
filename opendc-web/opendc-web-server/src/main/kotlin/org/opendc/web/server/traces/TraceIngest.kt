@@ -36,34 +36,30 @@ import org.opendc.web.server.storage.traceKey
 import java.nio.file.Path
 import java.time.Instant
 
-/** What a table turned out to hold. */
-data class TableFacts(
+/** How large a stored table is. */
+data class TableSize(
     val sizeBytes: Long,
     val rowCount: Long,
 )
 
 /**
- * Checks that an uploaded table really is the table it was filed as, and reports what it holds.
- *
- * Only the parquet footer is read. It carries the schema and the row count, which is everything
- * needed to tell a real tasks table from a photograph renamed to tasks.parquet, and it costs the
- * same whether the file is ten megabytes or ten gigabytes. Reading rows instead would mean pulling
- * the whole object back out of storage to learn nothing further.
+ * Checks that an uploaded table really is the table it was filed as, and measures it. Only the
+ * parquet footer is read: it carries the schema and row count at the same cost for any file size.
  */
 @ApplicationScoped
 class TraceIngest(private val store: ObjectStore) {
-    /** Inspects every table of [trace] in the store and records what each holds, which makes the trace whole. */
+    /** Inspects every table of [trace] in the store and records its size, which makes the trace whole. */
     fun record(trace: Trace) {
         for (table in trace.kind.tables) {
-            val facts = inspect(trace.kind, table, traceKey(trace.publicId, table))
+            val size = inspect(trace.kind, table, traceKey(trace.publicId, table))
             val part =
                 TracePart.find(trace.id, table) ?: TracePart().also {
                     it.trace = trace
                     it.tableName = table
                     it.persist()
                 }
-            part.sizeBytes = facts.sizeBytes
-            part.rowCount = facts.rowCount
+            part.sizeBytes = size.sizeBytes
+            part.rowCount = size.rowCount
         }
         trace.updatedAt = Instant.now()
     }
@@ -72,7 +68,7 @@ class TraceIngest(private val store: ObjectStore) {
         kind: TraceKind,
         table: String,
         key: String,
-    ): TableFacts {
+    ): TableSize {
         val footer =
             try {
                 ParquetFileReader.open(StoredObjectFile(store, key)).use { reader ->
@@ -85,10 +81,8 @@ class TraceIngest(private val store: ObjectStore) {
                 )
             }
 
-        // The format describes every column it knows for a table, not the ones a file must carry:
-        // real traces leave out what they have nothing to say about, so demanding the full set
-        // would refuse most of them. What does give a file away is carrying a column that belongs
-        // to one of the kind's *other* tables, which is what swapping two files looks like.
+        // Real traces omit columns, so the full set cannot be demanded; a column of a sibling table is
+        // what gives away two swapped files.
         val own = columnsOf(kind, table)
         if (footer.columns.intersect(own).isEmpty()) {
             throw invalidDocument(
@@ -103,7 +97,7 @@ class TraceIngest(private val store: ObjectStore) {
                 listOf(DocumentIssue(table, "it carries the ${elsewhere.sorted().joinToString(", ")} column of another table")),
             )
         }
-        return TableFacts(sizeBytes = store.size(key), rowCount = footer.rowCount)
+        return TableSize(sizeBytes = store.size(key), rowCount = footer.rowCount)
     }
 
     /** The columns opendc-trace knows for [table], asked of the format so this cannot drift. */

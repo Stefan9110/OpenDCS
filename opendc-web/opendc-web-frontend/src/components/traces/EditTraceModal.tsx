@@ -1,7 +1,7 @@
 "use client"
 
-import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
 import { TRACE_NAME_HELP, traceNameProblem } from "@/components/traces/traceName"
+import { FieldLabel } from "@/components/util/FieldLabel"
 import { notifyProblem, notifySaved } from "@/components/util/feedback"
 import { useEditTrace } from "@/lib/api/traces"
 import type { Trace } from "@/lib/api/types"
@@ -17,14 +17,12 @@ export function openEditTrace(trace: Trace): void {
 
 function EditTraceForm({ trace }: { trace: Trace }) {
     const edit = useEditTrace()
-    // Only what follows the handle is the owner's to change; the prefix is not theirs to set.
+    // Only the part after the handle is the owner's to change.
     const [name, setName] = useState(trace.slug.split("/").pop() ?? "")
     const [description, setDescription] = useState(trace.description ?? "")
     const problem = traceNameProblem(name)
 
-    // Both go in one request. The server only renames when the name actually changed, so editing
-    // just the description of a trace an experiment references does not run into the rule that
-    // freezes its name.
+    // The server renames only when the name changed, so a referenced trace's description stays editable.
     const save = () => {
         if (problem !== undefined) return
         edit.mutate(

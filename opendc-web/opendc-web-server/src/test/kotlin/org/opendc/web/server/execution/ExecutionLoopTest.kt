@@ -50,11 +50,7 @@ import org.opendc.web.server.storage.experimentKey
 import java.time.Instant
 import java.util.UUID
 
-/**
- * The queue decides what a machine is asked to run and what happens to work that failed, which is
- * where an experiment silently stops or quietly runs twice. These drive the platform by hand: the
- * scheduler is off in tests, so what a case exercises is decided by the case.
- */
+/** What a machine is asked to run and what happens to work that failed, with the platform driven by hand. */
 @QuarkusTest
 class ExecutionLoopTest {
     @Inject
@@ -84,8 +80,7 @@ class ExecutionLoopTest {
                 .path("id")
     }
 
-    // Running one scenario at a time on a machine that holds twenty is the failure mode this whole
-    // model exists to avoid, so a bag that fits is dispatched whole.
+    // A bag that fits is dispatched whole, not one scenario at a time.
     @Test
     fun `runs everything that fits in one execution rather than one scenario at a time`() {
         val experiment = submitted(topologies = 3, runs = 2)

@@ -34,13 +34,8 @@ import org.opendc.web.server.telemetry.TelemetryStore
 import java.util.UUID
 
 /**
- * What an experiment has measured so far, from whichever side of the run holds it.
- *
- * A run that is still going has only posted samples, and they live in the telemetry store until they
- * expire. A run that has stopped has left its parquet behind, which is the account that lasts. Asking
- * the store for a finished run and the parquet for a running one are both wrong, so the unit's own
- * state decides, and a run that stopped without publishing anything falls back to whatever it managed
- * to post.
+ * What an experiment has measured so far: the telemetry store for a running unit, its parquet for a
+ * stopped one, and the telemetry again for a stopped unit that published nothing.
  */
 @ApplicationScoped
 class ResultsReader(
@@ -49,10 +44,7 @@ class ResultsReader(
 ) {
     /**
      * The scenarios of [experimentId] that have measured something, folded to at most [buckets]
-     * points each.
-     *
-     * A scenario nothing has been heard from is left out rather than reported empty: the run picker
-     * offers what it is given, and offering a scenario with no line to draw is offering nothing.
+     * points each. A scenario with nothing to draw is left out so the run picker does not offer it.
      */
     fun read(
         experimentId: UUID,
@@ -116,8 +108,7 @@ class ResultsReader(
             }
         }
         return posted[RunKey(experimentId, unit.scenarioIndex, unit.seed)].orEmpty().mapNotNull { series ->
-            // A metric this server does not know is a launcher of another version, which is a reason
-            // to leave out one line rather than to refuse the whole chart.
+            // A metric from a launcher of another version drops one line rather than the whole chart.
             ResultMetric.byId(series.metric)?.let { it to series.points }
         }.toMap()
     }

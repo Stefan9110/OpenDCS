@@ -26,8 +26,12 @@ import org.opendc.web.server.model.sha256Hex
 import org.opendc.web.server.rest.DocumentIssue
 import org.opendc.web.server.rest.invalidDocument
 
-/** Three to thirty-two characters: a letter first, no dash last, so a handle reads well in a slug. */
-private val HANDLE = Regex("[a-z][a-z0-9-]{1,30}[a-z0-9]")
+private const val MIN_HANDLE_LENGTH = 3
+
+private const val MAX_HANDLE_LENGTH = 32
+
+/** A letter first and no dash last, so a handle reads well in a slug. */
+private val HANDLE = Regex("[a-z][a-z0-9-]{${MIN_HANDLE_LENGTH - 2},${MAX_HANDLE_LENGTH - 2}}[a-z0-9]")
 
 /** Names that would read as the platform speaking, or collide with paths and built-ins. */
 private val RESERVED_HANDLES =
@@ -42,7 +46,12 @@ fun validHandle(raw: String): String {
     if (!HANDLE.matches(handle)) {
         throw invalidDocument(
             "That is not a usable handle",
-            listOf(DocumentIssue("handle", "must be 3 to 32 lowercase letters, digits or dashes, starting with a letter")),
+            listOf(
+                DocumentIssue(
+                    "handle",
+                    "must be $MIN_HANDLE_LENGTH to $MAX_HANDLE_LENGTH lowercase letters, digits or dashes, starting with a letter",
+                ),
+            ),
         )
     }
     if (handle in RESERVED_HANDLES) {

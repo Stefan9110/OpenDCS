@@ -28,27 +28,19 @@ import org.opendc.web.dispatcher.DispatchPolicy
 import org.opendc.web.dispatcher.estimate.EstimatorCoefficients
 import java.time.Duration
 
+/** The longest a presigned object-storage URL can last, and so the longest a launcher's URLs may. */
+const val MAX_URL_LIFETIME = "P7D"
+
 /** How work is estimated, shaped and escalated, and where it runs. */
 @ConfigMapping(prefix = "opendc.execution")
 interface ExecutionConfig {
-    /** The platform this deployment dispatches to. **/
     fun dispatcher(): DispatcherKind
 
-    /**
-     * Where a launcher posts its progress.
-     *
-     * Absolute, and resolved from where the launcher runs rather than from here: a job on a cluster
-     * has no idea what this server calls itself.
-     */
+    /** Where a launcher posts its progress: absolute, and reachable from wherever the launcher runs. */
     fun telemetryUrl(): String
 
-    /**
-     * How long the URLs a launcher is handed stay valid: its manifest, its inputs and its outputs.
-     *
-     * Long enough to outlast the longest wait in a platform's queue plus the run. A signature for
-     * object storage lasts seven days at most, which is also the most this may be.
-     */
-    @WithDefault("PT168H")
+    /** How long a launcher's manifest, input and output URLs stay valid: the longest queue wait plus the run. */
+    @WithDefault(MAX_URL_LIFETIME)
     fun urlLifetime(): Duration
 
     /** How long to leave the platform alone after it could not take an execution. */
@@ -62,92 +54,65 @@ interface ExecutionConfig {
     fun retry(): RetrySettings
 
     /**
-     * The terms of the resource model.
-     *
-     * The defaults are fitted to launcher runs over the sample traces, from fifty tasks to ten
-     * million fragments, on one ordinary machine. What differs between machines is a constant, which
-     * is what the two multipliers are for: raise them where estimates come out short, lower them on
-     * hardware that beats the reference.
+     * The terms of the resource model, each described on [EstimatorCoefficients]. The defaults are
+     * fitted to launcher runs over the sample traces on one ordinary machine; the two multipliers
+     * correct for another: raise them where estimates come out short.
      */
     interface EstimatorSettings {
-        /** What one run holds however small its workload: the engine, and the writers of its output. */
         @WithDefault("80.0")
         fun baseMemoryMb(): Double
 
-        /** Per simulated host. Small: hosts cost time rather than memory. */
         @WithDefault("0.03")
         fun memoryPerHostMb(): Double
 
-        /** Per million fragments, each of which becomes an object on the heap. */
         @WithDefault("80.0")
         fun memoryPerMillionFragmentsMb(): Double
 
-        /** Per million tasks. The heaviest term: a task carries its own fragment list and metadata. */
         @WithDefault("2500.0")
         fun memoryPerMillionTasksMb(): Double
 
-        /** Starting and finishing one run, the JVM included. */
         @WithDefault("2.0")
         fun baseSeconds(): Double
 
-        /** Per million fragments read off disk and turned into objects, before anything is simulated. */
         @WithDefault("1.2")
         fun loadSecondsPerMillionFragments(): Double
 
-        /** Per million fragments actually stepped through by the engine. */
         @WithDefault("1.6")
         fun simulateSecondsPerMillionFragments(): Double
 
-        /** Per million tasks admitted, placed and accounted for. Dominates a task-heavy trace. */
         @WithDefault("1800.0")
         fun secondsPerMillionTasks(): Double
 
-        /** What one host adds to the cost of writing the host table, at the default export interval. */
         @WithDefault("0.005")
         fun exportCostPerHost(): Double
 
-        /** What injecting failures adds, as a fraction. */
         @WithDefault("0.25")
         fun failureOverhead(): Double
 
-        /** What checkpointing adds, as a fraction. */
         @WithDefault("0.15")
         fun checkpointOverhead(): Double
 
-        /** What this deployment's cores do to the model's seconds. */
         @WithDefault("1.0")
         fun runtimeMultiplier(): Double
 
-        /** What this deployment's runtime does to the model's megabytes. */
         @WithDefault("1.0")
         fun memoryMultiplier(): Double
     }
 
+    /** Each setting is described on [DispatchPolicy]. */
     interface PackingSettings {
-        /**
-         * What a launcher process costs beyond the heap its runs need: the JVM itself, its metaspace
-         * and its garbage collector. Paid once however many runs share the process.
-         */
         @WithDefault("256.0")
         fun jvmBaselineMb(): Double
 
-        /** What each run holds outside the heap, such as its output writers' buffers. */
         @WithDefault("0.0")
         fun offHeapPerUnitMb(): Double
 
-        /** How much heap a run is given per megabyte of its estimated peak. */
         @WithDefault("1.0")
         fun heapHeadroom(): Double
 
-        /**
-         * What a launcher costs before its first run begins: starting a JVM, loading the classes a
-         * simulation needs and fetching its inputs. Added to every bag's time limit, because it is
-         * paid once and does not scale with the work inside.
-         */
         @WithDefault("30.0")
         fun startupSeconds(): Double
 
-        /** How far past its estimate the work in a bag may run before it is killed. */
         @WithDefault("3.0")
         fun timeSafetyFactor(): Double
     }

@@ -14,6 +14,7 @@ import {
 } from "@/components/experiment/results/resultsView"
 import { PanelGhost } from "@/components/util/Ghost"
 import { QueryState } from "@/components/util/QueryState"
+import { downloadText, fileSlug } from "@/components/util/download"
 import { notifyProblem } from "@/components/util/feedback"
 import { startDownload } from "@/lib/api/downloads"
 import { resultsArchiveLink, useExperimentResults } from "@/lib/api/experiments"
@@ -29,6 +30,8 @@ import {
 import { ActionIcon, Alert, Button, Group, Paper, Select, Stack, Text, Title, Tooltip } from "@mantine/core"
 import { IconDownload, IconFileZip, IconFlask, IconInfoCircle } from "@tabler/icons-react"
 import { type ReactNode, useState } from "react"
+
+const DEFAULT_METRIC: MetricId = "host.cpu_utilization"
 
 export function ResultsPanel({ experiment }: { experiment: Experiment }) {
     const results = useExperimentResults(experiment.id)
@@ -50,11 +53,10 @@ export function ResultsPanel({ experiment }: { experiment: Experiment }) {
 
 function LoadedResults({ experiment, results }: { experiment: Experiment; results: ExperimentResults }) {
     const reported = reportedMetrics(results)
-    const [preferred, setPreferred] = useState<MetricId>("host.cpu_utilization")
+    const [preferred, setPreferred] = useState<MetricId>(DEFAULT_METRIC)
     const [chosen, setChosen] = useState<number[]>([])
 
-    // The parquet lands scenario by scenario, so an experiment that has run at all has something to
-    // download even while it has nothing to chart yet. Only a queued one has produced no file.
+    // Parquet lands per scenario, so anything past queued has files before it has samples to chart.
     const downloads = experiment.state !== "queued" && <ResultDownloads experiment={experiment} results={results} />
 
     if (reported.length === 0) {
@@ -130,12 +132,6 @@ function LoadedResults({ experiment, results }: { experiment: Experiment; result
     )
 }
 
-/**
- * The two ways of taking results away: the chart's own numbers, and everything the runs wrote.
- *
- * The archive is followed as a signed link rather than fetched, so a multi-gigabyte experiment
- * streams to disk instead of being assembled in the tab first.
- */
 function ResultDownloads({ experiment, results }: { experiment: Experiment; results: ExperimentResults }) {
     return (
         <Group gap="sm" wrap="wrap">
@@ -211,11 +207,5 @@ function pickRuns(results: ExperimentResults, chosen: number[]): number[] {
 }
 
 function downloadCsv(name: string, results: ExperimentResults): void {
-    const blob = new Blob([resultsCsv(results)], { type: "text/csv" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `${name.replaceAll(/\s+/g, "-").toLowerCase()}-results.csv`
-    link.click()
-    URL.revokeObjectURL(url)
+    downloadText(`${fileSlug(name)}-results.csv`, resultsCsv(results), "text/csv")
 }

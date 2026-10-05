@@ -6,11 +6,7 @@ import { Alert, Button, Group, List, Modal, Stack, Text, TextInput } from "@mant
 import { IconAlertTriangle } from "@tabler/icons-react"
 import { useState } from "react"
 
-/**
- * Deactivating signs the person out for good: their tokens stop working and they leave every
- * project somebody else works in. Nothing is deleted, and projects they work in alone stay as they
- * are. The sole owner of a shared project is told to hand it over first.
- */
+/** The server refuses a sole owner of a shared project, listing what to hand over first. */
 export function DeactivateAccountModal({
     userName,
     opened,

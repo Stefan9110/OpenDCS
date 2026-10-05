@@ -42,9 +42,7 @@ function LoadedProject({ projectId }: { projectId: Id }) {
     const experiments = useExperiments(projectId, page)
     const rename = useRenameProject(projectId)
 
-    // Without the project there is no page to annotate, so this is a dead end rather than an error
-    // sitting where its contents would be. Only a first load counts: a failed refetch keeps showing
-    // what is already on screen.
+    // Only a failed first load is a dead end; a failed refetch keeps what is on screen.
     if (project.isError && project.data === undefined) {
         return (
             <MessagePage title="Project not found" message={problemOf(project.error).title}>

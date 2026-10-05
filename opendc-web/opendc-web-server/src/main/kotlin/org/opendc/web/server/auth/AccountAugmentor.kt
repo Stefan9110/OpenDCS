@@ -33,11 +33,8 @@ import org.eclipse.microprofile.jwt.JsonWebToken
 import java.time.Instant
 
 /**
- * Turns whoever Quarkus security recognised into an account of this platform.
- *
- * A verified Auth0 token becomes the account of its subject, made on first sight. In anonymous mode
- * the anonymous caller becomes the implicit account, with no I/O, so static assets cost nothing.
- * Identities from our own tokens arrive already resolved and pass through.
+ * Turns whoever Quarkus security recognised into an account: an Auth0 subject's, made on first sight,
+ * or in anonymous mode the implicit one, with no I/O. Identities from our own tokens pass through.
  */
 @ApplicationScoped
 class AccountAugmentor(

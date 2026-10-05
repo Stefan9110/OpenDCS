@@ -3,6 +3,8 @@ import { config } from "@/lib/config"
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 
+export const UNREACHABLE_TITLE = "Cannot reach OpenDC"
+
 export interface RequestOptions {
     method?: HttpMethod
     body?: unknown

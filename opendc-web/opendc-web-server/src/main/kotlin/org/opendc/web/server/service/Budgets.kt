@@ -37,17 +37,22 @@ import java.time.Instant
 
 private const val SECONDS_PER_HOUR = 3600.0
 
-/**
- * What each plan may simulate per window. Placeholders until the product settles real numbers; a
- * window can always be raised by hand in the database.
- */
+private const val MILLIS_PER_SECOND = 1000.0
+
+// Placeholder plan caps until the product settles real numbers; a window can be raised by hand.
+private const val FREE_SESSION_HOURS = 1.0
+private const val FREE_WEEK_HOURS = 10.0
+private const val EDUCATION_SESSION_HOURS = 4.0
+private const val EDUCATION_WEEK_HOURS = 40.0
+
+/** What each plan may simulate per window. */
 fun planCap(
     tier: PlanTier,
     period: BudgetPeriod,
 ): SimulationCap =
     when (tier) {
-        PlanTier.FREE -> hours(period, session = 1.0, week = 10.0)
-        PlanTier.EDUCATION -> hours(period, session = 4.0, week = 40.0)
+        PlanTier.FREE -> hours(period, session = FREE_SESSION_HOURS, week = FREE_WEEK_HOURS)
+        PlanTier.EDUCATION -> hours(period, session = EDUCATION_SESSION_HOURS, week = EDUCATION_WEEK_HOURS)
         PlanTier.ENTERPRISE -> SimulationCap.Unlimited
     }
 
@@ -158,5 +163,3 @@ fun coreSeconds(
     to: Instant,
     cores: Int,
 ): Double = Duration.between(from, to).toMillis() / MILLIS_PER_SECOND * cores
-
-private const val MILLIS_PER_SECOND = 1000.0

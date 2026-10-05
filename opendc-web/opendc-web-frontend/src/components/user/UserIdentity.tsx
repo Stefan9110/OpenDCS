@@ -5,11 +5,13 @@ import type { AuthSession } from "@/lib/auth/auth"
 import { Avatar, Badge, Group, Stack, Text } from "@mantine/core"
 import { IconFolder, IconUser, IconUserKey } from "@tabler/icons-react"
 
+export const AVATAR_URL = "/img/avatar.svg"
+
 export function UserIdentity({ session }: Readonly<{ session: AuthSession }>) {
     return (
         <Stack gap="sm">
             <Group gap="sm" wrap="nowrap">
-                <Avatar src={session.avatarUrl} alt={session.userName} size="md" radius="xl" />
+                <Avatar src={AVATAR_URL} alt={session.userName} size="md" radius="xl" />
                 <Stack gap={0}>
                     <Text size="sm" fw={600}>
                         {session.userName}

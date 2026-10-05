@@ -2,10 +2,8 @@ import { apiRequest, apiUrl } from "@/lib/api/client"
 import type { DownloadLink } from "@/lib/api/types"
 
 /**
- * Starts a download the browser streams straight to disk. The server signs a short-lived link for
- * it first, because a plain link cannot carry an access token, and fetching the file into the tab
- * instead would hold all of it in memory. A link refused because there is nothing to download
- * rejects here, before the browser goes anywhere.
+ * Streams a download straight to disk through a short-lived signed link, since a plain link cannot
+ * carry a token. A refused link rejects here, before the browser navigates.
  */
 export async function startDownload(linkPath: string): Promise<void> {
     const link = await apiRequest<DownloadLink>(linkPath, { method: "POST" })

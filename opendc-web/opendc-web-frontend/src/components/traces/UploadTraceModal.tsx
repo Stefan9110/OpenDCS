@@ -1,11 +1,12 @@
 "use client"
 
 import { formatBytes } from "@/components/format"
-import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
 import { TRACE_NAME_HELP, traceNameProblem } from "@/components/traces/traceName"
+import { FieldLabel } from "@/components/util/FieldLabel"
 import { notifyProblem } from "@/components/util/feedback"
-import { type UploadProgress, useTraceKinds, useUploadTrace } from "@/lib/api/traces"
+import { useTraceKinds } from "@/lib/api/traces"
 import type { TraceKind } from "@/lib/api/types"
+import { type UploadProgress, useUploadTrace } from "@/lib/api/uploads"
 import { Button, FileInput, Group, Progress, Select, Stack, Text, TextInput } from "@mantine/core"
 import { modals } from "@mantine/modals"
 import { IconFileCheck, IconUpload } from "@tabler/icons-react"
@@ -13,11 +14,7 @@ import { useRef, useState } from "react"
 
 const MODAL_ID = "upload-trace"
 
-/**
- * What each table holds, for the reader deciding which of their files goes where. Keyed by table
- * name rather than by kind because that is how a trace is described everywhere else, and a kind
- * that later grows a table simply falls through to the general note until this says otherwise.
- */
+// Keyed by table name, so a table the server adds later falls through to the general note.
 const TABLE_HELP: Record<string, string> = {
     tasks: "Upload a parquet file with one row per task: its id, when it is submitted, how long it runs and what it asks for in cores and memory.",
     fragments:
@@ -33,11 +30,6 @@ export function openUploadTrace(): void {
     modals.open({ modalId: MODAL_ID, title: "Upload a trace", children: <UploadTraceForm /> })
 }
 
-/**
- * Neither caption moves: the left one names the phase and the total, both fixed for the duration,
- * and the percentage is short and pinned to the right edge. Only the bar travels, which is the
- * point of it.
- */
 function UploadProgressBar({ progress }: { progress: UploadProgress }) {
     const sending = progress.sent < progress.total
     const percent = Math.round((progress.sent / progress.total) * 100)
@@ -67,8 +59,6 @@ function UploadTraceForm() {
     const [progress, setProgress] = useState<UploadProgress>({ sent: 0, total: 0 })
     const abort = useRef<AbortController | null>(null)
 
-    // Which files a kind takes is the server's to say, so a kind that later needs a third table
-    // grows a third input here without anything being changed.
     const tables = kinds.data?.find((entry) => entry.kind === kind)?.tables ?? []
     const nameProblem = traceNameProblem(name)
     const complete =
@@ -81,8 +71,7 @@ function UploadTraceForm() {
             { kind, name: name.trim(), description, files, onProgress: setProgress, signal: controller.signal },
             {
                 onSuccess: () => modals.close(MODAL_ID),
-                // Cancelling is not a failure to report back: the reader asked for it and the
-                // modal is already closing.
+                // A cancel is not a failure to report: the reader asked for it.
                 onError: (error) => {
                     if (!controller.signal.aborted) notifyProblem(error)
                 },
@@ -90,8 +79,7 @@ function UploadTraceForm() {
         )
     }
 
-    // Stops the transfers, which in turn fails the upload and takes the half-made trace back out
-    // on the server. Closing the modal on its own would leave both running.
+    // Aborting fails the upload, which discards the half-made trace; closing alone would leave it running.
     const cancel = () => {
         abort.current?.abort()
         modals.close(MODAL_ID)
@@ -113,8 +101,6 @@ function UploadTraceForm() {
             <TextInput
                 label={<FieldLabel label="Name" help={TRACE_NAME_HELP} />}
                 value={name}
-                // Held back until something has been typed: an empty field on a form just opened
-                // is not yet a mistake.
                 error={name === "" ? undefined : nameProblem}
                 onChange={(event) => setName(event.currentTarget.value)}
             />

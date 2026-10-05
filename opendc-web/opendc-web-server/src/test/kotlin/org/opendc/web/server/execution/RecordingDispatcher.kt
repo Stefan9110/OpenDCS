@@ -50,13 +50,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * A platform the test suite drives itself.
- *
- * It stands in for every dispatcher across these tests, so nothing here starts a real process: what
- * a launcher does with a manifest belongs to the launcher's own tests, and what the server does
- * about an outcome is decided by the outcome, not by how long a subprocess took to produce it. Where
- * a case needs a launcher's results, it plays the launcher: it reads the manifest it was handed and
- * writes outcomes where the manifest says.
+ * A platform the test suite drives itself, so nothing here starts a real process. Where a case needs a
+ * launcher's results, it plays the launcher: it reads the manifest and writes outcomes where it says.
  */
 @Mock
 @ApplicationScoped

@@ -28,6 +28,7 @@ import org.opendc.sdk.model.serialization.SdkJson
 import org.opendc.web.dispatcher.Dispatcher
 import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
+import org.opendc.web.dispatcher.NO_EXIT_CODE
 import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.dispatcher.escalatedBags
 import org.opendc.web.dispatcher.requeuedBags
@@ -39,7 +40,6 @@ import org.opendc.web.server.metrics.ServerMetrics
 import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.ExecutionState
 import org.opendc.web.server.model.ExecutionUnit
-import org.opendc.web.server.model.NO_EXIT_CODE
 import org.opendc.web.server.model.Submission
 import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.model.UnitVerdict
@@ -70,14 +70,13 @@ private class Pending(
 /**
  * Closes executions and decides what becomes of the units they carried.
  *
- * Each unit is settled from its own outcome marker, which its launcher published after the unit's
- * files: a marker certifies that the results under it are whole. A unit without one takes the
- * process's reason. Work a different grant could fix goes round again; anything else ends.
+ * Each unit is settled from its outcome marker, published after its files, so a marker certifies the
+ * results under it are whole; a unit without one takes the process's reason. Work a different grant
+ * could fix goes round again.
  *
- * The store is read and written outside any transaction, and the database written under the
- * execution's lock, so a remote call never holds a row and a cancel racing the settle is seen. The
- * experiment's submitter is charged for the cores the platform ran it with, in the same transaction,
- * taking the execution's lock before their budget's.
+ * The store is touched outside any transaction and the database under the execution's lock, so a
+ * remote call never holds a row and a racing cancel is seen. The submitter is charged in the same
+ * transaction, taking the execution's lock before their budget's.
  */
 @ApplicationScoped
 class Settlement(
@@ -100,9 +99,8 @@ class Settlement(
     fun requeue(executionId: UUID) = close(executionId, LOST, Attempt.SAME)
 
     /**
-     * Runs again the units [executionId] was the last attempt for and that ended failed, shaped the way
-     * automatic retry shapes them but past its attempt cap, which is the reason an administrator
-     * retries at all. Runs in the caller's transaction.
+     * Runs again the units [executionId] was the last attempt for and that ended failed, shaped as
+     * automatic retry shapes them but past its attempt cap. Runs in the caller's transaction.
      */
     fun resubmit(executionId: UUID): List<Execution> {
         val execution = Execution.lockByPublicId(executionId) ?: throw notFound("Execution")
@@ -127,10 +125,7 @@ class Settlement(
         }
     }
 
-    /**
-     * Closes [execution], which is still queued and was never handed out, as cancelled. Runs in the
-     * caller's transaction, which already holds what it needs.
-     */
+    /** Closes [execution], still queued and never handed out, as cancelled, in the caller's transaction. */
     fun withdraw(execution: Execution) {
         val now = Instant.now()
         execution.settle(ExecutionState.CANCELLED, WITHDRAWN, now)
@@ -217,8 +212,7 @@ class Settlement(
             when (verdict) {
                 is UnitVerdict.Succeeded -> {
                     unit.state = UnitState.SUCCEEDED
-                    // A run that finished got through all of its work, whatever the last report to
-                    // reach the server said: the denominator is planned rather than measured.
+                    // A finished run did all its work, whatever the last report said.
                     unit.completedTasks = unit.totalTasks
                 }
                 is UnitVerdict.Failed ->
@@ -301,10 +295,8 @@ private fun stateFor(reason: ExitReason): ExecutionState =
     }
 
 /**
- * How one unit ended: from its marker where its launcher certified one, else from the process.
- *
- * A process that ended normally without certifying a unit did not finish that unit, so its silence is
- * an unexplained failure rather than a success.
+ * How one unit ended: from its marker where its launcher certified one, else from the process. A
+ * process that ended normally without certifying a unit did not finish it.
  */
 private fun verdictOf(
     marker: UnitOutcome?,

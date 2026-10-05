@@ -35,12 +35,10 @@ import java.util.UUID
  * Turns an admitted bag of work into a running process on one execution platform, and reports what
  * became of it.
  *
- * An execution is addressed by the identifier the server minted for it, so a restarted server can
- * cancel and reconcile work it did not start without having stored a platform's own name for it.
- * Terminal facts come from the platform, never from the launcher.
+ * An execution is addressed by the id the server minted for it, so a restarted server can cancel and
+ * reconcile work it did not start. Terminal facts come from the platform, never from the launcher.
  *
- * [slot], [admits] and [capacity] answer from state already held and never make a remote call: they
- * are asked inside transactions.
+ * [slot], [admits] and [capacity] never make a remote call: they are asked inside transactions.
  */
 interface Dispatcher : AutoCloseable {
     /** Identifies this dispatcher in the database and in metrics. Stable across restarts. */
@@ -69,27 +67,22 @@ interface Dispatcher : AutoCloseable {
     fun observe(listener: (PlatformEvent) -> Unit)
 
     /**
-     * Hands an execution to the platform.
-     *
-     * Idempotent per execution: an id the platform already holds is [Launch.Accepted] again. Never
-     * waits on moving data; a transfer that fails after acceptance arrives as a [PlatformEvent.Finished].
+     * Hands an execution to the platform. Idempotent: an id the platform already holds is
+     * [Launch.Accepted] again. Never waits on moving data; a transfer that fails after acceptance
+     * arrives as a [PlatformEvent.Finished].
      */
     fun launch(request: LaunchRequest): Launch
 
     /**
-     * Stops the execution behind [executionId]. An id the platform never held is ignored.
-     *
-     * The platform reports it ending in its own time; the caller settles on that rather than on this
-     * returning.
+     * Stops the execution behind [executionId], ignoring an id the platform never held. The ending is
+     * reported as a [PlatformEvent.Finished] in the platform's own time.
      */
     fun cancel(executionId: UUID)
 
     /**
      * What the platform knows of each of [executionIds], asked once at startup about everything this
-     * server believed was live.
-     *
-     * Every id passed is in the answer; one that is missing is read as [PlatformVerdict.Unknown]. An
-     * id answered [PlatformVerdict.Waiting] or [PlatformVerdict.Running] is watched from then on.
+     * server believed was live. A missing id reads as [PlatformVerdict.Unknown]; one answered
+     * [PlatformVerdict.Waiting] or [PlatformVerdict.Running] is watched from then on.
      */
     fun reconcile(executionIds: List<UUID>): Map<UUID, PlatformVerdict>
 }
@@ -123,11 +116,7 @@ data class CapacitySnapshot(
     val allocatedMemoryMb: Double,
 )
 
-/**
- * One bag, ready to run.
- *
- * @property manifestUrl Where the launcher reads its manifest, which is all the environment it gets.
- */
+/** One bag, ready to run. [manifestUrl] is all the environment the launcher gets. */
 data class LaunchRequest(
     val executionId: UUID,
     val manifestUrl: String,
@@ -177,7 +166,7 @@ sealed interface PlatformVerdict {
 /**
  * How an execution ended, as the platform saw it.
  *
- * @property exitCode What the process exited with, or -1 where the platform recorded none.
+ * @property exitCode What the process exited with, or [NO_EXIT_CODE] where the platform recorded none.
  * @property logTail The end of what the process wrote, or the empty string where there is none.
  */
 data class ExitOutcome(
@@ -236,8 +225,25 @@ enum class ExitReason {
 /** How much of a process's output an outcome carries. */
 const val LOG_TAIL_BYTES = 256 * 1024
 
-/** What a JVM run with `-XX:+ExitOnOutOfMemoryError` exits with. */
+/** What [ExitOutcome.exitCode] holds where the platform recorded no exit code. */
+const val NO_EXIT_CODE = -1
+
+/** Every launcher JVM runs with this, so running out of heap ends it with [JVM_OUT_OF_MEMORY]. */
+const val EXIT_ON_OUT_OF_MEMORY = "-XX:+ExitOnOutOfMemoryError"
+
+/** What a JVM run with [EXIT_ON_OUT_OF_MEMORY] exits with when its heap runs out. */
 const val JVM_OUT_OF_MEMORY = 3
+
+/** What a process ended by SIGKILL exits with, as the kernel's out-of-memory killer does. */
+const val EXIT_KILLED = 137
+
+/** What a process ended by SIGTERM exits with. */
+const val EXIT_TERMINATED = 143
+
+/** What every platform names an execution's job, after its id. */
+const val JOB_NAME_PREFIX = "opendc-"
+
+fun jobName(executionId: UUID): String = "$JOB_NAME_PREFIX$executionId"
 
 /** Why a launcher that exited by itself with [code] ended. */
 fun launcherExitReason(code: Int): ExitReason =
@@ -245,7 +251,6 @@ fun launcherExitReason(code: Int): ExitReason =
         EXIT_OK, EXIT_UNITS_FAILED -> ExitReason.OK
         EXIT_INVALID_SPEC -> ExitReason.INVALID_SPEC
         EXIT_SIMULATION_ERROR -> ExitReason.SIMULATION_ERROR
-        EXIT_TRANSFER_FAILED -> ExitReason.UNKNOWN
         JVM_OUT_OF_MEMORY -> ExitReason.OOM
         else -> ExitReason.UNKNOWN
     }

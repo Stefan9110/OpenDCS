@@ -1,8 +1,8 @@
 "use client"
 
 import { AXIS_HELP } from "@/components/experiment/axisLabels"
-import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
 import { QuantityInput } from "@/components/topology/inspector/QuantityInput"
+import { FieldLabel } from "@/components/util/FieldLabel"
 import {
     type CheckpointSpec,
     DEFAULT_CHECKPOINT_DURATION,
@@ -14,15 +14,10 @@ import { ActionIcon, Button, Checkbox, Divider, Group, NumberInput, Stack } from
 import { IconPlus, IconTrash } from "@tabler/icons-react"
 import { Fragment } from "react"
 
-// A multiplier below this shrinks the interval tenfold at every checkpoint, and the simulator
-// rejects zero outright, so the field stops short of a value that could only be a mistake.
+// Lower only shrinks the interval tenfold per checkpoint, and the simulator rejects zero.
 const MIN_SCALING = 0.1
 
-/**
- * The checkpoint axis, whose entries are written out rather than picked from a catalog. Not
- * checkpointing at all is one of the values it can take, and the model spells that as a null entry,
- * so it is a checkbox here rather than a configuration of its own: it has no settings to show.
- */
+// The model spells "no checkpointing" as a null entry, which has no settings, so it is a checkbox.
 export function CheckpointAxis({
     entries,
     onChange,
@@ -30,8 +25,7 @@ export function CheckpointAxis({
     const configured = entries.filter((entry) => entry !== null)
     const includesNone = entries.length > configured.length
 
-    // Null first, so adding or dropping a configuration leaves the other entries where they were
-    // and the scenarios they expand to keep their index.
+    // Null first, so adding or dropping a configuration keeps the other scenarios' indices.
     const write = (none: boolean, rest: CheckpointSpec[]) => onChange([...(none ? [null] : []), ...rest])
 
     const setField = (position: number, change: Partial<CheckpointSpec>) =>
@@ -46,8 +40,7 @@ export function CheckpointAxis({
                 label={<FieldLabel label="Include no checkpointing" help={AXIS_HELP.checkpointModels} />}
                 size="sm"
                 checked={includesNone}
-                // Unchecking the last thing in the axis would leave an experiment that expands to no
-                // scenarios at all, so it holds until a configuration exists to fall back on.
+                // The last entry cannot be removed: an empty axis expands to no scenarios.
                 disabled={includesNone && configured.length === 0}
                 onChange={(event) => write(event.currentTarget.checked, configured)}
             />

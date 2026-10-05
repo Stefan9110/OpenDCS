@@ -8,7 +8,6 @@ import {
 import {
     type ExperimentState,
     type ScenarioExecutionState,
-    aggregateProgress,
     foldExperimentState,
     isTerminalExperiment,
     progressFraction,
@@ -142,18 +141,8 @@ describe("foldExperimentState", () => {
 })
 
 describe("progress", () => {
-    it("sums task counts across scenarios", () => {
-        expect(
-            aggregateProgress([
-                { completedTasks: 3, totalTasks: 10 },
-                { completedTasks: 4, totalTasks: 10 },
-            ]),
-        ).toEqual({ completedTasks: 7, totalTasks: 20 })
-    })
-
     it("reports no progress rather than dividing by zero when no task total is known yet", () => {
         expect(progressFraction({ completedTasks: 0, totalTasks: 0 })).toBe(0)
-        expect(progressFraction(aggregateProgress([]))).toBe(0)
     })
 
     it("clamps a runner that over reports completed tasks", () => {

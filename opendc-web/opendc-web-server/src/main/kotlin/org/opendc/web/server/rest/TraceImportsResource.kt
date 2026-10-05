@@ -84,9 +84,8 @@ data class TraceImportWire(
 )
 
 /**
- * Traces fetched from a URL rather than sent from a browser, for files that already live somewhere
- * public. The server does the fetching in the background; the trace joins its owner's library once
- * every table has arrived and passed the checks an upload gets.
+ * Traces the server fetches from public URLs in the background. The trace joins its owner's library
+ * once every table has arrived and passed the checks an upload gets.
  */
 @Path("traces/imports")
 @Produces(MediaType.APPLICATION_JSON)
@@ -119,10 +118,7 @@ class TraceImportsResource(
         return Response.status(202).entity(import.toWire()).build()
     }
 
-    /**
-     * Clears an import from the list. A failed one takes its unfinished trace with it, which frees the
-     * name; a succeeded one leaves its trace in the library.
-     */
+    /** Clears an import from the list. A failed one takes its unfinished trace with it, freeing the name. */
     @DELETE
     @Path("{id}")
     @Transactional

@@ -42,11 +42,8 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * A project-scoped document row. Both concrete documents store their canonical body as jsonb next
- * to a content hash; the columns for those differ per subclass.
- *
- * [id] never leaves the server: it keeps foreign keys narrow, while [publicId] is what the API and
- * its URLs carry, so identifiers cannot be walked or counted from outside.
+ * A project-scoped document row, storing its canonical body as jsonb next to a content hash. [id]
+ * never leaves the server; the API carries [publicId], so identifiers cannot be walked from outside.
  */
 @MappedSuperclass
 abstract class SpecDocument : PanacheEntityBase {
@@ -164,8 +161,6 @@ class Experiment : SpecDocument() {
             ORDER BY x.createdAt DESC, x.id DESC
         """
 
-        fun findByProject(projectId: Long): List<Experiment> = list("project.id = ?1 order by createdAt", projectId)
-
         /** A project's experiments, newest first. */
         fun ofProject(projectId: Long): PanacheQuery<Experiment> = find(OF_PROJECT, projectId)
 
@@ -174,10 +169,7 @@ class Experiment : SpecDocument() {
 
         fun findByPublicId(publicId: UUID): Experiment? = find("publicId = ?1", publicId).firstResult()
 
-        /**
-         * The experiments of one project, by id only. Read without loading them, because a caller
-         * about to delete the project cannot flush rows that still point at it.
-         */
+        /** The experiments of one project, by id only, so deleting the project flushes no rows that point at it. */
         fun publicIdsOfProject(projectId: Long): List<UUID> =
             getEntityManager()
                 .createQuery("SELECT x.publicId FROM Experiment x WHERE x.project.id = ?1", UUID::class.java)

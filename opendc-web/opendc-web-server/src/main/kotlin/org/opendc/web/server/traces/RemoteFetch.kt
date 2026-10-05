@@ -61,9 +61,8 @@ fun checkShape(uri: URI): SourceCheck =
     }
 
 /**
- * Whether [uri], whose host resolved to [addresses], may be fetched. Unless a deployment allows
- * private hosts, every address has to be a public one: a URL is a request this server makes on a
- * user's behalf, and inside a cluster it would otherwise reach whatever the server can.
+ * Whether [uri], whose host resolved to [addresses], may be fetched. Unless private hosts are
+ * allowed, every address has to be public, so a user's URL cannot reach inside the cluster.
  */
 fun checkSource(
     uri: URI,
@@ -120,10 +119,8 @@ private fun isPrivate(address: InetAddress): Boolean =
  * giving up on anything larger than [maxBytes], quiet for longer than [idleTimeout], or still
  * arriving after [deadline].
  *
- * Each hop's host is resolved and checked before the request, and the connection resolves it again,
- * so a name whose answer changes in between (DNS rebinding) is not caught here. Closing that would
- * mean connecting to the checked address itself, which a TLS connection cannot do without giving up
- * the check of the host's certificate.
+ * The connection resolves each host again after the check, so DNS rebinding is not caught here;
+ * connecting to the checked address instead would break TLS certificate checks.
  */
 class RemoteFetch(
     private val allowPrivateHosts: Boolean,
@@ -146,8 +143,7 @@ class RemoteFetch(
             try {
                 connection.instanceFollowRedirects = false
                 connection.connectTimeout = CONNECT_TIMEOUT.toMillis().toInt()
-                // Bounds every blocking read, so a server that answers and then goes quiet cannot
-                // hold a worker past the deadline.
+                // Bounds each blocking read, so a quiet host cannot hold a worker past the deadline.
                 connection.readTimeout = idleTimeout.toMillis().toInt()
                 when (val status = connection.responseCode) {
                     in REDIRECTS -> {

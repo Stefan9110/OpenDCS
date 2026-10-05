@@ -50,8 +50,7 @@ export function MetricChart({
     const span = Math.max(spanMs, 1)
     const axis = timeAxis(span)
     const entries: LegendEntry[] = keys.map((name, position) => ({ name, color: seriesColor(position, scheme) }))
-    // Isolating by colour rather than by hiding the line keeps every run in the axis, so the scale
-    // stays where it was and only the drawing changes as the pointer moves along the legend.
+    // Isolated by colour, not by removing lines, so the scale holds still while the pointer moves.
     const series = entries.map((entry) => ({
         name: entry.name,
         color: isolated === undefined || isolated === entry.name ? entry.color : HIDDEN,
@@ -70,13 +69,10 @@ export function MetricChart({
                 connectNulls={false}
                 gridAxis="xy"
                 tickLine="none"
-                // Mantine's own legend dims the runs a reader is not pointing at rather than taking
-                // them off the chart, which a sweep of a dozen runs is not helped by.
+                // Mantine's legend only dims the other runs, which does not help a sweep of a dozen.
                 withLegend={false}
                 valueFormatter={(value: number) => formatScaled(value, definition.sample)}
-                // A time axis has to be read as time: left as categories, the points sit an equal
-                // distance apart whatever the gap between them, and the marks fall wherever a point
-                // happens to be rather than on a round number of weeks.
+                // Numeric, not categorical, so points sit at their real time and ticks on round spans.
                 xAxisProps={{
                     type: "number",
                     domain: [0, span],

@@ -25,13 +25,7 @@ package org.opendc.web.launcher
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/**
- * Where a launcher says how far it has got.
- *
- * Telemetry is never authoritative: what an execution finally did is the platform's account of the
- * process, not anything sent here. A manifest that names nowhere still simulates and still writes
- * its output, which is what makes one runnable by hand.
- */
+/** Where a launcher says how far it has got. Never authoritative: the platform's account of the process is. */
 @Serializable
 sealed interface TelemetryTarget {
     @Serializable
@@ -39,10 +33,8 @@ sealed interface TelemetryTarget {
     data object None : TelemetryTarget
 
     /**
-     * @property url The full address to post to, which has to be reachable from wherever the
-     *           launcher runs rather than from the server that wrote it.
-     * @property token Bearer credential for this execution and no other. It can do nothing but write
-     *           progress into the work it was handed.
+     * @property url Has to be reachable from wherever the launcher runs, not from the server.
+     * @property token Bearer credential that can only write progress into this one execution.
      */
     @Serializable
     @SerialName("endpoint")
@@ -53,11 +45,8 @@ sealed interface TelemetryTarget {
 }
 
 /**
- * Everything the launcher currently knows about its runs.
- *
- * Each post carries the whole picture rather than what changed since the last one. Posts are
- * fire-and-forget, so a report that never arrives has to be corrected by the next one rather than
- * acknowledged, and the launcher is holding the capped series anyway.
+ * Everything the launcher currently knows about its runs. Each post carries the whole picture, since
+ * posts are fire-and-forget and a lost one has to be corrected by the next.
  */
 @Serializable
 data class TelemetryReport(
@@ -67,10 +56,8 @@ data class TelemetryReport(
 /**
  * How one `(scenario, seed)` run is getting on.
  *
- * How much there is to get through is not reported: the platform works that out from the document
- * when the experiment is submitted, so a bar can be drawn before any launcher exists to report to.
- * Sending it from here as well would move the denominator every time a run started, which is a bar
- * running backwards.
+ * The total task count is not reported: the server fixes it at submit, so the denominator of a
+ * progress bar never moves.
  */
 @Serializable
 data class RunTelemetry(

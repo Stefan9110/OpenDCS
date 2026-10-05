@@ -19,10 +19,7 @@ import {
     scenarioCoordinates,
 } from "@/lib/experiment/spec"
 
-// Validated against the light (#ffffff) and dark (#242424) chart surfaces: every slot clears the
-// lightness, chroma, colour-vision and normal-vision gates. Overlaid lines cross wherever they like,
-// so every pair has to hold apart rather than only neighbouring ones, and three is the cap that
-// ordering supports -- so the chart overlays at most three runs at a time.
+// Every pair holds apart, colour-blind readers included, on the #ffffff and #242424 surfaces.
 const SERIES_COLORS: Record<ColorScheme, string[]> = {
     light: ["#2a78d6", "#eb6834", "#1baf7a"],
     dark: ["#3987e5", "#d95926", "#199e70"],
@@ -48,9 +45,9 @@ export interface RunLabels {
 
 const SHORT_LABEL_AXES = 2
 
-// A run's short name has to tell it apart from the runs it is shown beside, so the axes it names are
-// the ones that actually differ across that set. Naming a sweep-wide axis that happens to be constant
-// within the set would label three lines identically.
+const LABEL_SEPARATOR = " \xb7 "
+
+// Short names use only the axes that differ within the shown set, or overlaid lines share a label.
 export function describeRuns(spec: ExperimentSpec, scenarioIndices: number[]): RunLabels[] {
     const axes = experimentAxes(spec)
     const varying = [...AXIS_ORDER].reverse().filter((key) => axes[key].length > 1)
@@ -60,14 +57,14 @@ export function describeRuns(spec: ExperimentSpec, scenarioIndices: number[]): R
     return scenarioIndices.map((scenarioIndex, position) => {
         const at = coordinates[position]
         const entryAt = (key: AxisKey) => (at === undefined ? "" : (axisEntryLabels(axes, key)[at[key]] ?? ""))
-        const naming = distinguishing.slice(0, SHORT_LABEL_AXES).map(entryAt).join(" · ")
+        const naming = distinguishing.slice(0, SHORT_LABEL_AXES).map(entryAt).join(LABEL_SEPARATOR)
 
         return {
             short: naming === "" ? `#${scenarioIndex}` : `#${scenarioIndex} ${naming}`,
             full:
                 varying.length === 0
                     ? "The only scenario in this experiment"
-                    : varying.map((key) => `${AXIS_LABELS[key]}: ${entryAt(key)}`).join(" · "),
+                    : varying.map((key) => `${AXIS_LABELS[key]}: ${entryAt(key)}`).join(LABEL_SEPARATOR),
         }
     })
 }
@@ -76,8 +73,7 @@ export function metricOptions(results: ExperimentResults): Array<{ value: string
     return reportedMetrics(results).map((metric) => ({ value: metric.id, label: metric.label }))
 }
 
-// The server already reduces a series to a chart-sized bucket count; this is the client's own
-// guard so a longer trace can never put more points on screen than there are pixels for them.
+// The client's own cap on top of the server's bucketing.
 const MAX_CHART_POINTS = 600
 
 export function timeRows(
@@ -121,8 +117,6 @@ export function comparisonRows(scenarios: ScenarioResults[], metric: MetricId): 
     })
 }
 
-const numbers = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 })
-
 export function formatScaled(value: number, scale: MetricScale): string {
     const shown = new Intl.NumberFormat("en-GB", {
         minimumFractionDigits: scale.decimals,
@@ -141,8 +135,7 @@ const HOUR_MS = 3_600_000
 const DAY_MS = 86_400_000
 const WEEK_MS = 7 * DAY_MS
 
-// Spans a reader recognises. A tick lands on an exact multiple of one of these, which is what lets
-// every label be a whole number of its own unit.
+// Ticks land on exact multiples of one of these, so every label is a whole number of its unit.
 const TICK_STEPS = [
     MINUTE_MS,
     5 * MINUTE_MS,
@@ -171,15 +164,7 @@ export interface TimeAxis {
     format: (milliseconds: number) => string
 }
 
-/**
- * Where the time axis is marked, and how those marks read.
- *
- * The two are chosen together because they have to agree. Marks left where they fall and then
- * labelled in whole weeks put the same week on the axis twice and leave the one between them off it,
- * which reads as a chart that has lost track of its own time. Here a step is picked from spans a
- * reader recognises, the marks land on exact multiples of it, and the unit is the one the step is a
- * whole number of -- so no two labels can collide and none can be skipped.
- */
+// Ticks and their unit are chosen together, so no two labels collide and none is skipped.
 export function timeAxis(spanMs: number): TimeAxis {
     const widest = TICK_STEPS[TICK_STEPS.length - 1] ?? DAY_MS
     const step = TICK_STEPS.find((candidate) => spanMs / candidate <= TARGET_TICKS) ?? widest
@@ -199,12 +184,11 @@ function labelEvery(step: number): (milliseconds: number) => string {
 
 function clockOf(milliseconds: number): string {
     const hours = Math.floor(milliseconds / HOUR_MS)
-    const minutes = Math.floor((milliseconds % HOUR_MS) / 60_000)
+    const minutes = Math.floor((milliseconds % HOUR_MS) / MINUTE_MS)
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`
 }
 
-// The tooltip header has to say where in the run the reader is standing. A bare "12:00" is
-// ambiguous on a trace that covers a year, so the day is named once the run is longer than one.
+// A bare clock is ambiguous on a long trace, so the day is named once the run spans more than one.
 export function formatSimulatedInstant(milliseconds: number, spanMs: number): string {
     const clock = clockOf(milliseconds % DAY_MS)
     return spanMs < DAY_MS ? clock : `Day ${Math.floor(milliseconds / DAY_MS) + 1}, ${clock}`
@@ -213,7 +197,7 @@ export function formatSimulatedInstant(milliseconds: number, spanMs: number): st
 export function formatSimulatedDuration(milliseconds: number): string {
     if (milliseconds >= DAY_MS) return plural(Math.round(milliseconds / DAY_MS), "day")
     if (milliseconds >= HOUR_MS) return plural(Math.round(milliseconds / HOUR_MS), "hour")
-    return plural(Math.max(1, Math.round(milliseconds / 60_000)), "minute")
+    return plural(Math.max(1, Math.round(milliseconds / MINUTE_MS)), "minute")
 }
 
 function plural(count: number, unit: string): string {
@@ -224,10 +208,6 @@ function plural(count: number, unit: string): string {
 export function formatInterval(milliseconds: number): string {
     const spelled = formatSimulatedDuration(milliseconds)
     return spelled.startsWith("1 ") ? spelled.slice(2) : spelled
-}
-
-export function formatPlain(value: number): string {
-    return numbers.format(value)
 }
 
 export function resultsCsv(results: ExperimentResults): string {

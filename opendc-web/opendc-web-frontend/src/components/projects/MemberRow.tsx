@@ -11,7 +11,8 @@ export const ROLE_OPTIONS: { value: ProjectRole; label: string }[] = [
     { value: "viewer", label: "Viewer" },
 ]
 
-/** One member, whose role an owner may change and whom an owner may remove. */
+export const ROLE_SELECT_WIDTH = 110
+
 export function MemberRow({
     member,
     manageable,
@@ -37,7 +38,7 @@ export function MemberRow({
                 <Group gap="xs" wrap="nowrap">
                     <Select
                         size="xs"
-                        w={110}
+                        w={ROLE_SELECT_WIDTH}
                         data={ROLE_OPTIONS}
                         value={member.role}
                         allowDeselect={false}

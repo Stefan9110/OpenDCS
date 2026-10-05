@@ -5,10 +5,7 @@ import { suggestHandle } from "@/lib/account/handle"
 import { useSessionControls } from "@/lib/auth/session"
 import { Center, Paper, Stack, Text, Title } from "@mantine/core"
 
-/**
- * A first sign-in chooses the handle other people will see before anything else, since everything it
- * could share would carry it. Offered a handle made from the sign-in nickname; it cannot be skipped.
- */
+/** A first sign-in must choose a handle before anything else, since everything it shares carries it. */
 export function OnboardingPage() {
     const controls = useSessionControls()
     const hint = controls.type === "auth0" ? controls.hint : { nickname: "", name: "" }

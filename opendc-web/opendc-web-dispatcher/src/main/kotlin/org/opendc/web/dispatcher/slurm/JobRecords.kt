@@ -22,11 +22,14 @@
 
 package org.opendc.web.dispatcher.slurm
 
+import org.opendc.web.dispatcher.EXIT_KILLED
 import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
+import org.opendc.web.dispatcher.NO_EXIT_CODE
 import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.dispatcher.launcherExitMessage
 import org.opendc.web.dispatcher.launcherExitReason
+import org.opendc.web.launcher.BYTES_PER_MB
 import org.opendc.web.launcher.PeakMemory
 import org.opendc.web.launcher.peakMemoryOf
 import java.time.Instant
@@ -44,12 +47,6 @@ internal object Record {
 
 /** A job is taken to have run into its limit within this much of it, since SLURM signals a little early. */
 private const val LIMIT_SLACK_SECONDS = 60
-
-private const val KILLED = 137
-
-private const val NO_CODE = -1
-
-private const val MEBIBYTE = 1024.0 * 1024.0
 
 /** The time limit a job was submitted with, and whether that was the most the cluster allows. */
 internal data class Limits(
@@ -168,7 +165,7 @@ internal fun ending(
     val end = if (exit is WrapperExit.Recorded) exit.endedAt else records.lastOutput
     val span = spanOf(records.start, end)
     val peak = peakOf(exit, records.launcherPeak)
-    val code = if (exit is WrapperExit.Recorded) exit.code else NO_CODE
+    val code = if (exit is WrapperExit.Recorded) exit.code else NO_EXIT_CODE
     val ended = { reason: ExitReason, message: String -> JobEnding.Ended(ExitOutcome(reason, code, message, span, peak, logTail)) }
     val limitReached = limitReached(records.start, end, records.limits)
     val outOfTime =
@@ -188,7 +185,7 @@ internal fun ending(
         return when {
             kills is OomKills.Counted && kills.count > 0 && exit.code != 0 -> ended(ExitReason.OOM, "the kernel ended it for memory")
             records.terminated -> stoppedByCluster("signalled by the cluster before its time limit")
-            exit.code == KILLED ->
+            exit.code == EXIT_KILLED ->
                 when (kills) {
                     OomKills.Unread -> ended(ExitReason.OOM, "killed, most likely for memory (no cgroup reading)")
                     is OomKills.Counted -> stoppedByCluster("killed by the cluster")
@@ -209,7 +206,7 @@ private fun wrapperExit(fields: Map<String, String>): WrapperExit {
         code = code,
         endedAt = ended,
         oomKills = fields["oom_kill"]?.toLongOrNull()?.let { OomKills.Counted(it) } ?: OomKills.Unread,
-        residentPeak = fields["memory_peak"]?.toLongOrNull()?.let { ResidentPeak.Read(it / MEBIBYTE) } ?: ResidentPeak.Unread,
+        residentPeak = fields["memory_peak"]?.toLongOrNull()?.let { ResidentPeak.Read(it / BYTES_PER_MB) } ?: ResidentPeak.Unread,
     )
 }
 

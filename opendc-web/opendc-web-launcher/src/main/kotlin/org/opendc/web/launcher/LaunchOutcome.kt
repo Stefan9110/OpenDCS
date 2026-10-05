@@ -26,12 +26,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.opendc.sdk.model.serialization.SdkJson
 
-/**
- * The codes the launcher chooses to exit with.
- *
- * They start at twenty to stay clear of the codes it does not choose: 1 for an uncaught error, 3
- * under `-XX:+ExitOnOutOfMemoryError`, and 128 plus the signal when a process is killed.
- */
+// The codes the launcher chooses start at twenty to stay clear of those it does not choose: 1 for an
+// uncaught error, 3 under -XX:+ExitOnOutOfMemoryError, and 128 plus the signal when it is killed.
+
 const val EXIT_OK = 0
 
 /** The manifest was unreadable or unsafe. */
@@ -53,11 +50,11 @@ class LaunchFailure(
     cause: Throwable? = null,
 ) : Exception(message, cause)
 
-/**
- * What the launcher writes into the directory it was started in as it exits, for the platform to
- * read back: the process's own account of its peak memory.
- */
+/** Where the launcher leaves its [PeakMemory], in the directory it was started in, as it exits. */
 const val PEAK_MEMORY_FILE = "peak-memory.json"
+
+/** Memory figures, such as those in [PeakMemory], are counted in mebibytes. */
+const val BYTES_PER_MB = 1024.0 * 1024.0
 
 /** How a log line names the unit it was written under. */
 val UNIT_TAG = Regex("""\[scenario=(\d+) seed=(-?\d+)]""")
@@ -97,8 +94,8 @@ enum class UnitFailure {
 sealed interface PeakMemory {
     /**
      * @property residentMb The most of the machine's memory the process held at once.
-     * @property liveHeapMb The most heap its objects occupied at once, which is what the simulation
-     *           itself needed and what an estimate of a unit is compared against.
+     * @property liveHeapMb The most heap its objects occupied at once, which is what an estimate of a
+     *           unit is compared against.
      */
     @Serializable
     @SerialName("measured")

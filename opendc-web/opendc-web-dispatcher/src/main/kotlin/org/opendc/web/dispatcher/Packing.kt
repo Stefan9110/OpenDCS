@@ -69,10 +69,10 @@ data class PlannedBag(
  * What a bag is shaped against, and how far a failing one may be escalated before its work is given
  * up on.
  *
- * @property jvmBaselineMb The launcher's own footprint, paid once however many units share it.
+ * @property jvmBaselineMb The launcher JVM's own footprint, paid once however many units share it.
  * @property offHeapPerUnitMb What each unit holds outside the heap, such as parquet buffers.
  * @property heapHeadroom How much heap a unit is given per megabyte of its estimated peak.
- * @property startupSeconds What a launcher costs before its first run begins, likewise paid once.
+ * @property startupSeconds Starting a launcher and fetching its inputs, likewise paid once.
  * @property timeSafetyFactor How far past its estimate the work in a bag may run before it is killed.
  * @property maxAttempts Including the first, so two means one retry.
  * @property growthFactor What a unit's memory or a bag's time is multiplied by when it was not enough.

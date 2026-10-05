@@ -1,4 +1,4 @@
-import { canRedo, canUndo, initialHistory, record, redo, replace, undo } from "@/components/topology/history"
+import { canRedo, canUndo, initialHistory, record, redo, undo } from "@/components/topology/history"
 import {
     type BuilderView,
     WHOLE_TOPOLOGY,
@@ -127,12 +127,6 @@ describe("history", () => {
         expect(canRedo(branched)).toBe(false)
         expect(branched.present).toBe("d")
         expect(undo(branched).present).toBe("b")
-    })
-
-    it("replaces the present without creating an undo step, for continuous drags", () => {
-        const dragging = replace(record(start, "b"), "b-moved")
-        expect(dragging.present).toBe("b-moved")
-        expect(undo(dragging).present).toBe("a")
     })
 
     it("forgets the oldest edits rather than growing without bound", () => {

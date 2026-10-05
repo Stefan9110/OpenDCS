@@ -26,6 +26,7 @@ import io.quarkus.security.ForbiddenException
 import io.quarkus.security.UnauthorizedException
 import jakarta.validation.ConstraintViolationException
 import jakarta.ws.rs.WebApplicationException
+import jakarta.ws.rs.core.HttpHeaders
 import jakarta.ws.rs.core.MediaType
 import jakarta.ws.rs.core.Response
 import kotlinx.serialization.Serializable
@@ -33,6 +34,7 @@ import kotlinx.serialization.SerializationException
 import org.jboss.resteasy.reactive.RestResponse
 import org.jboss.resteasy.reactive.server.ServerExceptionMapper
 import org.opendc.sdk.model.validation.ValidationIssue
+import org.opendc.web.server.auth.BEARER_SCHEME
 import java.util.UUID
 
 /**
@@ -64,9 +66,8 @@ fun invalidDocument(
 ): InvalidDocumentException = InvalidDocumentException(ApiProblem(status = 400, title = title, issues = issues))
 
 /**
- * Reads a public identifier from a request. Something that is not a well-formed id cannot name
- * anything, so it is a miss rather than a server error, and it reports exactly what a real id
- * belonging to someone else reports: callers learn nothing from the difference.
+ * Reads a public identifier from a request. A malformed id is a 404, exactly like a real id belonging
+ * to someone else, so callers learn nothing from the difference.
  */
 fun publicId(
     raw: String,
@@ -78,9 +79,10 @@ fun publicId(
         throw notFound(what)
     }
 
-// Every name column in the schema is varchar(255). Without a cap here an over-long name reaches
-// the database and comes back as a 500, when it is the caller's input that was wrong.
+/** Every name column in the schema is varchar(255); a longer name is the caller's error, not a 500. */
 private const val NAME_LENGTH_CAP = 255
+
+private const val SIGN_IN_TITLE = "Sign in to continue"
 
 /** Reads a name a caller chose, trimmed, or reports what is wrong with it. */
 fun validName(
@@ -105,16 +107,12 @@ fun notAuthenticated(): WebApplicationException =
     WebApplicationException(
         Response
             .status(401)
-            .entity(ApiProblem(status = 401, title = "Sign in to continue"))
+            .entity(ApiProblem(status = 401, title = SIGN_IN_TITLE))
             .type(MediaType.APPLICATION_JSON)
             .build(),
     )
 
-/**
- * Refuses a caller who can already see the thing they are acting on. Hiding it behind a 404 the way
- * an unrelated project is hidden would be theatre: they just read it, so the only thing left to
- * report is that their role does not stretch this far.
- */
+/** Refuses a caller who can already see the thing they are acting on, so a 404 would hide nothing. */
 fun forbidden(title: String): WebApplicationException =
     WebApplicationException(
         Response.status(403).entity(ApiProblem(status = 403, title = title)).type(MediaType.APPLICATION_JSON).build(),
@@ -138,14 +136,13 @@ fun conflict(
     )
 
 class ApiExceptionMappers {
-    // The built-in security mappers answer with an empty body; these win on priority and answer in
-    // the envelope every other refusal uses. A missing credential is told to sign in.
+    // The built-in security mappers answer with an empty body; these win on priority.
     @ServerExceptionMapper(UnauthorizedException::class)
     fun unauthorized(): RestResponse<ApiProblem> =
         RestResponse.ResponseBuilder
             .create<ApiProblem>(401)
-            .entity(ApiProblem(status = 401, title = "Sign in to continue"))
-            .header("WWW-Authenticate", "Bearer")
+            .entity(ApiProblem(status = 401, title = SIGN_IN_TITLE))
+            .header(HttpHeaders.WWW_AUTHENTICATE, BEARER_SCHEME)
             .type(MediaType.APPLICATION_JSON)
             .build()
 
@@ -155,8 +152,7 @@ class ApiExceptionMappers {
     @ServerExceptionMapper
     fun invalidDocument(exception: InvalidDocumentException): RestResponse<ApiProblem> = problemResponse(exception.problem)
 
-    // SerializationException extends IllegalArgumentException; map the specific type only, so
-    // genuine server bugs keep surfacing as 500s.
+    // SerializationException extends IllegalArgumentException; mapping only it keeps real bugs 500s.
     @ServerExceptionMapper
     fun malformedBody(exception: SerializationException): RestResponse<ApiProblem> =
         problemResponse(

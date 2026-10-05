@@ -1,7 +1,7 @@
 "use client"
 
-import { FieldLabel } from "@/components/topology/inspector/FieldLabel"
 import { TRACE_NAME_HELP, traceNameProblem } from "@/components/traces/traceName"
+import { FieldLabel } from "@/components/util/FieldLabel"
 import { notifyProblem } from "@/components/util/feedback"
 import { useStartImport, useTraceKinds } from "@/lib/api/traces"
 import type { TraceKind } from "@/lib/api/types"

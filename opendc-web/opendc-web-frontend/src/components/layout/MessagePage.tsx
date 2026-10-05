@@ -5,12 +5,7 @@ import { IconArrowLeft } from "@tabler/icons-react"
 import Link from "next/link"
 import type { ReactNode } from "react"
 
-/**
- * A dead end that offers a way out. Used whenever a page cannot render at all: the thing is gone,
- * the link is malformed, or the API is unreachable. Such a failure is never an alert box floating
- * where content should be, because there is no content to annotate and nothing for the reader to do
- * with a red panel.
- */
+/** A whole-page dead end with a way out, for when a page cannot render at all. */
 export function MessagePage({
     title,
     message,

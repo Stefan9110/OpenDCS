@@ -239,7 +239,7 @@ data class ExperimentSummary(
 )
 
 @Serializable
-data class ExitInfo(
+data class ScenarioExit(
     val exitCode: Int,
     val reason: ExitReasonWire,
     val message: String? = null,
@@ -252,7 +252,7 @@ data class ScenarioStatus(
     val completedTasks: Int,
     val totalTasks: Int,
     val attempt: Int,
-    val exitInfo: ExitInfo? = null,
+    val exitInfo: ScenarioExit? = null,
 )
 
 @Serializable
@@ -284,11 +284,12 @@ data class PreviewRequest(
     val spec: JsonElement,
 )
 
-// Far more than a chart has pixels and no more than the launcher itself holds, so a live series
-// passes through unfolded and a month of parquet does not arrive a point at a time.
+// More than a chart has pixels and no less than a launcher holds, so a live series passes unfolded.
 private const val MAX_BUCKETS = 2048
 
-/** The most log lines one attempt contributes to a scenario's log, counted from the end. */
+private const val DEFAULT_BUCKETS = "512"
+
+/** Counted from the end of each attempt's log. */
 private const val MAX_LOG_LINES = 5000
 
 @Path("experiments")
@@ -306,8 +307,8 @@ class ExperimentsResource(
     @GET
     fun list(
         @QueryParam("project") projectId: String?,
-        @QueryParam("limit") @DefaultValue("50") limit: Int,
-        @QueryParam("offset") @DefaultValue("0") offset: Int,
+        @QueryParam("limit") @DefaultValue(Window.DEFAULT_LIMIT) limit: Int,
+        @QueryParam("offset") @DefaultValue(Window.DEFAULT_OFFSET) offset: Int,
     ): Page<ExperimentSummary> {
         val user = identity.currentUser()
         val query =
@@ -349,10 +350,8 @@ class ExperimentsResource(
         @PathParam("id") id: String,
     ): Experiment = toWire(readable(id))
 
-    // Every endpoint that writes builds its response inside the same transaction. Letting the
-    // service commit and then assembling the reply outside it reads lazy associations with no
-    // session, which fails after the write has already landed: the client is told the request
-    // failed while the database says otherwise.
+    // Every endpoint that writes builds its response inside its transaction: outside it, reading a
+    // lazy association fails after the write has landed, reporting a failure that did not happen.
     @PUT
     @Path("{id}")
     @Transactional
@@ -402,9 +401,8 @@ class ExperimentsResource(
         return toWire(experiment)
     }
 
-    // The new name is a query parameter rather than a body: it is one optional scalar, and a body
-    // that may legitimately be absent is a trap for any client that sends a JSON content type with
-    // nothing after it, which is exactly what fetch does when given no body.
+    // A query parameter rather than an optional body, which fetch sends as a JSON content type with
+    // nothing after it.
     @POST
     @Path("{id}/clone")
     @Transactional
@@ -470,13 +468,10 @@ class ExperimentsResource(
         )
     }
 
-    /**
-     * What a scenario's runs wrote to the launcher log, attempt by attempt. A log is collected when
-     * its execution ends, so a scenario still running has none from its current attempt yet.
-     */
+    /** What a scenario's runs wrote to the launcher log, per attempt, collected as each execution ends. */
     @GET
     @Path("{id}/scenarios/{index}/logs")
-    @Produces("text/plain; charset=utf-8")
+    @Produces(TEXT_PLAIN_UTF8)
     fun scenarioLogs(
         @PathParam("id") id: String,
         @PathParam("index") index: Int,
@@ -509,12 +504,7 @@ class ExperimentsResource(
         return sections.joinToString("\n")
     }
 
-    /**
-     * Runs one scenario again.
-     *
-     * A scenario that failed for a reason outside the simulation, or one whose result is doubted, is
-     * put back in the queue without the whole experiment having to be resubmitted.
-     */
+    /** Queues one scenario again without resubmitting the whole experiment. */
     @POST
     @Path("{id}/scenarios/{index}/retry")
     @Transactional
@@ -531,7 +521,7 @@ class ExperimentsResource(
     @Path("{id}/results")
     fun results(
         @PathParam("id") id: String,
-        @QueryParam("buckets") @DefaultValue("512") buckets: Int,
+        @QueryParam("buckets") @DefaultValue(DEFAULT_BUCKETS) buckets: Int,
     ): ExperimentResults {
         val experiment = readable(id)
         val units = RunUnit.findByExperiment(experiment.id)
@@ -546,17 +536,10 @@ class ExperimentsResource(
         )
     }
 
-    /**
-     * Everything the experiment's runs produced, as one zip.
-     *
-     * The entries are laid out the way a local run of the same experiment lays out its output
-     * directory, so an archive can be unpacked next to one and read by the same tooling without
-     * anything being moved about first. Streamed rather than assembled, because an experiment of
-     * many scenarios is far larger than anything worth holding in memory to send.
-     */
+    /** Everything the experiment's runs produced, as one zip; see [archiveResponse]. */
     @GET
     @Path("{id}/archive")
-    @Produces("application/zip")
+    @Produces(APPLICATION_ZIP)
     fun archive(
         @PathParam("id") id: String,
     ): Response {
@@ -564,10 +547,7 @@ class ExperimentsResource(
         return archiveResponse(experiment, archiveKeys(experiment, store), store)
     }
 
-    /**
-     * A link a browser can follow to the archive, which a plain link could not do while it needs an
-     * access token. Refused here, rather than when it is followed, when there is nothing to download.
-     */
+    /** A signed link a browser can follow to the archive, refused now if there is nothing to download. */
     @POST
     @Path("{id}/archive/link")
     fun archiveLink(
@@ -583,9 +563,8 @@ class ExperimentsResource(
         codec.decodeExperiment(codec.parseStored(experiment.spec)).exportModels.minOf { it.exportInterval.toMsLong() }
 
     /**
-     * How far apart the points being sent are, read off the longest series rather than worked out
-     * from the bucket count: a series shorter than the cap is not folded at all, and reporting a
-     * width it does not have would mislabel the axis.
+     * How far apart the points are, read off the longest series rather than the bucket count, since a
+     * series shorter than the cap is not folded at all.
      */
     private fun bucketWidth(
         scenarios: List<ScenarioResults>,
@@ -628,12 +607,7 @@ class ExperimentsResource(
             RunUnit.list("experiment.id in ?1", experimentIds).groupBy { it.experiment.id }
         }
 
-    /**
-     * Each unit's latest attempt.
-     *
-     * A unit that has been retried has a row per execution that carried it, and rows arrive oldest
-     * first, so the last write per unit is the attempt that counts.
-     */
+    /** Each unit's latest attempt: rows arrive oldest first, so the last one per unit wins. */
     private fun attemptsOf(experimentId: Long): Map<Long, ExecutionUnit> =
         ExecutionUnit.findByExperiment(experimentId).associateBy { it.unit.id }
 
@@ -658,14 +632,14 @@ class ExperimentsResource(
             completedTasks = units.sumOf { it.completedTasks },
             totalTasks = units.sumOf { it.totalTasks },
             attempt = units.maxOf { attempts[it.id]?.execution?.attempt ?: 1 },
-            exitInfo = failed?.let { attempts[it.id] }?.let(::exitInfo),
+            exitInfo = failed?.let { attempts[it.id] }?.let(::exitOf),
         )
     }
 
     /** How a unit's latest attempt ended, for a unit that has ended without succeeding. */
-    private fun exitInfo(attempt: ExecutionUnit): ExitInfo? =
+    private fun exitOf(attempt: ExecutionUnit): ScenarioExit? =
         attempt.exitReason?.let { reason ->
-            ExitInfo(
+            ScenarioExit(
                 exitCode = attempt.execution.reportedExitCode,
                 reason = reason.toWire(),
                 message = attempt.exitMessage.ifEmpty { null },
@@ -693,8 +667,7 @@ class ExperimentsResource(
         }
     }
 
-    // Mirror of foldExperimentState in the frontend (lib/experiment/status.ts); the two must not
-    // drift, which the status tests pin. A carried unit is running as far as a reader is concerned.
+    // A carried unit is running as far as a reader is concerned.
     private fun foldStates(states: List<UnitState>): RunStateWire =
         when {
             states.isEmpty() || states.all { it == UnitState.QUEUED } -> RunStateWire.QUEUED

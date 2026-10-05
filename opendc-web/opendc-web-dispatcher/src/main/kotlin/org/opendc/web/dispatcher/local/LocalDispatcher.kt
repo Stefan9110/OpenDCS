@@ -24,6 +24,8 @@ package org.opendc.web.dispatcher.local
 
 import org.opendc.web.dispatcher.CapacitySnapshot
 import org.opendc.web.dispatcher.Dispatcher
+import org.opendc.web.dispatcher.EXIT_KILLED
+import org.opendc.web.dispatcher.EXIT_ON_OUT_OF_MEMORY
 import org.opendc.web.dispatcher.ExecutionSlot
 import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
@@ -173,7 +175,7 @@ class LocalDispatcher(private val config: LocalDispatcherConfig) : Dispatcher {
         }
     }
 
-    /** Nothing is held open between calls; processes still running are this server's to end. */
+    /** Launchers still running are left running; the next [reconcile] ends them. */
     override fun close() {}
 
     private fun directoryOf(executionId: UUID): Path = config.workDir.resolve(executionId.toString())
@@ -182,7 +184,7 @@ class LocalDispatcher(private val config: LocalDispatcherConfig) : Dispatcher {
         listOf(
             Path.of(System.getProperty("java.home"), "bin", "java").toString(),
             "-Xmx${request.grant.heapMb}m",
-            "-XX:+ExitOnOutOfMemoryError",
+            EXIT_ON_OUT_OF_MEMORY,
             "-D$EXECUTION_PROPERTY=${request.executionId}",
             "-cp",
             config.classpath,
@@ -229,12 +231,10 @@ class LocalDispatcher(private val config: LocalDispatcherConfig) : Dispatcher {
                 Intent.CANCEL -> ExitReason.CANCELLED to "cancelled"
                 Intent.TIMEOUT -> ExitReason.TIMEOUT to "ran past its time limit"
                 Intent.RUN ->
-                    if (code == KILLED) {
+                    if (code == EXIT_KILLED) {
                         ExitReason.OOM to "killed, most likely for memory"
                     } else {
-                        launcherExitReason(
-                            code,
-                        ) to launcherExitMessage(code)
+                        launcherExitReason(code) to launcherExitMessage(code)
                     }
             }
         return ExitOutcome(
@@ -283,8 +283,5 @@ class LocalDispatcher(private val config: LocalDispatcherConfig) : Dispatcher {
 
         /** Identifies a launcher process as belonging to one execution of this server. */
         private const val EXECUTION_PROPERTY = "opendc.execution"
-
-        /** What a process the kernel's out-of-memory killer ended exits with. */
-        private const val KILLED = 137
     }
 }

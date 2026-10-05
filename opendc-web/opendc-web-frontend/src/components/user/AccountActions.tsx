@@ -19,17 +19,13 @@ import {
 } from "@tabler/icons-react"
 import Link from "next/link"
 
-/**
- * What the person can do about their account. Signing out, tokens, billing and deactivation only mean
- * something where people sign in; the local account of an anonymous deployment has none of them.
- */
+/** Signing out, tokens, billing and deactivation exist only where people sign in, not when anonymous. */
 export function AccountActions({ session, closeDrawer }: Readonly<{ session: AuthSession; closeDrawer: () => void }>) {
     const controls = useSessionControls()
     const [billingOpened, billing] = useDisclosure(false)
     const [deactivateOpened, deactivation] = useDisclosure(false)
     const [profileOpened, profile] = useDisclosure(false)
     const [tokensOpened, tokens] = useDisclosure(false)
-    // Billing is only fetched once the modal that shows it is open.
     const billingQuery = useBilling(billingOpened)
 
     const opening = (open: () => void) => () => {

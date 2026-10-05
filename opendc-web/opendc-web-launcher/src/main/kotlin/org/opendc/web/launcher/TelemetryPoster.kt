@@ -33,7 +33,7 @@ import java.time.Duration
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-/** How often the runs' progress goes out, in wall-clock time rather than simulated time. */
+/** In wall-clock time, not simulated time. */
 private val POST_INTERVAL = Duration.ofSeconds(5)
 
 /** A report that has not gone out in this long has been overtaken by the next one anyway. */
@@ -41,12 +41,7 @@ private val POST_TIMEOUT = Duration.ofSeconds(10)
 
 /**
  * Sends what the runs have reported so far, over and over, until the process is done with them.
- *
- * Fire-and-forget in both directions: nothing here waits for the server to agree, and nothing here
- * can change what the process exits with. A launcher whose telemetry cannot be delivered still
- * simulates, still writes its parquet and still exits the way it would have. That is what makes
- * this plane safe to lose -- the platform's account of the process is what says whether the work
- * was done.
+ * Fire-and-forget: nothing here can change what the process does or exits with.
  */
 class TelemetryPoster(
     private val endpoint: TelemetryTarget.Endpoint,

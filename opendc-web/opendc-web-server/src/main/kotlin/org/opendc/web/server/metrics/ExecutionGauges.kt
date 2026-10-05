@@ -35,12 +35,13 @@ import org.opendc.web.server.model.RunUnit
 import org.opendc.web.server.model.UnitState
 import java.util.concurrent.atomic.AtomicLong
 
+private const val REFRESH_INTERVAL = "15s"
+
 /**
- * The state of the queue and the platform, read from Postgres every 15 seconds and held, so a scrape
- * never queries the database. Every replica reports the same numbers, so dashboards take the max.
+ * The state of the queue and the platform, read from Postgres on a timer and held, so a scrape never
+ * queries the database. Every replica reports the same numbers, so dashboards take the max.
  *
- * Nothing injects this, so it starts with the application: left lazy, the gauges would not exist
- * until the first refresh, and not at all where the scheduler is off.
+ * Nothing injects this, so it must start eagerly or the gauges would not exist until a refresh.
  */
 @Startup
 @ApplicationScoped
@@ -60,7 +61,7 @@ class ExecutionGauges(
         Gauge.builder("opendc.platform.cores.allocated", dispatcher) { it.capacity().allocatedCores.toDouble() }.register(registry)
     }
 
-    @Scheduled(every = "15s", concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
+    @Scheduled(every = REFRESH_INTERVAL, concurrentExecution = Scheduled.ConcurrentExecution.SKIP)
     @Transactional
     fun refresh() {
         for ((state, value) in executions) {

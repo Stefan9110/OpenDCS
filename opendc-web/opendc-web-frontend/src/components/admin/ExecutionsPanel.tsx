@@ -4,19 +4,15 @@ import { ExecutionDrawer } from "@/components/admin/ExecutionDrawer"
 import { ExecutionTable } from "@/components/admin/ExecutionTable"
 import { TableGhost } from "@/components/util/Ghost"
 import { QueryState } from "@/components/util/QueryState"
-import { ADMIN_PAGE_SIZE, type StateFilter, useAdminExecutions } from "@/lib/api/admin"
+import { STATE_BADGES } from "@/lib/admin/phase"
+import { ADMIN_PAGE_SIZE, EXECUTION_STATES, type StateFilter, useAdminExecutions } from "@/lib/api/admin"
 import { Group, Pagination, Select, Stack } from "@mantine/core"
 import { useState } from "react"
 
 const FILTERS: { value: StateFilter; label: string }[] = [
     { value: "live", label: "Live" },
     { value: "all", label: "All" },
-    { value: "queued", label: "Queued" },
-    { value: "submitted", label: "Submitted" },
-    { value: "running", label: "Running" },
-    { value: "succeeded", label: "Succeeded" },
-    { value: "failed", label: "Failed" },
-    { value: "cancelled", label: "Cancelled" },
+    ...EXECUTION_STATES.map((state) => ({ value: state, label: STATE_BADGES[state].label })),
 ]
 
 export function ExecutionsPanel() {
@@ -36,7 +32,7 @@ export function ExecutionsPanel() {
                     allowDeselect={false}
                     w={180}
                     onChange={(value) => {
-                        setFilter((value ?? "live") as StateFilter)
+                        setFilter(FILTERS.find((option) => option.value === value)?.value ?? "live")
                         setPage(1)
                     }}
                 />

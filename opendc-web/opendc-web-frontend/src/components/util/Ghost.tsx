@@ -2,10 +2,8 @@
 
 import { Card, Container, Group, Paper, SimpleGrid, Skeleton, Stack, Table } from "@mantine/core"
 
-/**
- * Outlines of content that has not arrived yet. Each mirrors the layout it stands in for, so the
- * page holds its shape while loading and nothing shifts underneath the reader when the data lands.
- */
+// Loading outlines that mirror the layout they stand in for, so nothing shifts when the data lands.
+
 function keys(count: number, prefix: string): string[] {
     return Array.from({ length: count }, (_, index) => `${prefix}-${index}`)
 }
@@ -54,11 +52,7 @@ export function LineGhost({ width = "40%" }: Readonly<{ width?: string | number 
     return <Skeleton height={14} radius="sm" width={width} />
 }
 
-/**
- * A whole page whose kind is not known yet: what the shell shows before it knows who is asking, and
- * what a route shows before it has read its own parameters. Deliberately generic, since the same
- * outline stands in for a project, an experiment and an editor.
- */
+/** A whole page whose kind is not known yet, such as a route that has not read its parameters. */
 export function PageGhost() {
     return (
         <Container size="lg" py="md">

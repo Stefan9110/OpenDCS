@@ -27,11 +27,8 @@ import org.opendc.web.launcher.Reduction
 import kotlin.math.floor
 
 /**
- * Averages one metric over the seeds a scenario was run with.
- *
- * Aligned on the instant rather than on position: seeds of one scenario differ only in what the
- * random number generator does, so they are sampled at the same simulated instants, and an instant
- * one of them has nothing to say about should not drag the others along by a place.
+ * Averages one metric over the seeds a scenario was run with, aligned on the instant rather than on
+ * position so an instant one seed lacks does not shift the others.
  */
 fun meanAcrossSeeds(perSeed: List<List<MetricPoint>>): List<MetricPoint> {
     perSeed.singleOrNull()?.let { return it }
@@ -47,11 +44,8 @@ fun meanAcrossSeeds(perSeed: List<List<MetricPoint>>): List<MetricPoint> {
 }
 
 /**
- * Reduces [points] to at most [buckets] of them, folding each bucket the way [fold] says.
- *
- * Applying the wrong reduction here would not just blur the line, it would misreport the total: an
- * additive column has to be summed and a counter carried forward, where a gauge is averaged. The
- * frontend folds the same way again for its own chart width, so the two must agree.
+ * Reduces [points] to at most [buckets] of them, folding each bucket the way [fold] says. The
+ * frontend folds the same way again for its chart width, so the two must agree.
  */
 fun bucket(
     points: List<MetricPoint>,
@@ -74,11 +68,8 @@ fun bucket(
 }
 
 /**
- * How far apart the seeds landed, as one number over the whole series.
- *
- * Each seed's series is reduced to the figure a reader would quote for it, and the answer is the
- * distance between the highest and the lowest. A scenario run once has no spread to report, which is
- * zero rather than something left out.
+ * How far apart the seeds landed: each seed's series reduced by [fold], then the highest minus the
+ * lowest. Zero for a single seed.
  */
 fun spreadAcrossSeeds(
     perSeed: List<List<MetricPoint>>,

@@ -34,6 +34,7 @@ import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.dispatcher.Grant
 import org.opendc.web.dispatcher.Launch
 import org.opendc.web.dispatcher.LaunchRequest
+import org.opendc.web.dispatcher.NO_EXIT_CODE
 import org.opendc.web.dispatcher.PlatformEvent
 import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.dispatcher.PlatformVerdict
@@ -43,7 +44,6 @@ import org.opendc.web.server.metrics.ServerMetrics
 import org.opendc.web.server.model.Execution
 import org.opendc.web.server.model.ExecutionState
 import org.opendc.web.server.model.ExecutionUnit
-import org.opendc.web.server.model.NO_EXIT_CODE
 import org.opendc.web.server.model.RunUnit
 import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.storage.ObjectStore
@@ -55,8 +55,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
-/** The longest a signature for object storage can last, and so the longest a manifest URL may. */
-private val MAX_URL_LIFETIME = Duration.ofDays(7)
+private val URL_LIFETIME_CAP: Duration = Duration.parse(MAX_URL_LIFETIME)
 
 /** An execution taken out of the queue and ready to hand over, with the manifest written for it. */
 private class Claim(
@@ -67,14 +66,11 @@ private class Claim(
 )
 
 /**
- * Keeps the platform as busy as the queue and its capacity allow, and records what it reports.
+ * Keeps the platform as busy as the queue and its capacity allow, and records what it reports. Each
+ * pass shapes the oldest outstanding work against the dispatcher's slot and hands it over if there is room.
  *
- * The server admits and the platform queues: each pass shapes the oldest outstanding work against
- * the slot the dispatcher offers, hands it over if there is room, and otherwise leaves it queued.
- *
- * Transactions are opened by hand rather than declared, because the two things that must not share
- * one are a database write and a platform call: a launch inside the claiming transaction would
- * survive a rollback as a process nothing has a record of.
+ * Transactions are opened by hand because a database write and a platform call must not share one: a
+ * launch inside the claiming transaction would survive a rollback as a process nothing has a record of.
  */
 @ApplicationScoped
 class ExecutionLoop(
@@ -92,8 +88,8 @@ class ExecutionLoop(
     fun onStart(
         @Suppress("UNUSED_PARAMETER") @Observes event: StartupEvent,
     ) {
-        check(config.urlLifetime() <= MAX_URL_LIFETIME) {
-            "opendc.execution.url-lifetime is ${config.urlLifetime()}, above the $MAX_URL_LIFETIME a signed URL can last"
+        check(config.urlLifetime() <= URL_LIFETIME_CAP) {
+            "opendc.execution.url-lifetime is ${config.urlLifetime()}, above the $URL_LIFETIME_CAP a signed URL can last"
         }
         dispatcher.observe(::onEvent)
     }
@@ -140,10 +136,7 @@ class ExecutionLoop(
 
     /**
      * Asks the platform about every execution this server believes it holds, and settles accordingly.
-     *
-     * Recovery asks rather than sweeping for anything that has been quiet too long. An execution that
-     * ended while nobody listened is settled from what it left; one the platform no longer knows goes
-     * round again at the same attempt.
+     * One the platform no longer knows goes round again at the same attempt.
      */
     fun reconcile() {
         val ids = QuarkusTransaction.requiringNew().call<List<UUID>> { Execution.findOnPlatform().map { it.publicId } }
@@ -154,12 +147,7 @@ class ExecutionLoop(
         for (id in ids) {
             when (val verdict = verdicts[id] ?: PlatformVerdict.Unknown) {
                 PlatformVerdict.Waiting -> {}
-                is PlatformVerdict.Running ->
-                    QuarkusTransaction.requiringNew().run {
-                        Execution.lockByPublicId(
-                            id,
-                        )?.start(verdict.startedAt)
-                    }
+                is PlatformVerdict.Running -> markStarted(id, verdict.startedAt)
                 is PlatformVerdict.Ended -> settlement.settle(id, verdict.outcome)
                 PlatformVerdict.Unknown -> {
                     LOG.info("The platform no longer knows execution {}; its work goes round again", id)
@@ -172,21 +160,21 @@ class ExecutionLoop(
     /** Where the platform's events land. Failures propagate, so the platform delivers the event again. */
     private fun onEvent(event: PlatformEvent) {
         when (event) {
-            is PlatformEvent.Started ->
-                QuarkusTransaction.requiringNew().run {
-                    Execution.lockByPublicId(
-                        event.executionId,
-                    )?.start(event.at)
-                }
+            is PlatformEvent.Started -> markStarted(event.executionId, event.at)
             is PlatformEvent.Finished -> settlement.settle(event.executionId, event.outcome)
         }
     }
 
+    private fun markStarted(
+        executionId: UUID,
+        at: Instant,
+    ) {
+        QuarkusTransaction.requiringNew().run { Execution.lockByPublicId(executionId)?.start(at) }
+    }
+
     /**
-     * The next execution to hand over, taken out of the queue before this returns.
-     *
-     * One a retry wrote down comes first, since its work is already spoken for; otherwise the
-     * oldest submitted units are shaped into a new execution.
+     * The next execution to hand over, taken out of the queue before this returns. One a retry wrote
+     * down comes first; otherwise the oldest submitted units are shaped into a new execution.
      */
     private fun claim(): Claim? {
         val execution = admissible() ?: return null
