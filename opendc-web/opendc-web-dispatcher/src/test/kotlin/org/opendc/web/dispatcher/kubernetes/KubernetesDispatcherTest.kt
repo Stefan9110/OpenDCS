@@ -308,15 +308,27 @@ class KubernetesDispatcherTest {
         assertEquals(ExecutionSlot(2, 4096.0, TimeCap.Unlimited, MemoryCap.Limited(4096.0)), dispatcher.slot())
     }
 
-    // The cordoned and the tainted node are registered first, so once the worker is seen they have been too.
+    // An operator's taint keeps this server's pods off a node for good; a cordon only for now.
     @Test
-    fun `gives one execution at most the memory of the largest node its pods can be placed on`() {
+    fun `gives one execution at most the memory of the largest node its pods could ever be placed on`() {
         val dispatcher = dispatcher()
-        cluster.node("cordoned", cpu = "8", memory = "64Gi", cordoned = true)
-        cluster.node("control-plane", cpu = "8", memory = "32Gi", taints = listOf("NoSchedule"))
+        cluster.node("control-plane", cpu = "8", memory = "64Gi", taints = listOf("NoSchedule"))
+        cluster.node("cordoned", cpu = "8", memory = "32Gi", cordoned = true)
         cluster.node("worker", cpu = "4", memory = "16Gi", taints = listOf("PreferNoSchedule"))
 
+        awaitMemoryCap(dispatcher, MemoryCap.Limited(32_768.0))
+    }
+
+    // Draining a node for an upgrade must not fail, for good, the work only that node can hold.
+    @Test
+    fun `keeps launching work that only a node cordoned for now can hold`() {
+        val dispatcher = dispatcher()
+        cluster.node("worker", cpu = "2", memory = "4Gi")
+        cluster.node("large", cpu = "8", memory = "16Gi", cordoned = true)
         awaitMemoryCap(dispatcher, MemoryCap.Limited(16_384.0))
+        val request = LaunchRequest(UUID.randomUUID(), "https://store.example/manifest.json", Grant(1, 7680, 8192, 600))
+
+        assertEquals(Launch.Accepted, dispatcher.launch(request))
     }
 
     @Test

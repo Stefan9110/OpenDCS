@@ -53,6 +53,9 @@ private val SIGNALLED = setOf(EXIT_KILLED, EXIT_TERMINATED)
 /** Taint effects that keep a pod off a node unless it tolerates them, which this server's pods never do. */
 private val REPELLING_TAINTS = setOf("NoSchedule", "NoExecute")
 
+/** Where the taints live that Kubernetes itself sets for as long as a node condition lasts, such as a cordon. */
+private const val CONDITION_TAINTS = "node.kubernetes.io/"
+
 /** Cores and memory at the scale of one pod: what a pod requests, or the most a node can give one. */
 internal data class PodResources(
     val cores: Double,
@@ -168,12 +171,19 @@ internal fun capacityOf(
     )
 }
 
-/** The most each node this server's pods can be placed on could give one of them, were the node empty. */
+/**
+ * The most each node could give one of this server's pods, were the node empty. A node that is down,
+ * cordoned or under pressure takes pods again once that passes, so it counts; only a taint an operator
+ * set keeps the pods off a node for good.
+ */
 internal fun allocatableOf(nodes: List<Node>): List<PodResources> =
-    usable(nodes).map { node ->
+    nodes.filterNot(::repelsForGood).map { node ->
         val allocatable = node.status?.allocatable.orEmpty()
         PodResources(amount(allocatable["cpu"]), amount(allocatable["memory"]) / BYTES_PER_MB)
     }
+
+private fun repelsForGood(node: Node): Boolean =
+    node.spec?.taints.orEmpty().any { it.effect in REPELLING_TAINTS && !it.key.orEmpty().startsWith(CONDITION_TAINTS) }
 
 /** What [job]'s pod requests, which, with its requests equal to its limits, is also all it is given. */
 internal fun requestOf(job: Job): PodResources {

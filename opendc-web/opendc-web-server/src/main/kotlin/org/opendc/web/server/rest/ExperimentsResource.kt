@@ -38,6 +38,7 @@ import jakarta.ws.rs.core.Response
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import org.opendc.sdk.model.telemetry.ExportSpec
 import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.server.auth.Download
 import org.opendc.web.server.auth.DownloadLink
@@ -524,11 +525,11 @@ class ExperimentsResource(
     ): ExperimentResults {
         val experiment = readable(id)
         val units = RunUnit.findByExperiment(experiment.id)
-        val exportIntervalMs = exportIntervalOf(experiment)
-        val charted = results.read(experiment.publicId, units, buckets.coerceIn(1, MAX_BUCKETS), exportIntervalMs)
+        val exportIntervalsMs = exportIntervalsOf(experiment)
+        val charted = results.read(experiment.publicId, units, buckets.coerceIn(1, MAX_BUCKETS), exportIntervalsMs)
         return ExperimentResults(
             experimentId = experiment.publicId.toString(),
-            exportIntervalMs = exportIntervalMs,
+            exportIntervalMs = exportIntervalsMs.min(),
             bucketMs = charted.bucketMs,
             complete = !experiment.isDraft && units.isNotEmpty() && units.all { it.state.isTerminal },
             scenarios = charted.scenarios,
@@ -557,9 +558,13 @@ class ExperimentsResource(
         return links.sign(Download.Archive(experiment.publicId.toString()), Instant.now())
     }
 
-    /** How often the simulation samples, taking the finest of the export models the spec offers. */
-    private fun exportIntervalOf(experiment: ExperimentEntity): Long =
-        codec.decodeExperiment(codec.parseStored(experiment.spec)).exportModels.minOf { it.exportInterval.toMsLong() }
+    /** How often each export model the spec offers samples. A draft that offers none reads as the default. */
+    private fun exportIntervalsOf(experiment: ExperimentEntity): List<Long> =
+        codec
+            .decodeExperiment(codec.parseStored(experiment.spec))
+            .exportModels
+            .ifEmpty { listOf(ExportSpec()) }
+            .map { it.exportInterval.toMsLong() }
 
     private fun readable(id: String): ExperimentEntity = experimentFor(identity.currentUser(), id, ProjectPermission.READ)
 

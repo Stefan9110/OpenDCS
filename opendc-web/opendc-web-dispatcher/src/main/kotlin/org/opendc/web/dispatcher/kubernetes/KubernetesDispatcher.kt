@@ -75,9 +75,9 @@ private const val DEFAULT_NAMESPACE = "default"
  * before an end. A stop this server asks for is written onto the Job before the Job is deleted, so
  * the verdict is read back from the cluster by whichever replica sees the end.
  *
- * The cluster is taken to be the nodes it shows. Executions are shaped to fit the one with the most
- * memory, and a pod larger than every node is refused, at launch or once seen pending, rather than
- * left waiting for a node that will never come.
+ * The cluster is taken to be the nodes it shows, once it has shown all of them. Executions are shaped
+ * to fit the one with the most memory, and a pod larger than every node is refused, at launch or once
+ * seen pending, rather than left waiting for a node that will never come.
  */
 class KubernetesDispatcher internal constructor(
     private val client: KubernetesClient,
@@ -106,13 +106,12 @@ class KubernetesDispatcher internal constructor(
     @Volatile
     private var capacity: CapacitySnapshot = ceiling()
 
-    /** What each node the pods can be placed on could give one of them. Written on the events thread. */
-    @Volatile
-    private var allocatable: List<PodResources> = emptyList()
+    /** Started by [observe]. Its own store is read for fit, which is complete as soon as it has synced. */
+    private val nodeInformer: SharedIndexInformer<Node> = client.nodes().runnableInformer(RESYNC_PERIOD.toMillis())
 
     override val name: String get() = NAME
 
-    override fun slot(): ExecutionSlot = config.slot.fittedTo(allocatable)
+    override fun slot(): ExecutionSlot = config.slot.fittedTo(nodeRooms())
 
     override fun admits(
         cores: Int,
@@ -139,11 +138,7 @@ class KubernetesDispatcher internal constructor(
                 .withLabel(MANAGED_BY_LABEL, MANAGED_BY)
                 .runnableInformer(RESYNC_PERIOD.toMillis())
                 .apply { addEventHandler(handler(::onPod)) }
-        informers +=
-            client
-                .nodes()
-                .runnableInformer(RESYNC_PERIOD.toMillis())
-                .apply { addEventHandler(handler(::onNode)) }
+        informers += nodeInformer.apply { addEventHandler(handler(::onNode)) }
         for (informer in informers) {
             informer.start().exceptionally { failure ->
                 // A cluster that will not list nodes leaves capacity at this dispatcher's own ceiling.
@@ -159,7 +154,7 @@ class KubernetesDispatcher internal constructor(
     override fun launch(request: LaunchRequest): Launch {
         val job = executionJob(request, config)
         val asked = requestOf(job)
-        val nodes = allocatable
+        val nodes = nodeRooms()
         if (fitsNoNode(asked, nodes)) {
             return Launch.Rejected(tooLargeForNodes(asked, nodes))
         }
@@ -255,9 +250,11 @@ class KubernetesDispatcher internal constructor(
         deleted: Boolean,
     ) {
         if (deleted) nodes.remove(node.metadata.name) else nodes[node.metadata.name] = node
-        allocatable = allocatableOf(nodes.values.toList())
         refreshCapacity()
     }
+
+    /** What each node could give one pod; nothing, so nothing is ruled out, until the node list is read in full. */
+    private fun nodeRooms(): List<PodResources> = if (nodeInformer.hasSynced()) allocatableOf(nodeInformer.store.list()) else emptyList()
 
     /** Works out where [id] stands and tells the listener anything new. Runs on the events thread only. */
     private fun process(id: UUID) {
@@ -267,8 +264,9 @@ class KubernetesDispatcher internal constructor(
         when (val state = jobState(seen.job, jobPods, seen.gone)) {
             is JobState.Pending -> {
                 val asked = requestOf(seen.job)
-                if (fitsNoNode(asked, allocatable)) {
-                    stop(id, ExitReason.REJECTED, tooLargeForNodes(asked, allocatable))
+                val nodes = nodeRooms()
+                if (fitsNoNode(asked, nodes)) {
+                    stop(id, ExitReason.REJECTED, tooLargeForNodes(asked, nodes))
                 } else if (Duration.between(state.since, Instant.now()) >= config.pendingTimeout) {
                     stop(id, ExitReason.UNKNOWN, "did not start within ${config.pendingTimeout}: ${state.cause}")
                 }

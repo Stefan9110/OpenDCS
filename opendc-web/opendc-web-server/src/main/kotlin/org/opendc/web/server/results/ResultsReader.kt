@@ -51,7 +51,7 @@ class ResultsReader(
         experimentId: UUID,
         units: List<RunUnit>,
         buckets: Int,
-        exportIntervalMs: Long,
+        exportIntervalsMs: List<Long>,
     ): ChartedScenarios {
         val posted = telemetry.read(units.map { RunKey(experimentId, it.scenarioIndex, it.seed) })
         val scenarios =
@@ -60,7 +60,7 @@ class ResultsReader(
                 .toSortedMap()
                 .map { (index, runs) -> MeasuredScenario(index, runs, runs.map { measured(experimentId, it, posted) }) }
                 .filter { it.means.isNotEmpty() }
-        val grid = bucketGrid(scenarios.flatMap { it.means.values }, exportIntervalMs, buckets)
+        val grid = bucketGrid(scenarios.flatMap { it.means.values }, exportIntervalsMs, buckets)
         return ChartedScenarios(grid.width, scenarios.map { it.charted(grid) })
     }
 

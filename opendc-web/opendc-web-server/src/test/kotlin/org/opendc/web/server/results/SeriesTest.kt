@@ -39,7 +39,7 @@ class SeriesTest {
         val short = exports(List(40) { 1.0 })
         val long = exports(List(75) { 1.0 })
 
-        val grid = bucketGrid(listOf(short, long), EXPORT_INTERVAL_MS, buckets = 8)
+        val grid = bucketGrid(listOf(short, long), listOf(EXPORT_INTERVAL_MS), buckets = 8)
         val shortInstants = bucket(short, grid, Reduction.MEAN).map { it.t }
         val longInstants = bucket(long, grid, Reduction.MEAN).map { it.t }
 
@@ -51,14 +51,14 @@ class SeriesTest {
     fun `leaves a series that already fits as the simulation sampled it`() {
         val sampled = exports(listOf(1.0, 2.0, 3.0))
 
-        assertEquals(sampled, bucket(sampled, bucketGrid(listOf(sampled), EXPORT_INTERVAL_MS, buckets = 10), Reduction.MEAN))
+        assertEquals(sampled, bucket(sampled, bucketGrid(listOf(sampled), listOf(EXPORT_INTERVAL_MS), buckets = 10), Reduction.MEAN))
     }
 
     @Test
     fun `preserves an additive total instead of averaging it away`() {
         val energy = exports(List(6) { 1.0 })
 
-        val folded = bucket(energy, bucketGrid(listOf(energy), EXPORT_INTERVAL_MS, buckets = 3), Reduction.SUM)
+        val folded = bucket(energy, bucketGrid(listOf(energy), listOf(EXPORT_INTERVAL_MS), buckets = 3), Reduction.SUM)
 
         assertEquals(listOf(2.0, 2.0, 2.0), folded.map { it.value })
     }
@@ -67,7 +67,7 @@ class SeriesTest {
     fun `swallows no samples when the count does not divide evenly`() {
         val energy = exports(List(7) { 1.0 })
 
-        val folded = bucket(energy, bucketGrid(listOf(energy), EXPORT_INTERVAL_MS, buckets = 3), Reduction.SUM)
+        val folded = bucket(energy, bucketGrid(listOf(energy), listOf(EXPORT_INTERVAL_MS), buckets = 3), Reduction.SUM)
 
         assertEquals(7.0, folded.sumOf { it.value })
     }
@@ -76,7 +76,7 @@ class SeriesTest {
     fun `carries a cumulative counter forward rather than averaging inside a bucket`() {
         val completed = exports(listOf(1.0, 2.0, 3.0, 4.0))
 
-        val folded = bucket(completed, bucketGrid(listOf(completed), EXPORT_INTERVAL_MS, buckets = 2), Reduction.LAST)
+        val folded = bucket(completed, bucketGrid(listOf(completed), listOf(EXPORT_INTERVAL_MS), buckets = 2), Reduction.LAST)
 
         assertEquals(listOf(2.0, 4.0), folded.map { it.value })
     }
@@ -85,7 +85,7 @@ class SeriesTest {
     fun `keeps a spike visible instead of smoothing it into the mean`() {
         val queued = exports(listOf(0.0, 90.0, 0.0, 0.0))
 
-        val folded = bucket(queued, bucketGrid(listOf(queued), EXPORT_INTERVAL_MS, buckets = 2), Reduction.MAX)
+        val folded = bucket(queued, bucketGrid(listOf(queued), listOf(EXPORT_INTERVAL_MS), buckets = 2), Reduction.MAX)
 
         assertEquals(listOf(90.0, 0.0), folded.map { it.value })
     }
@@ -95,10 +95,23 @@ class SeriesTest {
     fun `folds the closing instant of a run into its last bucket instead of drawing a point of its own`() {
         val sampled = exports(listOf(1.0, 1.0, 1.0)) + MetricPoint(3 * EXPORT_INTERVAL_MS + 1_000, 1.0)
 
-        val grid = bucketGrid(listOf(sampled), EXPORT_INTERVAL_MS, buckets = 512)
+        val grid = bucketGrid(listOf(sampled), listOf(EXPORT_INTERVAL_MS), buckets = 512)
 
         assertEquals(EXPORT_INTERVAL_MS, grid.width)
         assertEquals(3, bucket(sampled, grid, Reduction.SUM).size)
+    }
+
+    // A sweep over export intervals samples its scenarios at different rates. A bucket holding two of a
+    // scenario's samples where its neighbours hold one would make that scenario's sums jump.
+    @Test
+    fun `gives every bucket as many samples of a scenario as the next when scenarios export at different intervals`() {
+        val everyFive = exports(List(72) { 1.0 })
+        val everyFifteen = exports(List(24) { 1.0 }, every = 3 * EXPORT_INTERVAL_MS)
+
+        val grid = bucketGrid(listOf(everyFive, everyFifteen), listOf(EXPORT_INTERVAL_MS, 3 * EXPORT_INTERVAL_MS), buckets = 16)
+
+        assertEquals(setOf(2.0), bucket(everyFifteen, grid, Reduction.SUM).map { it.value }.toSet())
+        assertEquals(setOf(6.0), bucket(everyFive, grid, Reduction.SUM).map { it.value }.toSet())
     }
 
     // A launcher folds its live samples by doubling too, so a running scenario arrives coarser than a
@@ -108,7 +121,7 @@ class SeriesTest {
         val finished = exports(List(64) { 1.0 })
         val live = exports(List(16) { 4.0 }, every = 4 * EXPORT_INTERVAL_MS)
 
-        val grid = bucketGrid(listOf(finished, live), EXPORT_INTERVAL_MS, buckets = 512)
+        val grid = bucketGrid(listOf(finished, live), listOf(EXPORT_INTERVAL_MS), buckets = 512)
         val instants = bucket(live, grid, Reduction.SUM).map { it.t }
 
         assertTrue(instants.zipWithNext().all { (first, next) -> next - first == grid.width }, "gaps in $instants")

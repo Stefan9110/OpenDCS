@@ -53,29 +53,40 @@ data class BucketGrid(
 
 /**
  * The grid that folds each of [series] to at most [buckets] points. It starts at the earliest instant
- * any of them measured and is the export interval wide, doubled until the longest series fits and no
- * series skips a bucket. Doubling keeps a whole number of instants in each bucket, and of the points a
- * launcher folds by doubling too.
+ * any of them measured and is the smallest whole multiple of every one of [exportIntervalsMs], doubled
+ * until the longest series fits and no series skips a bucket. Each bucket then holds as many samples of
+ * a scenario as the next, whichever interval it exported at, and as many of the points a launcher folds
+ * by doubling too.
  */
 fun bucketGrid(
     series: List<List<MetricPoint>>,
-    exportIntervalMs: Long,
+    exportIntervalsMs: List<Long>,
     buckets: Int,
 ): BucketGrid {
     require(buckets > 0) { "a grid needs at least one bucket, not $buckets" }
+    var width = exportIntervalsMs.filter { it > 0 }.fold(1L, ::leastCommonMultiple)
     val measured = series.filter { it.isNotEmpty() }
     if (measured.isEmpty()) {
-        return BucketGrid(0, exportIntervalMs)
+        return BucketGrid(0, width)
     }
     val origin = measured.minOf { it.first().t }
     val end = measured.maxOf { it.last().t }
     val widestGap = measured.maxOf { points -> points.zipWithNext { first, next -> next.t - first.t }.fold(0L, ::maxOf) }
-    var width = exportIntervalMs.coerceAtLeast(1)
     while ((end - origin) / width >= buckets || width < widestGap) {
         width *= 2
     }
     return BucketGrid(origin, width)
 }
+
+private tailrec fun greatestCommonDivisor(
+    left: Long,
+    right: Long,
+): Long = if (right == 0L) left else greatestCommonDivisor(right, left % right)
+
+private fun leastCommonMultiple(
+    left: Long,
+    right: Long,
+): Long = left / greatestCommonDivisor(left, right) * right
 
 /** Folds [points] into [grid], each bucket the way [fold] says and stamped with the instant it begins. */
 fun bucket(
