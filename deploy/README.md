@@ -172,6 +172,10 @@ Beside the JVM's and the API's request timings, the server exports:
 The gauges are read from the database every 15 seconds, so every replica reports the same numbers;
 take the maximum across replicas, not the sum.
 
+`deploy/grafana/opendc.json` is a dashboard of all of the above plus API traffic, latency and heap:
+import it into Grafana and pick the Prometheus data source that scrapes port 9000. The server's
+test suite checks that every query in it names a metric and labels the server exports.
+
 ### Trace imports
 
 People can import a trace from public URLs, one per table; the server fetches them itself. It

@@ -24,6 +24,7 @@ package org.opendc.web.server.metrics
 
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
+import io.quarkus.runtime.Startup
 import jakarta.enterprise.context.ApplicationScoped
 import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.dispatcher.Launch
@@ -48,7 +49,11 @@ enum class LaunchOutcome {
 /**
  * What the execution loop does, counted. Every tag value is registered up front, so a dashboard
  * shows a zero rather than no data, and no value outside a closed set can multiply the series.
+ *
+ * It starts with the application: injected, it is a proxy until first used, which would leave the
+ * counters unregistered until the first launch.
  */
+@Startup
 @ApplicationScoped
 class ServerMetrics(registry: MeterRegistry) {
     private val launches =
