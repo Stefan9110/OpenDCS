@@ -39,6 +39,7 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.opendc.web.dispatcher.MemoryCap
 import org.opendc.web.dispatcher.TimeCap
 import org.opendc.web.server.ApiTest
 import org.opendc.web.server.execution.RecordingDispatcher
@@ -243,6 +244,27 @@ class ExperimentsResourceTest {
             ApiTest.requestJson().get("/api/v1/experiments/$id").then().body("state", equalTo("draft"))
         } finally {
             dispatcher.capTime(TimeCap.Unlimited)
+        }
+    }
+
+    // A cluster cannot place a pod larger than its largest node, so such a run would only wait to be
+    // placed. It is refused here, where the reader can still change the draft.
+    @Test
+    fun aScenarioLargerThanAnyExecutionHereCanBeGivenIsShownInPreviewAndRefusedAtSubmit() {
+        dispatcher.capMemory(MemoryCap.Limited(1.0))
+        try {
+            ApiTest.requestJson()
+                .body("""{"spec":$SPEC}""")
+                .post("/api/v1/experiments/preview")
+                .then()
+                .statusCode(200)
+                .body("issues.message", hasItem(containsString("may have at most 1 MB")))
+            val id = draftId("Too large")
+
+            ApiTest.requestJson().post("/api/v1/experiments/$id/submit").then().statusCode(400)
+            ApiTest.requestJson().get("/api/v1/experiments/$id").then().body("state", equalTo("draft"))
+        } finally {
+            dispatcher.capMemory(MemoryCap.Unlimited)
         }
     }
 

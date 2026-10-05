@@ -22,16 +22,19 @@
 
 package org.opendc.web.dispatcher.kubernetes
 
+import io.fabric8.kubernetes.api.model.NodeBuilder
 import io.fabric8.kubernetes.api.model.Pod
 import io.fabric8.kubernetes.api.model.PodBuilder
+import io.fabric8.kubernetes.api.model.Quantity
+import io.fabric8.kubernetes.api.model.TaintBuilder
 import io.fabric8.kubernetes.client.KubernetesClient
 import org.opendc.web.dispatcher.jobName
 import java.time.Instant
 import java.util.UUID
 
 /**
- * Plays the Job controller and the kubelet against the mock API: makes an execution's pod and moves
- * it through the states a real node would report.
+ * Plays the Job controller and the kubelet against the mock API: registers the nodes, makes an
+ * execution's pod and moves it through the states a real node would report.
  */
 internal class JobController(
     private val client: KubernetesClient,
@@ -126,6 +129,35 @@ internal class JobController(
 
     fun removePod(id: UUID) {
         client.pods().inNamespace(namespace).withName(podName(id)).delete()
+    }
+
+    /** Registers a Ready node that offers pods [cpu] and [memory], with a taint of each effect in [taints]. */
+    fun node(
+        name: String,
+        cpu: String,
+        memory: String,
+        cordoned: Boolean = false,
+        taints: List<String> = emptyList(),
+    ) {
+        val node =
+            NodeBuilder()
+                .withNewMetadata()
+                .withName(name)
+                .endMetadata()
+                .withNewSpec()
+                .withUnschedulable(cordoned)
+                .withTaints(taints.map { TaintBuilder().withKey("example.org/reserved").withEffect(it).build() })
+                .endSpec()
+                .withNewStatus()
+                .addToAllocatable("cpu", Quantity(cpu))
+                .addToAllocatable("memory", Quantity(memory))
+                .addNewCondition()
+                .withType("Ready")
+                .withStatus("True")
+                .endCondition()
+                .endStatus()
+                .build()
+        client.nodes().resource(node).createOr { it.update() }
     }
 
     private fun pod(id: UUID): PodBuilder =

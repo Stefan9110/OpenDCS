@@ -45,6 +45,7 @@ import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.dispatcher.Grant
 import org.opendc.web.dispatcher.Launch
 import org.opendc.web.dispatcher.LaunchRequest
+import org.opendc.web.dispatcher.MemoryCap
 import org.opendc.web.dispatcher.PlatformEvent
 import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.dispatcher.PlatformVerdict
@@ -265,6 +266,59 @@ class KubernetesDispatcherTest {
         assertTrue("insufficient memory" in outcome.message, outcome.message)
     }
 
+    // No amount of waiting places a pod larger than every node, so it is refused while the reader can
+    // still be told why, not after an hour of pending and a retry that pends again.
+    @Test
+    fun `refuses at launch a pod larger than every node the cluster shows`() {
+        val dispatcher = dispatcher()
+        cluster.node("worker-1", cpu = "2", memory = "4Gi")
+        cluster.node("worker-2", cpu = "2", memory = "4Gi")
+        awaitMemoryCap(dispatcher, MemoryCap.Limited(4096.0))
+        val request = LaunchRequest(UUID.randomUUID(), "https://store.example/manifest.json", Grant(1, 7680, 8192, 600))
+
+        val launch = dispatcher.launch(request)
+
+        assertTrue(launch is Launch.Rejected && "8192 MB" in launch.message && "4096 MB" in launch.message, "$launch")
+        assertNull(job(request.executionId), "nothing is left pending on the cluster")
+    }
+
+    @Test
+    fun `withdraws a pending pod once every node the cluster shows is too small for it`() {
+        val dispatcher = dispatcher()
+        val request = request()
+        assertEquals(Launch.Accepted, dispatcher.launch(request), "with no node visible, nothing is ruled out")
+        cluster.node("small", cpu = "1", memory = "1Gi")
+        awaitMemoryCap(dispatcher, MemoryCap.Limited(1024.0))
+
+        cluster.pending(request.executionId, "0/1 nodes are available: 1 Insufficient cpu, 1 Insufficient memory.")
+
+        val outcome = finished()
+        assertEquals(ExitReason.REJECTED, outcome.reason)
+        assertTrue("no node can hold it" in outcome.message, outcome.message)
+    }
+
+    // A slot configured for larger nodes than the cluster has would pack bags that no node can hold.
+    @Test
+    fun `packs executions no larger than the node with the most memory`() {
+        val dispatcher = dispatcher()
+        cluster.node("worker", cpu = "2", memory = "4Gi")
+
+        awaitMemoryCap(dispatcher, MemoryCap.Limited(4096.0))
+
+        assertEquals(ExecutionSlot(2, 4096.0, TimeCap.Unlimited, MemoryCap.Limited(4096.0)), dispatcher.slot())
+    }
+
+    // The cordoned and the tainted node are registered first, so once the worker is seen they have been too.
+    @Test
+    fun `gives one execution at most the memory of the largest node its pods can be placed on`() {
+        val dispatcher = dispatcher()
+        cluster.node("cordoned", cpu = "8", memory = "64Gi", cordoned = true)
+        cluster.node("control-plane", cpu = "8", memory = "32Gi", taints = listOf("NoSchedule"))
+        cluster.node("worker", cpu = "4", memory = "16Gi", taints = listOf("PreferNoSchedule"))
+
+        awaitMemoryCap(dispatcher, MemoryCap.Limited(16_384.0))
+    }
+
     @Test
     fun `leaves a pending run alone while it still has time to start`() {
         val dispatcher = dispatcher()
@@ -329,6 +383,17 @@ class KubernetesDispatcherTest {
         dispatcher.launch(request())
 
         assertNull(events.poll(500, TimeUnit.MILLISECONDS))
+    }
+
+    private fun awaitMemoryCap(
+        dispatcher: KubernetesDispatcher,
+        cap: MemoryCap,
+    ) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (dispatcher.slot().memoryCap != cap && System.nanoTime() < deadline) {
+            Thread.sleep(50)
+        }
+        assertEquals(cap, dispatcher.slot().memoryCap)
     }
 
     private fun awaitGone(id: UUID) {

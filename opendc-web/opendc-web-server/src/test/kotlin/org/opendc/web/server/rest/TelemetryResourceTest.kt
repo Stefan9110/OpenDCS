@@ -25,7 +25,10 @@ package org.opendc.web.server.rest
 import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
 import jakarta.inject.Inject
+import org.hamcrest.Matchers.allOf
 import org.hamcrest.Matchers.equalTo
+import org.hamcrest.Matchers.greaterThan
+import org.hamcrest.Matchers.lessThanOrEqualTo
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.opendc.web.dispatcher.ExitReason
@@ -219,7 +222,7 @@ class TelemetryResourceTest {
         val body =
             """
             {"runs":[{"scenarioIndex":0,"seed":0,"completedTasks":1,"series":[
-                {"metric":"${ResultMetric.HOST_CPU_UTILIZATION.id}","points":[{"t":0,"value":0.25},{"t":60000,"value":0.75}]}
+                {"metric":"${ResultMetric.HOST_CPU_UTILIZATION.id}","points":[{"t":0,"value":0.25},{"t":$EXPORT_INTERVAL_MS,"value":0.75}]}
             ]}]}
             """.trimIndent()
 
@@ -246,7 +249,7 @@ class TelemetryResourceTest {
     @Test
     fun `folds a metric into no more buckets than were asked for`() {
         val experiment = running()
-        val points = (0 until 20).joinToString(",") { """{"t":${it * 1000},"value":$it.0}""" }
+        val points = (0 until 20).joinToString(",") { """{"t":${it * EXPORT_INTERVAL_MS},"value":$it.0}""" }
         val body =
             """
             {"runs":[{"scenarioIndex":0,"seed":0,"completedTasks":1,"series":[
@@ -266,7 +269,7 @@ class TelemetryResourceTest {
             .get("/api/v1/experiments/$experiment/results?buckets=4")
             .then()
             .statusCode(200)
-            .body("scenarios[0].series[0].points.size()", equalTo(4))
+            .body("scenarios[0].series[0].points.size()", allOf(greaterThan(1), lessThanOrEqualTo(4)))
     }
 
     /** An experiment whose single unit is queued, with nothing yet handed to the platform. */
@@ -338,5 +341,8 @@ class TelemetryResourceTest {
             }
 
         val SPEC = """{"name":"telemetry","topologies":[$TOPOLOGY],"workloads":[$WORKLOAD],"runs":1}"""
+
+        /** How often a run of [SPEC] samples: it names no export model, so the default's five minutes. */
+        const val EXPORT_INTERVAL_MS = 300_000L
     }
 }

@@ -101,6 +101,18 @@ class RetryPolicyTest {
     }
 
     @Test
+    fun `grows memory only as far as the platform can give one execution`() {
+        val capped = slot.copy(memoryCap = MemoryCap.Limited(4096.0))
+        val unit = units(count = 1, peakMemoryMb = 1500.0)
+
+        val first = retryBags(unit, grant(parallelism = 1, heapMb = 1500), attempt = 1, ExitReason.OOM, capped, policy).single()
+        val second = retryBags(first.units, first.grant, attempt = 2, ExitReason.OOM, capped, policy)
+
+        assertTrue(first.grant.memoryRequestMb <= 4096, "the first retry still fits: ${first.grant.memoryRequestMb} MB")
+        assertEquals(emptyList<PlannedBag>(), second, "twice that again is more than any execution here can have")
+    }
+
+    @Test
     fun `answers an overrun with more time, since splitting a bag does not shorten it`() {
         val failed = grant()
 

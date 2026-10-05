@@ -31,6 +31,7 @@ import org.apache.parquet.hadoop.example.ExampleParquetWriter
 import org.apache.parquet.schema.MessageType
 import org.apache.parquet.schema.MessageTypeParser
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -173,6 +174,26 @@ class ExperimentResultsTest {
         assertEquals(0.8, valueOf(results(experiment), ResultMetric.HOST_CPU_UTILIZATION))
     }
 
+    // A failure model can make a run twice as long as the same run without one, and both are drawn on
+    // one chart, whose rows join the scenarios on their instants.
+    @Test
+    fun `folds every scenario onto the same instants however long each ran`() {
+        val experiment = running(TWO_SCENARIOS)
+        hostTable(experiment, *everyExport(count = 40), scenario = 0)
+        hostTable(experiment, *everyExport(count = 75), scenario = 1)
+        settleAll(experiment)
+
+        val charted =
+            ApiTest.requestJson().get("/api/v1/experiments/$experiment/results?buckets=8").then().statusCode(200).extract().jsonPath()
+        val bucketMs = charted.getLong("bucketMs")
+        val short = instantsOf(charted, scenario = 0)
+        val long = instantsOf(charted, scenario = 1)
+
+        assertEquals(short, long.take(short.size), "the shorter run's points sit on the longer run's instants")
+        assertTrue(long.size <= 8, "no more points than asked for: $long")
+        assertTrue(long.zipWithNext().all { (first, next) -> next - first == bucketMs }, "every point is one bucket apart: $long")
+    }
+
     @Test
     fun `falls back to what a failed run managed to post`() {
         val experiment = running()
@@ -183,11 +204,11 @@ class ExperimentResultsTest {
         assertEquals(0.62, valueOf(results(experiment), ResultMetric.HOST_CPU_UTILIZATION))
     }
 
-    /** An experiment whose single unit the platform is carrying. */
-    private fun running(): String {
+    /** An experiment of [spec] whose units the platform is carrying. */
+    private fun running(spec: String = SPEC): String {
         val publicId =
             ApiTest.requestJson()
-                .body("""{"projectId":"$projectId","name":"Results","spec":$SPEC}""")
+                .body("""{"projectId":"$projectId","name":"Results","spec":$spec}""")
                 .post("/api/v1/experiments")
                 .then()
                 .statusCode(201)
@@ -205,11 +226,35 @@ class ExperimentResultsTest {
         dispatcher.finish(execution, ended(ExitReason.OK))
     }
 
-    private fun executionOf(experiment: String): UUID =
+    /** The platform reports every execution of the experiment ended, after their launchers certified each run. */
+    private fun settleAll(experiment: String) {
+        for (execution in executionsOf(experiment)) {
+            for (unit in dispatcher.manifestOf(execution).units) {
+                dispatcher.certify(execution, unit.scenario.id, UnitOutcome.Succeeded(1.0))
+            }
+            dispatcher.finish(execution, ended(ExitReason.OK))
+        }
+    }
+
+    private fun executionOf(experiment: String): UUID = executionsOf(experiment).last()
+
+    private fun executionsOf(experiment: String): List<UUID> =
         QuarkusTransaction.requiringNew().call {
             val id = checkNotNull(Experiment.findByPublicId(UUID.fromString(experiment))).id
-            Execution.findByExperiment(id).last().publicId
+            Execution.findByExperiment(id).map { it.publicId }
         }
+
+    private fun instantsOf(
+        charted: JsonPath,
+        scenario: Int,
+    ): List<Long> {
+        val series = "scenarios.find { it.scenarioIndex == $scenario }.series.find { it.metric == '${ResultMetric.HOST_POWER_DRAW.id}' }"
+        return charted.getList<Number>("$series.points.t").map { it.toLong() }
+    }
+
+    /** One host's row at each of the first [count] five-minute exports, the interval a spec defaults to. */
+    private fun everyExport(count: Int): Array<Row> =
+        Array(count) { Row(t = EXPORT_INTERVAL_MS * (it + 1), host = "H0", usage = 100.0, capacity = 1000.0, power = 100.0) }
 
     private fun results(experiment: String): JsonPath =
         ApiTest.requestJson().get("/api/v1/experiments/$experiment/results").then().statusCode(200).extract().jsonPath()
@@ -239,10 +284,11 @@ class ExperimentResultsTest {
             .statusCode(204)
     }
 
-    /** Writes a host table where the run's launcher would have put one. */
+    /** Writes a host table where the launcher of [scenario]'s run would have put one. */
     private fun hostTable(
         experiment: String,
         vararg rows: Row,
+        scenario: Int = 0,
     ) {
         val file = scratch.resolve("host-${UUID.randomUUID()}.parquet")
         ExampleParquetWriter.builder(LocalOutputFile(file)).withType(HOST_SCHEMA).build().use { writer ->
@@ -259,7 +305,7 @@ class ExperimentResultsTest {
                 )
             }
         }
-        Files.newInputStream(file).use { store.put("${runKey(UUID.fromString(experiment), 0, 0)}/host.parquet", it) }
+        Files.newInputStream(file).use { store.put("${runKey(UUID.fromString(experiment), scenario, 0)}/host.parquet", it) }
     }
 
     private data class Row(
@@ -295,5 +341,11 @@ class ExperimentResultsTest {
                 """"fragments":[{"duration":"10 minutes","cpuUsage":"1 GHz"}]}]}"""
 
         const val SPEC = """{"name":"results","topologies":[$TOPOLOGY],"workloads":[$WORKLOAD],"runs":1}"""
+
+        const val TWO_SCENARIOS =
+            """{"name":"results","topologies":[$TOPOLOGY],"workloads":[$WORKLOAD],"runs":1,""" +
+                """"failureModels":[{"type":"none"},{"type":"prefab","prefabName":"G5k06Exp"}]}"""
+
+        const val EXPORT_INTERVAL_MS = 300_000L
     }
 }

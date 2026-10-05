@@ -76,7 +76,7 @@ data class PlannedBag(
  * @property timeSafetyFactor How far past its estimate the work in a bag may run before it is killed.
  * @property maxAttempts Including the first, so two means one retry.
  * @property growthFactor What a unit's memory or a bag's time is multiplied by when it was not enough.
- * @property maxMemoryRequestMb The largest grant worth asking for.
+ * @property maxMemoryRequestMb The largest grant worth asking for, on a platform that can give more.
  */
 data class DispatchPolicy(
     val jvmBaselineMb: Double,
@@ -95,6 +95,9 @@ fun requestMb(
     headPeakMb: Double,
     policy: DispatchPolicy,
 ): Double = policy.jvmBaselineMb + policy.offHeapPerUnitMb * size + policy.heapHeadroom * size * headPeakMb
+
+/** The largest grant worth asking [slot]'s platform for: the policy's ceiling, or the platform's where that is lower. */
+private fun DispatchPolicy.requestCapMb(slot: ExecutionSlot): Double = slot.memoryCap.clamp(maxMemoryRequestMb)
 
 /**
  * Packs units into bags, memory first.
@@ -166,7 +169,7 @@ fun escalatedBags(
         ExitReason.OOM -> {
             val share = failed.heapMb / (failed.parallelism * policy.heapHeadroom)
             val grown = units.map { it.copy(peakMemoryMb = policy.growthFactor * max(it.peakMemoryMb, share)) }
-            if (grown.any { requestMb(1, it.peakMemoryMb, policy) > policy.maxMemoryRequestMb }) {
+            if (grown.any { requestMb(1, it.peakMemoryMb, policy) > policy.requestCapMb(slot) }) {
                 emptyList()
             } else {
                 requeuedBags(grown, failed, slot, policy)
@@ -206,7 +209,7 @@ sealed interface Unfit {
         val capSeconds: Int,
     ) : Unfit
 
-    /** It alone needs more memory than any grant worth asking for. */
+    /** It alone needs more memory than any grant worth asking for, or than the platform can give one execution. */
     data class TooLarge(
         override val unit: PlannedUnit,
         val memoryMb: Double,
@@ -229,9 +232,10 @@ fun unfit(
         val seconds = ceil(policy.startupSeconds + unit.cpuSeconds).toInt()
         val memory = requestMb(1, unit.peakMemoryMb, policy)
         val cap = slot.timeCap
+        val memoryCap = policy.requestCapMb(slot)
         when {
             cap is TimeCap.Limited && seconds > cap.seconds -> Unfit.TooLong(unit, seconds, cap.seconds)
-            memory > policy.maxMemoryRequestMb -> Unfit.TooLarge(unit, memory, policy.maxMemoryRequestMb)
+            memory > memoryCap -> Unfit.TooLarge(unit, memory, memoryCap)
             else -> null
         }
     }

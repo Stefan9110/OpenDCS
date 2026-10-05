@@ -156,6 +156,28 @@ class PackingTest {
         assertEquals(1, oversized.first().units.size)
     }
 
+    // A request no node can satisfy is never placed, so a platform smaller than the policy's ceiling
+    // has to rule the unit out before it is queued, not after it has waited for room.
+    @Test
+    fun `rules out a unit larger than the platform can give one execution, under the policy's ceiling too`() {
+        val large = unit(0, peakMemoryMb = 10_000.0)
+        val capped = slot.copy(memoryCap = MemoryCap.Limited(8192.0))
+
+        val unfit = unfit(listOf(large), capped, policy).single()
+
+        assertEquals(Unfit.TooLarge(large, 10_000.0 + JVM_BASELINE_MB, 8192.0), unfit)
+        assertEquals(emptyList<Unfit>(), unfit(listOf(large), slot, policy), "with no cap of its own, the unit runs alone")
+    }
+
+    @Test
+    fun `rules out a unit larger than the policy's ceiling on a platform that could give more`() {
+        val huge = unit(0, peakMemoryMb = 40_000.0)
+
+        val unfit = unfit(listOf(huge), slot.copy(memoryCap = MemoryCap.Limited(65_536.0)), policy).single()
+
+        assertEquals(policy.maxMemoryRequestMb, (unfit as Unfit.TooLarge).capMb)
+    }
+
     @Test
     fun `refuses an estimate of no memory instead of packing a slot into infinite parts`() {
         assertThrows(IllegalArgumentException::class.java) { unit(0, peakMemoryMb = 0.0) }

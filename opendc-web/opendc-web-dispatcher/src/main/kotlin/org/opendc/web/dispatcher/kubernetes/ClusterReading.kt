@@ -31,8 +31,10 @@ import io.fabric8.kubernetes.api.model.batch.v1.Job
 import org.opendc.web.dispatcher.CapacitySnapshot
 import org.opendc.web.dispatcher.EXIT_KILLED
 import org.opendc.web.dispatcher.EXIT_TERMINATED
+import org.opendc.web.dispatcher.ExecutionSlot
 import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
+import org.opendc.web.dispatcher.MemoryCap
 import org.opendc.web.dispatcher.NO_EXIT_CODE
 import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.dispatcher.launcherExitMessage
@@ -47,6 +49,17 @@ private val PERMANENT_WAITING = setOf("InvalidImageName", "ErrImageNeverPull", "
 
 /** What a container killed by a signal exits with, which says nothing about why. */
 private val SIGNALLED = setOf(EXIT_KILLED, EXIT_TERMINATED)
+
+/** Taint effects that keep a pod off a node unless it tolerates them, which this server's pods never do. */
+private val REPELLING_TAINTS = setOf("NoSchedule", "NoExecute")
+
+/** Cores and memory at the scale of one pod: what a pod requests, or the most a node can give one. */
+internal data class PodResources(
+    val cores: Double,
+    val memoryMb: Double,
+) {
+    fun fitsIn(room: PodResources): Boolean = cores <= room.cores && memoryMb <= room.memoryMb
+}
 
 /** Where an execution stands, as its Job and pod show it. */
 internal sealed interface JobState {
@@ -129,8 +142,8 @@ internal fun jobState(
 }
 
 /**
- * The cluster's capacity against what this server's live pods request, from [nodes] that are Ready and
- * schedulable. With no node visible, which is also what a cluster that refuses to list them looks
+ * The cluster's capacity against what this server's live pods request, from the [nodes] those pods can
+ * be placed on. With no node visible, which is also what a cluster that refuses to list them looks
  * like, the total is [ceiling]'s.
  */
 internal fun capacityOf(
@@ -138,11 +151,7 @@ internal fun capacityOf(
     pods: List<Pod>,
     ceiling: CapacitySnapshot,
 ): CapacitySnapshot {
-    val usable =
-        nodes.filter { node ->
-            node.spec?.unschedulable != true &&
-                node.status?.conditions.orEmpty().any { it.type == "Ready" && it.status == "True" }
-        }
+    val usable = usable(nodes)
     val live = pods.filter { it.status?.phase == "Pending" || it.status?.phase == "Running" }
     val requests = live.flatMap { pod -> pod.spec?.containers.orEmpty().map { it.resources?.requests.orEmpty() } }
     val allocatedCores = requests.sumOf { amount(it["cpu"]) }
@@ -158,6 +167,61 @@ internal fun capacityOf(
         allocatedMemoryMb = allocatedMemory,
     )
 }
+
+/** The most each node this server's pods can be placed on could give one of them, were the node empty. */
+internal fun allocatableOf(nodes: List<Node>): List<PodResources> =
+    usable(nodes).map { node ->
+        val allocatable = node.status?.allocatable.orEmpty()
+        PodResources(amount(allocatable["cpu"]), amount(allocatable["memory"]) / BYTES_PER_MB)
+    }
+
+/** What [job]'s pod requests, which, with its requests equal to its limits, is also all it is given. */
+internal fun requestOf(job: Job): PodResources {
+    val requests = job.spec?.template?.spec?.containers.orEmpty().map { it.resources?.requests.orEmpty() }
+    return PodResources(requests.sumOf { amount(it["cpu"]) }, requests.sumOf { amount(it["memory"]) } / BYTES_PER_MB)
+}
+
+/**
+ * Whether a pod requesting [asked] fits on none of [nodes], so that no amount of waiting places it.
+ * With no node visible, which is also how a cluster that refuses to list them looks, nothing is ruled out.
+ */
+internal fun fitsNoNode(
+    asked: PodResources,
+    nodes: List<PodResources>,
+): Boolean = nodes.isNotEmpty() && nodes.none { asked.fitsIn(it) }
+
+/** Why a pod requesting [asked] fits on none of [nodes]. */
+internal fun tooLargeForNodes(
+    asked: PodResources,
+    nodes: List<PodResources>,
+): String =
+    "no node can hold it: it requests ${cpuAmount(asked.cores)} cpu and ${asked.memoryMb.toLong()} MB, and no node has " +
+        "more than ${cpuAmount(nodes.maxOf { it.cores })} cpu and ${nodes.maxOf { it.memoryMb }.toLong()} MB allocatable"
+
+/**
+ * This slot shrunk to the node in [nodes] with the most memory, since a bag packed larger than every
+ * node is never scheduled, and capped at that node's memory for a unit too large for the slot. With no
+ * node visible, nothing is ruled out.
+ */
+internal fun ExecutionSlot.fittedTo(nodes: List<PodResources>): ExecutionSlot {
+    if (nodes.isEmpty()) {
+        return this
+    }
+    val roomiest = nodes.maxBy { it.memoryMb }
+    return copy(
+        cores = minOf(cores, roomiest.cores.toInt()).coerceAtLeast(1),
+        memoryMb = minOf(memoryMb, roomiest.memoryMb),
+        memoryCap = MemoryCap.Limited(roomiest.memoryMb),
+    )
+}
+
+/** The nodes this server's pods can be placed on: Ready, not cordoned, and with no taint that repels them. */
+private fun usable(nodes: List<Node>): List<Node> =
+    nodes.filter { node ->
+        node.spec?.unschedulable != true &&
+            node.spec?.taints.orEmpty().none { it.effect in REPELLING_TAINTS } &&
+            node.status?.conditions.orEmpty().any { it.type == "Ready" && it.status == "True" }
+    }
 
 /** What a Job's own conditions say when it has no pod left to read. */
 private fun conditionEnded(job: Job): JobState? {
@@ -210,3 +274,5 @@ private fun pendingCause(
 private fun instant(timestamp: String?): Instant? = timestamp?.takeIf { it.isNotEmpty() }?.let(Instant::parse)
 
 private fun amount(quantity: Quantity?): Double = quantity?.numericalAmount?.toDouble() ?: 0.0
+
+private fun cpuAmount(cores: Double): String = cores.toBigDecimal().stripTrailingZeros().toPlainString()

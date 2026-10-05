@@ -4,7 +4,6 @@ import {
     type ResultPoint,
     type ScenarioResults,
     alignOnTimestamp,
-    bucketPoints,
     isLiveResults,
     metricById,
     reduceMetric,
@@ -147,40 +146,6 @@ describe("reduceSeries", () => {
     it("treats a metric the run never reported as empty instead of failing", () => {
         expect(seriesOf(scenario(), "battery.charge").points).toEqual([])
         expect(reduceMetric(scenario(), "battery.charge")).toEqual({ status: "empty" })
-    })
-})
-
-describe("bucketPoints", () => {
-    it("leaves a series alone when it already fits", () => {
-        expect(bucketPoints(points(1, 2, 3), 10, "mean")).toEqual(points(1, 2, 3))
-    })
-
-    it("preserves an additive total instead of averaging it away", () => {
-        const bucketed = bucketPoints(points(1, 1, 1, 1, 1, 1), 3, "sum")
-        expect(bucketed.map((point) => point.value)).toEqual([2, 2, 2])
-        expect(reduceSeries(bucketed, "sum")).toEqual({ status: "ok", value: 6 })
-    })
-
-    it("carries a cumulative counter forward rather than averaging inside a bucket", () => {
-        expect(bucketPoints(points(1, 2, 3, 4), 2, "last").map((point) => point.value)).toEqual([2, 4])
-    })
-
-    it("keeps a spike visible instead of smoothing it into the mean", () => {
-        expect(bucketPoints(points(0, 90, 0, 0), 2, "max").map((point) => point.value)).toEqual([90, 0])
-    })
-
-    it("stamps each bucket with the time it starts at, so the axis stays monotone", () => {
-        const bucketed = bucketPoints(points(1, 2, 3, 4, 5, 6), 3, "mean")
-        expect(bucketed.map((point) => point.t)).toEqual([0, 2 * EXPORT_INTERVAL_MS, 4 * EXPORT_INTERVAL_MS])
-    })
-
-    it("swallows no samples when the count does not divide evenly", () => {
-        const bucketed = bucketPoints(points(1, 1, 1, 1, 1, 1, 1), 3, "sum")
-        expect(reduceSeries(bucketed, "sum")).toEqual({ status: "ok", value: 7 })
-    })
-
-    it("has nothing to draw when asked for no buckets at all", () => {
-        expect(bucketPoints(points(1, 2, 3), 0, "mean")).toEqual([])
     })
 })
 

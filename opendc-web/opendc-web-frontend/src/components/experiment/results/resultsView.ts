@@ -5,7 +5,6 @@ import {
     type MetricScale,
     type ScenarioResults,
     alignOnTimestamp,
-    bucketPoints,
     metricById,
     reduceMetric,
     reportedMetrics,
@@ -73,20 +72,14 @@ export function metricOptions(results: ExperimentResults): Array<{ value: string
     return reportedMetrics(results).map((metric) => ({ value: metric.id, label: metric.label }))
 }
 
-// The client's own cap on top of the server's bucketing.
-const MAX_CHART_POINTS = 600
-
+// The server folds every scenario onto one grid, so their points already share instants.
 export function timeRows(
     scenarios: ScenarioResults[],
     metric: MetricId,
     keys: string[],
 ): Array<Record<string, number>> {
-    const definition = metricById(metric)
-    const scale = definition.sample.scale
-    const capped = scenarios.map((scenario) =>
-        bucketPoints(seriesOf(scenario, metric).points, MAX_CHART_POINTS, definition.reduce),
-    )
-    return alignOnTimestamp(capped).map((row) => {
+    const scale = metricById(metric).sample.scale
+    return alignOnTimestamp(scenarios.map((scenario) => seriesOf(scenario, metric).points)).map((row) => {
         const shaped: Record<string, number> = { t: row.t }
         for (const [position, key] of keys.entries()) {
             const value = row.values[position]

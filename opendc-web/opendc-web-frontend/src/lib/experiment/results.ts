@@ -223,21 +223,6 @@ export function reduceMetric(scenario: ScenarioResults, metric: MetricId): Reduc
     return reduceSeries(seriesOf(scenario, metric).points, metricById(metric).reduce)
 }
 
-// Each bucket uses the metric's own reduction; any other one would misreport the total.
-export function bucketPoints(points: readonly ResultPoint[], buckets: number, mode: ReduceMode): ResultPoint[] {
-    if (buckets <= 0) return []
-    if (points.length <= buckets) return [...points]
-
-    const width = points.length / buckets
-    return Array.from({ length: buckets }, (_, bucket) => {
-        const from = Math.floor(bucket * width)
-        const to = bucket === buckets - 1 ? points.length : Math.floor((bucket + 1) * width)
-        const inside = points.slice(from, Math.max(to, from + 1))
-        const reduced = reduceSeries(inside, mode)
-        return { t: points[from]?.t ?? 0, value: reduced.status === "ok" ? reduced.value : 0 }
-    })
-}
-
 export interface AlignedRow {
     t: number
     values: Record<number, number>

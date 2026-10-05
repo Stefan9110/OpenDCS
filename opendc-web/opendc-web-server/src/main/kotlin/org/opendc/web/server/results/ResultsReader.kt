@@ -43,20 +43,25 @@ class ResultsReader(
     private val parquet: ParquetSeries,
 ) {
     /**
-     * The scenarios of [experimentId] that have measured something, folded to at most [buckets]
-     * points each. A scenario with nothing to draw is left out so the run picker does not offer it.
+     * The scenarios of [experimentId] that have measured something, folded onto one grid of at most
+     * [buckets] points so that they line up on a chart however long each ran. A scenario with nothing
+     * to draw is left out so the run picker does not offer it.
      */
     fun read(
         experimentId: UUID,
         units: List<RunUnit>,
         buckets: Int,
-    ): List<ScenarioResults> {
+        exportIntervalMs: Long,
+    ): ChartedScenarios {
         val posted = telemetry.read(units.map { RunKey(experimentId, it.scenarioIndex, it.seed) })
-        return units
-            .groupBy { it.scenarioIndex }
-            .toSortedMap()
-            .map { (index, scenarioUnits) -> scenario(experimentId, index, scenarioUnits, posted, buckets) }
-            .filter { it.series.isNotEmpty() }
+        val scenarios =
+            units
+                .groupBy { it.scenarioIndex }
+                .toSortedMap()
+                .map { (index, runs) -> MeasuredScenario(index, runs, runs.map { measured(experimentId, it, posted) }) }
+                .filter { it.means.isNotEmpty() }
+        val grid = bucketGrid(scenarios.flatMap { it.means.values }, exportIntervalMs, buckets)
+        return ChartedScenarios(grid.width, scenarios.map { it.charted(grid) })
     }
 
     /** Forgets what a scenario measured, because it is being run again over the same output. */
@@ -66,34 +71,6 @@ class ResultsReader(
     ) {
         units.map { it.scenarioIndex }.distinct().forEach { parquet.forget("${resultKey(experimentId)}/$it/") }
         telemetry.forget(units.map { RunKey(experimentId, it.scenarioIndex, it.seed) })
-    }
-
-    private fun scenario(
-        experimentId: UUID,
-        index: Int,
-        units: List<RunUnit>,
-        posted: Map<RunKey, List<MetricSeries>>,
-        buckets: Int,
-    ): ScenarioResults {
-        val perSeed = units.map { measured(experimentId, it, posted) }
-        return ScenarioResults(
-            scenarioIndex = index,
-            seeds = units.size,
-            complete = units.all { it.state.isTerminal },
-            series =
-                ResultMetric.entries.mapNotNull { metric ->
-                    val seeds = perSeed.mapNotNull { it[metric] }.filter { it.isNotEmpty() }
-                    if (seeds.isEmpty()) {
-                        null
-                    } else {
-                        ResultSeries(
-                            metric = metric.id,
-                            points = bucket(meanAcrossSeeds(seeds), buckets, metric.overTime).map { ResultPoint(it.t, it.value) },
-                            spread = spreadAcrossSeeds(seeds, metric.overTime),
-                        )
-                    }
-                },
-        )
     }
 
     private fun measured(
@@ -112,4 +89,39 @@ class ResultsReader(
             ResultMetric.byId(series.metric)?.let { it to series.points }
         }.toMap()
     }
+}
+
+/** The scenarios that measured something, folded onto buckets [bucketMs] wide that all of them share. */
+data class ChartedScenarios(
+    val bucketMs: Long,
+    val scenarios: List<ScenarioResults>,
+)
+
+/** What each seed of one scenario measured, and each metric averaged over those seeds. */
+private class MeasuredScenario(
+    private val index: Int,
+    private val units: List<RunUnit>,
+    perSeed: List<Map<ResultMetric, List<MetricPoint>>>,
+) {
+    private val seeds: Map<ResultMetric, List<List<MetricPoint>>> =
+        ResultMetric.entries
+            .associateWith { metric -> perSeed.mapNotNull { it[metric] }.filter { it.isNotEmpty() } }
+            .filterValues { it.isNotEmpty() }
+
+    val means: Map<ResultMetric, List<MetricPoint>> = seeds.mapValues { (_, measured) -> meanAcrossSeeds(measured) }
+
+    fun charted(grid: BucketGrid): ScenarioResults =
+        ScenarioResults(
+            scenarioIndex = index,
+            seeds = units.size,
+            complete = units.all { it.state.isTerminal },
+            series =
+                means.map { (metric, points) ->
+                    ResultSeries(
+                        metric = metric.id,
+                        points = bucket(points, grid, metric.overTime).map { ResultPoint(it.t, it.value) },
+                        spread = spreadAcrossSeeds(seeds.getValue(metric), metric.overTime),
+                    )
+                },
+        )
 }

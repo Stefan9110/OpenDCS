@@ -32,6 +32,7 @@ import org.opendc.web.dispatcher.ExitOutcome
 import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.dispatcher.Launch
 import org.opendc.web.dispatcher.LaunchRequest
+import org.opendc.web.dispatcher.MemoryCap
 import org.opendc.web.dispatcher.PlatformEvent
 import org.opendc.web.dispatcher.PlatformSpan
 import org.opendc.web.dispatcher.PlatformVerdict
@@ -97,6 +98,11 @@ class RecordingDispatcher : Dispatcher {
     /** Caps how long one execution may run here, the way a SLURM partition does. */
     fun capTime(cap: TimeCap) {
         capacity.updateAndGet { it.copy(timeCap = cap) }
+    }
+
+    /** Caps the memory one execution can be given here, the way a cluster's largest node does. */
+    fun capMemory(cap: MemoryCap) {
+        capacity.updateAndGet { it.copy(memoryCap = cap) }
     }
 
     /** The next launches are answered with [launches], in order. */

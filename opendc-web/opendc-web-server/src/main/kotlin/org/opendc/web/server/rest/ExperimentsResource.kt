@@ -52,7 +52,6 @@ import org.opendc.web.server.model.UnitState
 import org.opendc.web.server.results.ExperimentResults
 import org.opendc.web.server.results.LogExcerpt
 import org.opendc.web.server.results.ResultsReader
-import org.opendc.web.server.results.ScenarioResults
 import org.opendc.web.server.service.CostEstimate
 import org.opendc.web.server.service.SpecCodec
 import org.opendc.web.server.service.SubmissionPipeline
@@ -525,14 +524,14 @@ class ExperimentsResource(
     ): ExperimentResults {
         val experiment = readable(id)
         val units = RunUnit.findByExperiment(experiment.id)
-        val scenarios = results.read(experiment.publicId, units, buckets.coerceIn(1, MAX_BUCKETS))
         val exportIntervalMs = exportIntervalOf(experiment)
+        val charted = results.read(experiment.publicId, units, buckets.coerceIn(1, MAX_BUCKETS), exportIntervalMs)
         return ExperimentResults(
             experimentId = experiment.publicId.toString(),
             exportIntervalMs = exportIntervalMs,
-            bucketMs = bucketWidth(scenarios, exportIntervalMs),
+            bucketMs = charted.bucketMs,
             complete = !experiment.isDraft && units.isNotEmpty() && units.all { it.state.isTerminal },
-            scenarios = scenarios,
+            scenarios = charted.scenarios,
         )
     }
 
@@ -561,21 +560,6 @@ class ExperimentsResource(
     /** How often the simulation samples, taking the finest of the export models the spec offers. */
     private fun exportIntervalOf(experiment: ExperimentEntity): Long =
         codec.decodeExperiment(codec.parseStored(experiment.spec)).exportModels.minOf { it.exportInterval.toMsLong() }
-
-    /**
-     * How far apart the points are, read off the longest series rather than the bucket count, since a
-     * series shorter than the cap is not folded at all.
-     */
-    private fun bucketWidth(
-        scenarios: List<ScenarioResults>,
-        exportIntervalMs: Long,
-    ): Long {
-        val longest = scenarios.flatMap { it.series }.maxByOrNull { it.points.size }?.points.orEmpty()
-        if (longest.size < 2) {
-            return exportIntervalMs
-        }
-        return (longest.last().t - longest.first().t) / (longest.size - 1)
-    }
 
     private fun readable(id: String): ExperimentEntity = experimentFor(identity.currentUser(), id, ProjectPermission.READ)
 

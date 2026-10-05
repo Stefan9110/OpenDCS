@@ -87,11 +87,17 @@ interface Dispatcher : AutoCloseable {
     fun reconcile(executionIds: List<UUID>): Map<UUID, PlatformVerdict>
 }
 
-/** What one execution is given: the concurrency it may use, the memory it must stay under, and how long it may run. */
+/**
+ * What one execution is given: the concurrency it may use, the memory it must stay under, and how long it may run.
+ *
+ * @property memoryCap The most memory the platform can give any one execution, including a unit too
+ *   large for [memoryMb] that is run alone.
+ */
 data class ExecutionSlot(
     val cores: Int,
     val memoryMb: Double,
     val timeCap: TimeCap,
+    val memoryCap: MemoryCap = MemoryCap.Unlimited,
 )
 
 /** The longest an execution may run on a platform, as the platform sees it. */
@@ -105,6 +111,20 @@ sealed interface TimeCap {
         when (this) {
             Unlimited -> seconds
             is Limited -> minOf(seconds, this.seconds)
+        }
+}
+
+/** The most memory a platform can give one execution, as the platform sees it. */
+sealed interface MemoryCap {
+    data object Unlimited : MemoryCap
+
+    data class Limited(val megabytes: Double) : MemoryCap
+
+    /** [megabytes], or the cap where that is smaller. */
+    fun clamp(megabytes: Double): Double =
+        when (this) {
+            Unlimited -> megabytes
+            is Limited -> minOf(megabytes, this.megabytes)
         }
 }
 

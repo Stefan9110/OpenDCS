@@ -74,6 +74,10 @@ private const val DEFAULT_NAMESPACE = "default"
  * and calls the listener, so a slow listener never stalls the client and a start is always delivered
  * before an end. A stop this server asks for is written onto the Job before the Job is deleted, so
  * the verdict is read back from the cluster by whichever replica sees the end.
+ *
+ * The cluster is taken to be the nodes it shows. Executions are shaped to fit the one with the most
+ * memory, and a pod larger than every node is refused, at launch or once seen pending, rather than
+ * left waiting for a node that will never come.
  */
 class KubernetesDispatcher internal constructor(
     private val client: KubernetesClient,
@@ -102,9 +106,13 @@ class KubernetesDispatcher internal constructor(
     @Volatile
     private var capacity: CapacitySnapshot = ceiling()
 
+    /** What each node the pods can be placed on could give one of them. Written on the events thread. */
+    @Volatile
+    private var allocatable: List<PodResources> = emptyList()
+
     override val name: String get() = NAME
 
-    override fun slot(): ExecutionSlot = config.slot
+    override fun slot(): ExecutionSlot = config.slot.fittedTo(allocatable)
 
     override fun admits(
         cores: Int,
@@ -148,9 +156,15 @@ class KubernetesDispatcher internal constructor(
         }, SCAN_PERIOD.toMillis(), SCAN_PERIOD.toMillis(), TimeUnit.MILLISECONDS)
     }
 
-    override fun launch(request: LaunchRequest): Launch =
-        try {
-            jobs().resource(executionJob(request, config)).create()
+    override fun launch(request: LaunchRequest): Launch {
+        val job = executionJob(request, config)
+        val asked = requestOf(job)
+        val nodes = allocatable
+        if (fitsNoNode(asked, nodes)) {
+            return Launch.Rejected(tooLargeForNodes(asked, nodes))
+        }
+        return try {
+            jobs().resource(job).create()
             inFlight += request.executionId
             Launch.Accepted
         } catch (e: KubernetesClientException) {
@@ -163,6 +177,7 @@ class KubernetesDispatcher internal constructor(
                 else -> Launch.Unavailable(e.status?.message ?: e.message.orEmpty())
             }
         }
+    }
 
     override fun cancel(executionId: UUID) {
         stop(executionId, ExitReason.CANCELLED, "cancelled")
@@ -240,6 +255,7 @@ class KubernetesDispatcher internal constructor(
         deleted: Boolean,
     ) {
         if (deleted) nodes.remove(node.metadata.name) else nodes[node.metadata.name] = node
+        allocatable = allocatableOf(nodes.values.toList())
         refreshCapacity()
     }
 
@@ -249,10 +265,14 @@ class KubernetesDispatcher internal constructor(
         val listener = listener.get() ?: return
         val jobPods = pods[id].orEmpty().values.toList()
         when (val state = jobState(seen.job, jobPods, seen.gone)) {
-            is JobState.Pending ->
-                if (Duration.between(state.since, Instant.now()) >= config.pendingTimeout) {
+            is JobState.Pending -> {
+                val asked = requestOf(seen.job)
+                if (fitsNoNode(asked, allocatable)) {
+                    stop(id, ExitReason.REJECTED, tooLargeForNodes(asked, allocatable))
+                } else if (Duration.between(state.since, Instant.now()) >= config.pendingTimeout) {
                     stop(id, ExitReason.UNKNOWN, "did not start within ${config.pendingTimeout}: ${state.cause}")
                 }
+            }
             is JobState.Refused -> stop(id, ExitReason.REJECTED, state.message)
             is JobState.Running ->
                 if (started.add(id)) {

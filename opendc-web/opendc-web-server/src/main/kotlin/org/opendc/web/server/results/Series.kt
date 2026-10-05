@@ -24,7 +24,6 @@ package org.opendc.web.server.results
 
 import org.opendc.web.launcher.MetricPoint
 import org.opendc.web.launcher.Reduction
-import kotlin.math.floor
 
 /**
  * Averages one metric over the seeds a scenario was run with, aligned on the instant rather than on
@@ -44,28 +43,49 @@ fun meanAcrossSeeds(perSeed: List<List<MetricPoint>>): List<MetricPoint> {
 }
 
 /**
- * Reduces [points] to at most [buckets] of them, folding each bucket the way [fold] says. The
- * frontend folds the same way again for its chart width, so the two must agree.
+ * Buckets [width] ms wide laid end to end from [origin]. Every series of an experiment is folded into
+ * the same grid, so the scenarios drawn on one chart share their instants.
  */
+data class BucketGrid(
+    val origin: Long,
+    val width: Long,
+)
+
+/**
+ * The grid that folds each of [series] to at most [buckets] points. It starts at the earliest instant
+ * any of them measured and is the export interval wide, doubled until the longest series fits and no
+ * series skips a bucket. Doubling keeps a whole number of instants in each bucket, and of the points a
+ * launcher folds by doubling too.
+ */
+fun bucketGrid(
+    series: List<List<MetricPoint>>,
+    exportIntervalMs: Long,
+    buckets: Int,
+): BucketGrid {
+    require(buckets > 0) { "a grid needs at least one bucket, not $buckets" }
+    val measured = series.filter { it.isNotEmpty() }
+    if (measured.isEmpty()) {
+        return BucketGrid(0, exportIntervalMs)
+    }
+    val origin = measured.minOf { it.first().t }
+    val end = measured.maxOf { it.last().t }
+    val widestGap = measured.maxOf { points -> points.zipWithNext { first, next -> next.t - first.t }.fold(0L, ::maxOf) }
+    var width = exportIntervalMs.coerceAtLeast(1)
+    while ((end - origin) / width >= buckets || width < widestGap) {
+        width *= 2
+    }
+    return BucketGrid(origin, width)
+}
+
+/** Folds [points] into [grid], each bucket the way [fold] says and stamped with the instant it begins. */
 fun bucket(
     points: List<MetricPoint>,
-    buckets: Int,
+    grid: BucketGrid,
     fold: Reduction,
-): List<MetricPoint> {
-    if (buckets <= 0) {
-        return emptyList()
-    }
-    if (points.size <= buckets) {
-        return points
-    }
-    val width = points.size.toDouble() / buckets
-    return (0 until buckets).map { index ->
-        val from = floor(index * width).toInt()
-        val to = if (index == buckets - 1) points.size else floor((index + 1) * width).toInt()
-        val inside = points.subList(from, maxOf(to, from + 1))
-        MetricPoint(points[from].t, fold.of(inside.map { it.value }))
-    }
-}
+): List<MetricPoint> =
+    points
+        .groupBy { (it.t - grid.origin) / grid.width }
+        .map { (index, inside) -> MetricPoint(grid.origin + index * grid.width, fold.of(inside.map { it.value })) }
 
 /**
  * How far apart the seeds landed: each seed's series reduced by [fold], then the highest minus the

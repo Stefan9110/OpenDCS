@@ -26,6 +26,7 @@ import io.fabric8.kubernetes.api.model.NodeBuilder
 import io.fabric8.kubernetes.api.model.Pod
 import io.fabric8.kubernetes.api.model.PodBuilder
 import io.fabric8.kubernetes.api.model.Quantity
+import io.fabric8.kubernetes.api.model.TaintBuilder
 import io.fabric8.kubernetes.api.model.batch.v1.Job
 import io.fabric8.kubernetes.api.model.batch.v1.JobBuilder
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -146,14 +147,16 @@ class ClusterReadingTest {
         )
     }
 
+    // This server's pods tolerate no taint, so a node that repels them is no capacity of theirs.
     @Test
-    fun `counts only Ready, schedulable nodes, and this server's ceiling when none are visible`() {
+    fun `counts only nodes this server's pods can be placed on, and its ceiling when none are visible`() {
         val ceiling = CapacitySnapshot(64, 131072.0, 0, 0.0)
-        val ready = node("ready", ready = true, unschedulable = false)
+        val ready = node("ready", ready = true, unschedulable = false, taintEffects = listOf("PreferNoSchedule"))
         val cordoned = node("cordoned", ready = true, unschedulable = true)
         val down = node("down", ready = false, unschedulable = false)
+        val reserved = node("reserved", ready = true, unschedulable = false, taintEffects = listOf("NoSchedule"))
 
-        val seen = capacityOf(listOf(ready, cordoned, down), emptyList(), ceiling)
+        val seen = capacityOf(listOf(ready, cordoned, down, reserved), emptyList(), ceiling)
 
         assertEquals(8, seen.totalCores)
         assertEquals(16384.0, seen.totalMemoryMb, 1e-6)
@@ -231,12 +234,14 @@ class ClusterReadingTest {
         name: String,
         ready: Boolean,
         unschedulable: Boolean,
+        taintEffects: List<String> = emptyList(),
     ) = NodeBuilder()
         .withNewMetadata()
         .withName(name)
         .endMetadata()
         .withNewSpec()
         .withUnschedulable(unschedulable)
+        .withTaints(taintEffects.map { TaintBuilder().withKey("example.org/reserved").withEffect(it).build() })
         .endSpec()
         .withNewStatus()
         .addToAllocatable("cpu", Quantity("8"))
