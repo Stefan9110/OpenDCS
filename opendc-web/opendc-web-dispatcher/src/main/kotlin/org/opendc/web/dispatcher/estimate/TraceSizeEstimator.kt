@@ -55,7 +55,25 @@ data class EstimatorCoefficients(
     val failureOverhead: Double,
     /** What checkpointing adds, as a fraction. */
     val checkpointOverhead: Double,
-)
+) {
+    companion object {
+        /** The defaults the server ships, as in its execution config. Priors, never fitted to a run. */
+        val SHIPPED =
+            EstimatorCoefficients(
+                baseMemoryMb = 80.0,
+                memoryPerHostMb = 0.03,
+                memoryPerMillionFragmentsMb = 80.0,
+                memoryPerMillionTasksMb = 2500.0,
+                baseSeconds = 2.0,
+                loadSecondsPerMillionFragments = 1.2,
+                simulateSecondsPerMillionFragments = 1.6,
+                secondsPerMillionTasks = 1800.0,
+                exportCostPerHost = 0.005,
+                failureOverhead = 0.25,
+                checkpointOverhead = 0.15,
+            )
+    }
+}
 
 /** How much of [workload]'s trace is actually simulated. A workload written into the document runs whole. */
 fun sampledShare(workload: WorkloadSpec): Double =

@@ -160,4 +160,12 @@ class TraceSizeEstimatorTest {
         assertTrue(estimate.peakMemoryMb > 0.0)
         assertTrue(estimate.cpuSeconds > 0.0)
     }
+
+    @Test
+    fun `shipped coefficients predict a positive cost for an unmeasured trace`() {
+        val estimate = TraceSizeEstimator(EstimatorCoefficients.SHIPPED).estimate(scenario(hosts = 10), TraceExtent.UNKNOWN)
+
+        assertEquals(80.0 + 0.03 * 10, estimate.peakMemoryMb)
+        assertTrue(estimate.cpuSeconds > 0.0)
+    }
 }
