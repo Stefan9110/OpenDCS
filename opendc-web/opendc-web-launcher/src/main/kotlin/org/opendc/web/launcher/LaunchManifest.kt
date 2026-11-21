@@ -23,7 +23,7 @@
 package org.opendc.web.launcher
 
 import kotlinx.serialization.Serializable
-import org.opendc.sdk.model.experiment.ScenarioSpec
+import org.opendc.sdk.model.scenario.ScenarioSpec
 
 /** The one environment variable a launcher reads: where its manifest is. */
 const val MANIFEST_URL_VARIABLE = "MANIFEST_URL"
@@ -61,7 +61,7 @@ data class StagedInput(
 )
 
 /**
- * One `(scenario, seed)` run: [scenario] has `runs = 1`, its own `initialSeed` and only staged paths.
+ * One `(scenario, seed)` run: [scenario] carries its own `seed` and only staged paths.
  *
  * @property outcome Where the unit's [UnitOutcome] is published, once its outputs are.
  */

@@ -22,16 +22,18 @@
 
 package org.opendc.sdk.model
 
+import org.opendc.sdk.model.carbon.TraceBasedCarbonSpec
 import org.opendc.sdk.model.checkpoint.CheckpointModelSpec
 import org.opendc.sdk.model.dsl.ghz
 import org.opendc.sdk.model.dsl.gib
 import org.opendc.sdk.model.dsl.kwatts
+import org.opendc.sdk.model.dsl.kwh
 import org.opendc.sdk.model.dsl.minutes
 import org.opendc.sdk.model.dsl.watts
 import org.opendc.sdk.model.experiment.ExperimentSpec
-import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.failure.NoFailureSpec
 import org.opendc.sdk.model.resource.NamedReference
+import org.opendc.sdk.model.scenario.ScenarioSpec
 import org.opendc.sdk.model.scheduler.PrefabAllocationPolicySpec
 import org.opendc.sdk.model.scheduler.SchedulerPrefabSpec
 import org.opendc.sdk.model.telemetry.ExportSpec
@@ -44,9 +46,8 @@ import org.opendc.sdk.model.topology.EqualSharePolicySpec
 import org.opendc.sdk.model.topology.FixedSharePolicySpec
 import org.opendc.sdk.model.topology.HostSpec
 import org.opendc.sdk.model.topology.MemorySpec
-import org.opendc.sdk.model.topology.PowerModelSpec
-import org.opendc.sdk.model.topology.PowerModelType
 import org.opendc.sdk.model.topology.PowerSourceSpec
+import org.opendc.sdk.model.topology.SquarePowerModelSpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.workload.InlineWorkloadSpec
 import org.opendc.sdk.model.workload.ScalingPolicySpec
@@ -97,7 +98,7 @@ public val sampleHost: HostSpec =
         count = 4,
         cpu = CpuSpec(coreCount = 8, coreSpeed = 3.ghz, count = 2, vendor = "AMD", modelName = "EPYC", architecture = "Zen4"),
         memory = MemorySpec(size = 32.gib, speed = 3.ghz, vendor = "Samsung"),
-        cpuPowerModel = PowerModelSpec(PowerModelType.SQUARE, 500.watts, 100.watts, 350.watts),
+        cpuPowerModel = SquarePowerModelSpec(maxPower = 500.watts, idlePower = 100.watts),
         cpuDistribution = FixedSharePolicySpec(0.5),
         gpuDistribution = EqualSharePolicySpec,
     )
@@ -113,13 +114,13 @@ public val sampleDataCenter: DataCenterSpec =
     DataCenterSpec(
         name = "DC-a",
         clusters = listOf(sampleCluster),
-        powerSource = PowerSourceSpec(name = "grid", maxPower = 50.kwatts, carbon = NamedReference("carbon-trace")),
+        powerSource = PowerSourceSpec(name = "grid", maxPower = 50.kwatts, carbon = TraceBasedCarbonSpec(NamedReference("carbon-trace"))),
         battery =
             BatterySpec(
                 name = "cell",
-                capacity = 100.0,
-                chargingSpeed = 1000.0,
-                initialCharge = 20.0,
+                capacity = 100.kwh,
+                chargingSpeed = 1000.watts,
+                initialCharge = 20.kwh,
                 policy = DoubleBatteryPolicySpec(lowerThreshold = 100.0, upperThreshold = 300.0),
                 embodiedCarbon = 50.0,
                 expectedLifetime = 10.0,
@@ -168,10 +169,9 @@ public val sampleScenario: ScenarioSpec =
         failureModel = NoFailureSpec,
         checkpointModel = CheckpointModelSpec(),
         maxNumFailures = 5,
-        runs = 3,
-        initialSeed = 42,
+        seed = 42,
         id = 0,
-        name = "sample",
+        experimentName = "sample",
     )
 
 public val sampleExperiment: ExperimentSpec =

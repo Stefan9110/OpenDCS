@@ -83,6 +83,22 @@ function validateCpu(cpu: CpuSpec, path: string): DocumentIssue[] {
 }
 
 function validatePowerSpec(power: PowerSpec, path: string): DocumentIssue[] {
+    switch (power.type) {
+        case "constant":
+            return measurement("power", power.power, `${path}.power`)
+        case "linear":
+        case "square":
+        case "cubic":
+        case "sqrt":
+            return validateMaxIdle(power, path)
+        case "mse":
+            return [...validateMaxIdle(power, path), ...positive(power.calibrationFactor, `${path}.calibrationFactor`)]
+        case "asymptotic":
+            return [...validateMaxIdle(power, path), ...positive(power.asymUtil, `${path}.asymUtil`)]
+    }
+}
+
+function validateMaxIdle(power: { maxPower: Quantity; idlePower: Quantity }, path: string): DocumentIssue[] {
     const issues: DocumentIssue[] = []
     const max = parseQuantity("power", power.maxPower)
     const idle = parseQuantity("power", power.idlePower)
@@ -91,10 +107,11 @@ function validatePowerSpec(power: PowerSpec, path: string): DocumentIssue[] {
     if (max.status === "ok" && idle.status === "ok" && max.base < idle.base) {
         issues.push({ path: `${path}.maxPower`, message: "must be >= idlePower" })
     }
-    if (power.calibrationFactor !== undefined && power.calibrationFactor <= 0) {
-        issues.push({ path: `${path}.calibrationFactor`, message: "must be > 0" })
-    }
     return issues
+}
+
+function positive(value: number, path: string): DocumentIssue[] {
+    return value > 0 ? [] : [{ path, message: "must be > 0" }]
 }
 
 const QUANTITY_LABEL: Record<QuantityKind, string> = {
@@ -102,6 +119,7 @@ const QUANTITY_LABEL: Record<QuantityKind, string> = {
     dataSize: "data size",
     dataRate: "data rate",
     power: "power",
+    energy: "energy",
     time: "duration",
 }
 

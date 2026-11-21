@@ -5,7 +5,7 @@ import { CatalogSelect } from "@/components/topology/inspector/CatalogSelect"
 import { QuantityInput } from "@/components/topology/inspector/QuantityInput"
 import { useTraceOptions } from "@/lib/api/traces"
 import { WATTS_PER_KW, dataCenterHeadroom, isOverBudget, suggestedSupplyW } from "@/lib/topology/capacity"
-import type { DataCenterSpec, PowerSourceSpec } from "@/lib/topology/spec"
+import { type DataCenterSpec, type PowerSourceSpec, carbonTraceName } from "@/lib/topology/spec"
 import { Progress, Stack, Switch, Text } from "@mantine/core"
 
 export function SupplyFields({
@@ -18,7 +18,7 @@ export function SupplyFields({
     const source = dataCenter.powerSource ?? {}
     const headroom = dataCenterHeadroom(dataCenter)
     const budget = headroom.budget
-    const carbon = source.carbon?.type === "named" ? source.carbon.name : null
+    const carbon = carbonTraceName(source.carbon)
     const carbonTraces = useTraceOptions("carbon")
 
     return (
@@ -66,7 +66,10 @@ export function SupplyFields({
                 placeholder="None"
                 value={carbon}
                 onChange={(value) =>
-                    onChange({ ...source, carbon: value ? { type: "named", name: value } : undefined })
+                    onChange({
+                        ...source,
+                        carbon: value ? { type: "trace", source: { type: "named", name: value } } : undefined,
+                    })
                 }
             />
         </Stack>

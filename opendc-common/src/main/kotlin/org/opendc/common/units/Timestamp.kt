@@ -73,6 +73,8 @@ public value class Timestamp private constructor(
 
     public fun toEpochDays(): Double = toEpochHours() / 24
 
+    public fun toEpochWeeks(): Double = toEpochDays() / 7
+
     // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Operation Override (to avoid boxing of value classes in byte code)
     // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -87,7 +89,7 @@ public value class Timestamp private constructor(
 
     public override operator fun div(scalar: Number): Timestamp = Timestamp(value / scalar.toDouble())
 
-    public override operator fun div(other: Timestamp): Percentage = Percentage.ofRatio(value / other.value)
+    public override operator fun div(other: Timestamp): Percentage = Percentage.ofRatioUnchecked(value / other.value)
 
     public override operator fun times(scalar: Number): Timestamp = Timestamp(value * scalar.toDouble())
 
@@ -189,7 +191,7 @@ public value class Timestamp private constructor(
             Instant.ofEpochMilli(toEpochMs().toLong())
         }
 
-    public fun toTimeDeltaFromEpoch(): TimeDelta = TimeDelta.ofMillis(toEpochMs())
+    public fun toTimeDeltaFromEpoch(): TimeDelta = TimeDelta.ofMs(toEpochMs())
 
     // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Companion
@@ -222,11 +224,19 @@ public value class Timestamp private constructor(
 
         @JvmStatic
         @JvmName("ofEpochMin")
-        public fun ofEpochMin(sec: Number): Timestamp = ofEpochSec(sec.toDouble() * 60)
+        public fun ofEpochMin(min: Number): Timestamp = ofEpochSec(min.toDouble() * 60)
 
         @JvmStatic
         @JvmName("ofEpochHours")
-        public fun ofEpochHours(sec: Number): Timestamp = ofEpochMin(sec.toDouble() * 60)
+        public fun ofEpochHours(hours: Number): Timestamp = ofEpochMin(hours.toDouble() * 60)
+
+        @JvmStatic
+        @JvmName("ofEpochDays")
+        public fun ofEpochDays(days: Number): Timestamp = ofEpochHours(days.toDouble() * 24)
+
+        @JvmStatic
+        @JvmName("ofEpochWeeks")
+        public fun ofEpochWeeks(weeks: Number): Timestamp = ofEpochDays(weeks.toDouble() * 7)
 
         @JvmStatic
         @JvmName("ofInstant")
@@ -260,7 +270,11 @@ public value class Timestamp private constructor(
                 )
                 ofEpochMs(it.toDouble())
             },
-            serializerFun = { this.encodeString(it.toString()) },
+            // Whole milliseconds are written as an instant, which reads back exactly; any other value as its exact epoch ms.
+            serializerFun = {
+                val ms = it.toEpochMs()
+                this.encodeString(if (ms == ms.toLong().toDouble()) Instant.ofEpochMilli(ms.toLong()).toString() else ms.toExactString())
+            },
             ifNoExc { ofInstant(Instant.parse(this)) },
             ifNoExc {
                 val duration = Duration.parse(this)

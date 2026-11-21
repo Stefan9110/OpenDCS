@@ -9,6 +9,7 @@ const KIND_NAMES: Record<QuantityKind, string> = {
     dataSize: "size",
     dataRate: "data rate",
     power: "power",
+    energy: "energy",
     time: "duration",
 }
 

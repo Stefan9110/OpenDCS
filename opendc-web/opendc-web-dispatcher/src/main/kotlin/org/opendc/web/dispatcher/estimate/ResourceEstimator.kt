@@ -22,7 +22,7 @@
 
 package org.opendc.web.dispatcher.estimate
 
-import org.opendc.sdk.model.experiment.ScenarioSpec
+import org.opendc.sdk.model.scenario.ScenarioSpec
 
 /**
  * Predicts what one `(scenario, seed)` run will cost, before anything is simulated.

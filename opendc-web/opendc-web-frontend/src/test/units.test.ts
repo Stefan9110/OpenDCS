@@ -1,7 +1,7 @@
 import { DEFAULT_UNIT, type QuantityKind, amountIn, formatQuantity, formatWire, parseQuantity } from "@/lib/units"
 import { describe, expect, it } from "vitest"
 
-const KINDS: QuantityKind[] = ["frequency", "dataSize", "dataRate", "power", "time"]
+const KINDS: QuantityKind[] = ["frequency", "dataSize", "dataRate", "power", "energy", "time"]
 
 function base(kind: QuantityKind, wire: string | number): number {
     const parsed = parseQuantity(kind, wire)
@@ -46,6 +46,31 @@ describe("durations", () => {
         expect(formatWire("time", 3.6e6)).toBe("1 h")
         // Nothing readable in it, so it is shown as it was stored rather than as an invented number.
         expect(formatWire("time", "whenever")).toBe("whenever")
+    })
+})
+
+describe("energy", () => {
+    // A battery's capacity once meant kilowatt-hours as a bare number; the backend now counts it in joules.
+    it("reads a bare number as joules and the joules the backend writes back", () => {
+        expect(base("energy", 100)).toBe(100)
+        expect(base("energy", "360000000 J")).toBe(3.6e8)
+        expect(base("energy", "100 kWh")).toBe(3.6e8)
+    })
+
+    it("reads every watt-hour and joule spelling the backend does", () => {
+        expect(base("energy", "1 MWh")).toBe(3.6e9)
+        expect(base("energy", "2 Wh")).toBe(7200)
+        expect(base("energy", "1 kW/h")).toBe(3.6e6)
+        expect(base("energy", "3 MJ")).toBe(3e6)
+        expect(base("energy", "1 GJ")).toBe(1e9)
+        expect(base("energy", "5 kilojoules")).toBe(5000)
+    })
+
+    // The backend reads a lower-case m as milli, which it refuses, so this must not become mega.
+    it("rejects milli rather than reading it as mega", () => {
+        expect(parseQuantity("energy", "1 mWh").status).toBe("invalid")
+        expect(parseQuantity("energy", "1 mJ").status).toBe("invalid")
+        expect(parseQuantity("energy", "1 kW").status).toBe("invalid")
     })
 })
 

@@ -23,6 +23,9 @@
 package org.opendc.simulator.compute.service
 
 import mu.KotlinLogging
+import org.opendc.common.units.DataSize
+import org.opendc.common.units.Timestamp
+import org.opendc.simulator.compute.TaskWatcher
 import org.opendc.simulator.compute.carbon.CarbonNode
 import org.opendc.simulator.compute.carbon.CarbonReceiver
 import org.opendc.simulator.compute.infrastructure.SimCluster
@@ -129,8 +132,13 @@ public class ComputeService(
 
     private val taskListeners = ArrayList<TaskListener>()
 
+    /**
+     * The watchers of the state of every task of this service.
+     */
+    private val taskWatchers = ArrayList<TaskWatcher>()
+
     private var maxCores = 0
-    private var maxMemory = 0L
+    private var maxMemory = DataSize.zero
 
     // ==================================================================================
     // Lifecycle
@@ -203,6 +211,23 @@ public class ComputeService(
         taskListeners.add(listener)
     }
 
+    /**
+     * Add a [watcher] of the state of every task of this service. It is called after the state of a task has changed,
+     * from the moment the task is submitted.
+     */
+    public fun addTaskWatcher(watcher: TaskWatcher) {
+        taskWatchers.add(watcher)
+    }
+
+    /**
+     * Notify the task watchers that the state of [task] has changed. Called by [SimTask].
+     */
+    internal fun onTaskStateChanged(task: SimTask) {
+        for (watcher in taskWatchers) {
+            watcher.onStateChanged(task, task.state)
+        }
+    }
+
     // ==================================================================================
     // Host management
     // Registering hosts with the scheduling pool and reacting to their availability.
@@ -220,7 +245,7 @@ public class ComputeService(
         val model = host.model
 
         maxCores = maxOf(maxCores, model.coreCount)
-        maxMemory = maxOf(maxMemory, model.memoryCapacity)
+        maxMemory = maxOf(maxMemory, DataSize.ofMiB(model.memoryCapacity))
         _hosts.add(host)
 
         if (host.state == HostState.UP) {
@@ -448,7 +473,7 @@ public class ComputeService(
         }
 
         val now = clock.millis()
-        val request = SchedulingRequest(task, now)
+        val request = SchedulingRequest(task, Timestamp.ofEpochMs(now))
 
         // If the task has parents, put in blocked tasks
         if (task.hasParents()) {

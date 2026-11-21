@@ -86,8 +86,8 @@ internal class RemoteBackend(
         val overview =
             SimulationOverview(
                 name = name,
-                scenarios = scenarios.size,
-                runs = scenarios.sumOf { it.runs },
+                scenarios = scenarios.distinctBy { it.id }.size,
+                runs = scenarios.size,
                 topologies = request.experiment.topologies.size,
                 workloads = request.experiment.workloads.size,
                 policies = request.experiment.allocationPolicies.size,

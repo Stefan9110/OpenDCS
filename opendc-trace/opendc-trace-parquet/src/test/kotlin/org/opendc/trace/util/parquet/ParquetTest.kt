@@ -37,8 +37,11 @@ import org.apache.parquet.schema.Type
 import org.apache.parquet.schema.Types
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
+import org.junit.jupiter.api.assertAll
 import org.junit.jupiter.api.assertThrows
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
@@ -58,7 +61,12 @@ internal class ParquetTest {
                     .named("field"),
             )
             .named("test")
-    private val writeSupport =
+    private val writeSupport = createWriteSupport()
+
+    /**
+     * A [WriteSupport] holds the record consumer of its writer, so every writer needs its own.
+     */
+    private fun createWriteSupport() =
         object : WriteSupport<Int>() {
             lateinit var recordConsumer: RecordConsumer
 
@@ -78,6 +86,19 @@ internal class ParquetTest {
                 consumer.addInteger(record)
                 consumer.endField("field", 0)
                 consumer.endMessage()
+            }
+        }
+
+    private fun createFailingWriteSupport() =
+        object : WriteSupport<Int>() {
+            override fun init(configuration: Configuration): WriteContext {
+                return WriteContext(schema, emptyMap())
+            }
+
+            override fun prepareForWrite(recordConsumer: RecordConsumer) {}
+
+            override fun write(record: Int) {
+                throw IllegalArgumentException("Test failure")
             }
         }
 
@@ -167,6 +188,178 @@ internal class ParquetTest {
             LocalParquetReader(path, readSupport)
         }
     }
+
+    /**
+     * Test whether the data writer writes every record before closing the file.
+     */
+    @Test
+    @Timeout(10)
+    fun testDataWriter() {
+        val n = 10_000
+        val writer = object : ParquetDataWriter<Int>(path.toFile(), ::createWriteSupport, bufferSize = 16) {}
+
+        writer.use {
+            repeat(n) { i ->
+                writer.write(i)
+            }
+        }
+
+        assertEquals((0 until n).toList(), readRecords())
+    }
+
+    /**
+     * Test whether the data writer writes the records of a batch that is not full yet when it is closed.
+     */
+    @Test
+    @Timeout(10)
+    fun testDataWriterPartialBatch() {
+        val n = 100
+        val writer = object : ParquetDataWriter<Int>(path.toFile(), ::createWriteSupport) {}
+
+        writer.use {
+            repeat(n) { i ->
+                writer.write(i)
+            }
+        }
+
+        assertEquals((0 until n).toList(), readRecords())
+    }
+
+    /**
+     * Test whether a failing writer thread fails the writes instead of blocking them.
+     */
+    @Test
+    @Timeout(10)
+    fun testDataWriterFailure() {
+        val writer = object : ParquetDataWriter<Int>(path.toFile(), ::createFailingWriteSupport, bufferSize = 1) {}
+
+        assertThrows<IllegalStateException> {
+            repeat(1000) { i ->
+                writer.write(i)
+            }
+        }
+
+        assertThrows<IllegalStateException>("closing a failed writer reports the failure") { writer.close() }
+    }
+
+    /**
+     * Test whether a writer thread that cannot create the file fails the writes instead of blocking them.
+     */
+    @Test
+    @Timeout(10)
+    fun testDataWriterCreationFailure() {
+        val writer = object : ParquetDataWriter<Int>(path.resolve("missing/file.parquet").toFile(), ::createWriteSupport, bufferSize = 1) {}
+
+        assertThrows<IllegalStateException> {
+            repeat(1000) { i ->
+                writer.write(i)
+            }
+        }
+
+        assertThrows<IllegalStateException>("closing a failed writer reports the failure") { writer.close() }
+    }
+
+    /**
+     * Test whether a data writer with several writer threads writes every record to the output file and removes its
+     * part files.
+     */
+    @Test
+    @Timeout(10)
+    fun testDataWriterThreads() {
+        val n = 10_007
+        val writer = object : ParquetDataWriter<Int>(path.toFile(), ::createWriteSupport, bufferSize = 64, writerThreads = 3) {}
+
+        writer.use {
+            repeat(n) { i ->
+                writer.write(i)
+            }
+        }
+
+        assertAll(
+            { assertEquals((0 until n).toList(), readRecords().sorted()) },
+            { assertEquals(emptyList<Path>(), partFiles()) },
+        )
+    }
+
+    /**
+     * Test whether a data writer with several threads that routes the records by key writes the records of every key in
+     * the order they were written.
+     */
+    @Test
+    @Timeout(10)
+    fun testDataWriterThreadsByKey() {
+        val n = 10_007
+        val writer =
+            object : ParquetDataWriter<Int>(
+                path.toFile(),
+                ::createWriteSupport,
+                bufferSize = 64,
+                writerThreads = 3,
+                shardKey = { it % 7 },
+            ) {}
+
+        writer.use {
+            repeat(n) { i ->
+                writer.write(i)
+            }
+        }
+
+        val records = readRecords()
+        assertAll(
+            { assertEquals((0 until n).toList(), records.sorted()) },
+            { assertTrue((0 until 7).all { key -> records.filter { it % 7 == key }.let { it == it.sorted() } }) },
+        )
+    }
+
+    /**
+     * Test whether a failing writer thread of a data writer with several threads fails the writes, and whether the part
+     * files are removed.
+     */
+    @Test
+    @Timeout(10)
+    fun testDataWriterThreadsFailure() {
+        val writer = object : ParquetDataWriter<Int>(path.toFile(), ::createFailingWriteSupport, bufferSize = 2, writerThreads = 2) {}
+
+        assertThrows<IllegalStateException> {
+            repeat(1000) { i ->
+                writer.write(i)
+            }
+        }
+        assertThrows<IllegalStateException>("closing a failed writer reports the failure") { writer.close() }
+
+        assertEquals(emptyList<Path>(), partFiles())
+    }
+
+    private fun partFiles(): List<Path> {
+        val directory = path.resolveSibling(".${path.fileName}.parts")
+        return if (Files.exists(directory)) listOf(directory) else emptyList()
+    }
+
+    /**
+     * Test whether reading a directory skips hidden files, such as the part files of an aborted writer.
+     */
+    @Test
+    fun testReadDirectorySkipsHiddenFiles() {
+        val directory = Files.createTempDirectory("opendc-parquet-dir")
+        try {
+            LocalParquetWriter.builder(directory.resolve("data.parquet"), writeSupport).build().use { writer ->
+                repeat(3) { writer.write(it) }
+            }
+            Files.writeString(directory.resolve(".data.parquet.parts"), "not parquet")
+
+            val records = LocalParquetReader(directory, readSupport).use { reader -> generateSequence { reader.read() }.toList() }
+
+            assertEquals(listOf(0, 1, 2), records)
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    private fun readRecords(): List<Int> =
+        LocalParquetReader(
+            path,
+            readSupport,
+        ).use { reader -> generateSequence { reader.read() }.toList() }
 
     private class TestRecordMaterializer : RecordMaterializer<Int>() {
         private var current: Int = 0

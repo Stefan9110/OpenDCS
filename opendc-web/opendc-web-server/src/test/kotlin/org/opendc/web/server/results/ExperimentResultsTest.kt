@@ -35,6 +35,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.opendc.sdk.model.telemetry.MetaFile
+import org.opendc.sdk.model.telemetry.OutputFileSpec
 import org.opendc.trace.parquet.LocalOutputFile
 import org.opendc.web.dispatcher.ExitReason
 import org.opendc.web.launcher.ResultMetric
@@ -86,7 +88,7 @@ class ExperimentResultsTest {
     fun `a finished run is charted from its parquet rather than from what it posted`() {
         val experiment = running()
         post(experiment, ResultMetric.HOST_CPU_UTILIZATION, 0.9)
-        hostTable(experiment, Row(t = 0, host = "H0", usage = 100.0, capacity = 1000.0, power = 100.0))
+        hostTable(experiment, Row(t = 0, host = 0, usage = 100.0, capacity = 1000.0, power = 100.0))
 
         settle(experiment)
 
@@ -98,8 +100,8 @@ class ExperimentResultsTest {
         val experiment = running()
         hostTable(
             experiment,
-            Row(t = 0, host = "H0", usage = 200.0, capacity = 1000.0, power = 100.0),
-            Row(t = 0, host = "H1", usage = 400.0, capacity = 1000.0, power = 200.0),
+            Row(t = 0, host = 0, usage = 200.0, capacity = 1000.0, power = 100.0),
+            Row(t = 0, host = 1, usage = 400.0, capacity = 1000.0, power = 200.0),
         )
 
         settle(experiment)
@@ -114,16 +116,16 @@ class ExperimentResultsTest {
         val fewLarge = running()
         hostTable(
             fewLarge,
-            Row(t = 0, host = "H0", usage = 100.0, capacity = 900.0, power = 100.0),
-            Row(t = 0, host = "H1", usage = 8.0, capacity = 100.0, power = 100.0),
+            Row(t = 0, host = 0, usage = 100.0, capacity = 900.0, power = 100.0),
+            Row(t = 0, host = 1, usage = 8.0, capacity = 100.0, power = 100.0),
         )
         settle(fewLarge)
 
         val manySmall = running()
         hostTable(
             manySmall,
-            Row(t = 0, host = "H0", usage = 54.0, capacity = 500.0, power = 100.0),
-            Row(t = 0, host = "H1", usage = 54.0, capacity = 500.0, power = 100.0),
+            Row(t = 0, host = 0, usage = 54.0, capacity = 500.0, power = 100.0),
+            Row(t = 0, host = 1, usage = 54.0, capacity = 500.0, power = 100.0),
         )
         settle(manySmall)
 
@@ -132,16 +134,29 @@ class ExperimentResultsTest {
         assertEquals(0.108, valueOf(results(manySmall), ResultMetric.HOST_CPU_UTILIZATION), 1e-9)
     }
 
+    // Capacity lives in the meta file, so a run whose meta never landed has no share to report, but its
+    // power is still in the table and must not be lost with it.
+    @Test
+    fun `leaves out utilization but keeps power when the meta file has not landed`() {
+        val experiment = running()
+        hostTable(experiment, Row(t = 0, host = 0, usage = 100.0, capacity = 1000.0, power = 100.0), withMeta = false)
+
+        settle(experiment)
+
+        val metrics = results(experiment).getList<String>("scenarios[0].series.metric")
+        assertEquals(listOf(ResultMetric.HOST_POWER_DRAW.id), metrics)
+    }
+
     // The writer records the closing instant twice: on the export interval and when the last task ends.
     @Test
     fun `counts an instant the writer recorded twice only once`() {
         val experiment = running()
         hostTable(
             experiment,
-            Row(t = 0, host = "H0", usage = 200.0, capacity = 1000.0, power = 100.0),
-            Row(t = 0, host = "H1", usage = 400.0, capacity = 1000.0, power = 200.0),
-            Row(t = 0, host = "H0", usage = 200.0, capacity = 1000.0, power = 100.0),
-            Row(t = 0, host = "H1", usage = 400.0, capacity = 1000.0, power = 200.0),
+            Row(t = 0, host = 0, usage = 200.0, capacity = 1000.0, power = 100.0),
+            Row(t = 0, host = 1, usage = 400.0, capacity = 1000.0, power = 200.0),
+            Row(t = 0, host = 0, usage = 200.0, capacity = 1000.0, power = 100.0),
+            Row(t = 0, host = 1, usage = 400.0, capacity = 1000.0, power = 200.0),
         )
 
         settle(experiment)
@@ -152,7 +167,7 @@ class ExperimentResultsTest {
     @Test
     fun `reports a finished experiment as complete so a chart stops asking`() {
         val experiment = running()
-        hostTable(experiment, Row(t = 0, host = "H0", usage = 500.0, capacity = 1000.0, power = 100.0))
+        hostTable(experiment, Row(t = 0, host = 0, usage = 500.0, capacity = 1000.0, power = 100.0))
 
         settle(experiment)
 
@@ -162,12 +177,12 @@ class ExperimentResultsTest {
     @Test
     fun `forgets what a scenario measured once it has been run again`() {
         val experiment = running()
-        hostTable(experiment, Row(t = 0, host = "H0", usage = 100.0, capacity = 1000.0, power = 100.0))
+        hostTable(experiment, Row(t = 0, host = 0, usage = 100.0, capacity = 1000.0, power = 100.0))
         settle(experiment)
         assertEquals(0.1, valueOf(results(experiment), ResultMetric.HOST_CPU_UTILIZATION))
 
         ApiTest.requestJson().post("/api/v1/experiments/$experiment/scenarios/0/retry").then().statusCode(200)
-        hostTable(experiment, Row(t = 0, host = "H0", usage = 800.0, capacity = 1000.0, power = 100.0))
+        hostTable(experiment, Row(t = 0, host = 0, usage = 800.0, capacity = 1000.0, power = 100.0))
         loop.drain()
         settle(experiment)
 
@@ -254,7 +269,7 @@ class ExperimentResultsTest {
 
     /** One host's row at each of the first [count] five-minute exports, the interval a spec defaults to. */
     private fun everyExport(count: Int): Array<Row> =
-        Array(count) { Row(t = EXPORT_INTERVAL_MS * (it + 1), host = "H0", usage = 100.0, capacity = 1000.0, power = 100.0) }
+        Array(count) { Row(t = EXPORT_INTERVAL_MS * (it + 1), host = 0, usage = 100.0, capacity = 1000.0, power = 100.0) }
 
     private fun results(experiment: String): JsonPath =
         ApiTest.requestJson().get("/api/v1/experiments/$experiment/results").then().statusCode(200).extract().jsonPath()
@@ -284,33 +299,48 @@ class ExperimentResultsTest {
             .statusCode(204)
     }
 
-    /** Writes a host table where the launcher of [scenario]'s run would have put one. */
+    /**
+     * Writes a host table where the launcher of [scenario]'s run would have put one, and the meta
+     * file naming each host's capacity beside it unless [withMeta] is off.
+     */
     private fun hostTable(
         experiment: String,
         vararg rows: Row,
         scenario: Int = 0,
+        withMeta: Boolean = true,
     ) {
-        val file = scratch.resolve("host-${UUID.randomUUID()}.parquet")
-        ExampleParquetWriter.builder(LocalOutputFile(file)).withType(HOST_SCHEMA).build().use { writer ->
-            for (row in rows) {
-                writer.write(
-                    SimpleGroup(HOST_SCHEMA).apply {
-                        add("timestamp", row.t)
-                        add("host_name", row.host)
-                        // Floats, because the simulator writes its measurements as 32-bit floats.
-                        add("cpu_usage", row.usage.toFloat())
-                        add("cpu_capacity", row.capacity.toFloat())
-                        add("power_draw", row.power.toFloat())
-                    },
-                )
+        val run = runKey(UUID.fromString(experiment), scenario, 0)
+        // Floats, because the simulator writes its measurements as 32-bit floats.
+        write("$run/${OutputFileSpec.HOST.fileName}", HOST_SCHEMA, rows.toList()) { row ->
+            add("timestamp", row.t)
+            add("host_id", row.host)
+            add("cpu_usage", row.usage.toFloat())
+            add("power_draw", row.power.toFloat())
+        }
+        if (withMeta) {
+            write("$run/${MetaFile.HOST.path}", HOST_META_SCHEMA, rows.distinctBy { it.host }) { row ->
+                add("host_id", row.host)
+                add("cpu_capacity", row.capacity.toFloat())
             }
         }
-        Files.newInputStream(file).use { store.put("${runKey(UUID.fromString(experiment), scenario, 0)}/host.parquet", it) }
+    }
+
+    private fun write(
+        key: String,
+        schema: MessageType,
+        rows: List<Row>,
+        fill: SimpleGroup.(Row) -> Unit,
+    ) {
+        val file = scratch.resolve("${UUID.randomUUID()}.parquet")
+        ExampleParquetWriter.builder(LocalOutputFile(file)).withType(schema).build().use { writer ->
+            rows.forEach { row -> writer.write(SimpleGroup(schema).apply { fill(row) }) }
+        }
+        Files.newInputStream(file).use { store.put(key, it) }
     }
 
     private data class Row(
         val t: Long,
-        val host: String,
+        val host: Int,
         val usage: Double,
         val capacity: Double,
         val power: Double,
@@ -323,10 +353,20 @@ class ExperimentResultsTest {
                 """
                 message host {
                   required int64 timestamp;
-                  required binary host_name (STRING);
+                  required int32 host_id;
                   required float cpu_usage;
-                  required float cpu_capacity;
                   required float power_draw;
+                }
+                """.trimIndent(),
+            )
+
+        /** The columns of the host meta file this reads. */
+        val HOST_META_SCHEMA: MessageType =
+            MessageTypeParser.parseMessageType(
+                """
+                message host {
+                  required int32 host_id;
+                  required float cpu_capacity;
                 }
                 """.trimIndent(),
             )

@@ -48,12 +48,16 @@ internal interface SimulationSession {
     fun run(): RunOutcome
 }
 
-/** Everything a backend needs to prepare a run. A remote backend leaves [parallelism] to the server. */
+/**
+ * Everything a backend needs to prepare a run. A remote backend leaves [parallelism] to the server. [writerThreads] is
+ * the number of threads that write each of the task and host Parquet files of a run.
+ */
 internal data class RunRequest(
     val experiment: ExperimentSpec,
     val inputRoot: Path,
     val output: Path,
     val parallelism: Int,
+    val writerThreads: Int,
     val wantSummary: Boolean,
 )
 

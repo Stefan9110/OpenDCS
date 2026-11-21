@@ -146,7 +146,7 @@ class RecordingDispatcher : Dispatcher {
         outcome: UnitOutcome,
         seed: Long = 0,
     ) {
-        val unit = manifestOf(executionId).units.first { it.scenario.id == scenarioIndex && it.scenario.initialSeed.toLong() == seed }
+        val unit = manifestOf(executionId).units.first { it.scenario.id == scenarioIndex && it.scenario.seed == seed }
         val body = SdkJson.json.encodeToString(UnitOutcome.serializer(), outcome).encodeToByteArray()
         publish(Payload(body.size.toLong()) { body.inputStream() }, unit.outcome)
     }

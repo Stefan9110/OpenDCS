@@ -32,6 +32,7 @@ import org.opendc.sdk.runner.telemetry.table.battery.BatterySample
 import org.opendc.sdk.runner.telemetry.table.host.HostSample
 import org.opendc.sdk.runner.telemetry.table.powerSource.PowerSourceSample
 import org.opendc.sdk.runner.telemetry.table.service.ServiceSample
+import org.opendc.sdk.runner.telemetry.table.topology.TopologyMeta
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** How many points one metric of one run is held at, so a report stays the same size however long the trace. */
@@ -72,11 +73,18 @@ class TelemetrySink : OutputSink {
 private const val THE_SERVICE = "service"
 
 private class TelemetryMonitor(private val samples: RunSamples) : MetricExporter {
+    /** Exported once before any sample, so every host sampled has its capacity here. */
+    private var cpuCapacities = emptyMap<Int, Double>()
+
+    override fun export(meta: TopologyMeta) {
+        cpuCapacities = meta.hosts.associate { it.hostId to it.cpuCapacity }
+    }
+
     override fun export(reader: HostSample) {
         samples.record(
             reader.timestamp.toEpochMilli(),
-            reader.hostName,
-            ResultMetric.HOST_CPU_UTILIZATION to Reading(reader.cpuUsage, reader.cpuCapacity),
+            reader.hostId.toString(),
+            ResultMetric.HOST_CPU_UTILIZATION to Reading(reader.cpuUsage, cpuCapacities.getValue(reader.hostId)),
             ResultMetric.HOST_POWER_DRAW to Reading(reader.powerDraw),
         )
     }
@@ -84,7 +92,7 @@ private class TelemetryMonitor(private val samples: RunSamples) : MetricExporter
     override fun export(reader: PowerSourceSample) {
         samples.record(
             reader.timestamp.toEpochMilli(),
-            reader.powerSourceName,
+            reader.powerSourceId.toString(),
             ResultMetric.POWER_SOURCE_POWER_DRAW to Reading(reader.powerDraw),
             ResultMetric.POWER_SOURCE_ENERGY_USAGE to Reading(reader.energyUsage),
             ResultMetric.POWER_SOURCE_CARBON_EMISSION to Reading(reader.carbonEmission),
@@ -93,7 +101,7 @@ private class TelemetryMonitor(private val samples: RunSamples) : MetricExporter
     }
 
     override fun export(reader: BatterySample) {
-        samples.record(reader.timestamp.toEpochMilli(), reader.batteryName, ResultMetric.BATTERY_CHARGE to Reading(reader.charge))
+        samples.record(reader.timestamp.toEpochMilli(), reader.batteryId.toString(), ResultMetric.BATTERY_CHARGE to Reading(reader.charge))
     }
 
     override fun export(reader: ServiceSample) {
@@ -115,8 +123,7 @@ private class TelemetryMonitor(private val samples: RunSamples) : MetricExporter
  * poster's, so every path takes the lock.
  *
  * The engine hands an instant over one row per entity, so an instant is complete exactly when a later
- * one begins. Rows are keyed by entity, not counted, because the last instant is reported twice; a
- * sample without a name is the single "missing" row the parquet writes too.
+ * one begins. Rows are keyed by entity, not counted, because the last instant is reported twice.
  */
 private class RunSamples(
     private val scenarioIndex: Int,
@@ -125,7 +132,7 @@ private class RunSamples(
     private val lock = Any()
     private var completedTasks = 0
     private var instant = NO_INSTANT
-    private val reporting = ResultMetric.entries.associateWith { mutableMapOf<String?, Reading>() }
+    private val reporting = ResultMetric.entries.associateWith { mutableMapOf<String, Reading>() }
     private val series = ResultMetric.entries.associateWith { PointBuffer(it.overTime) }
 
     fun progress(completed: Int) {
@@ -134,7 +141,7 @@ private class RunSamples(
 
     fun record(
         timestamp: Long,
-        entity: String?,
+        entity: String,
         vararg readings: Pair<ResultMetric, Reading>,
     ) {
         synchronized(lock) {

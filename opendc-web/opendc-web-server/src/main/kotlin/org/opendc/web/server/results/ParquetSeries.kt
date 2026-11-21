@@ -51,8 +51,8 @@ private const val MEMOISED_RUNS = 512
 /** Nothing has been read yet. Simulated time starts at zero, so it cannot stand in for this. */
 private const val NO_INSTANT = Long.MIN_VALUE
 
-/** What a table with one row per instant calls that row. */
-private const val THE_ONLY_ROW = "-"
+/** What a table with one row per instant calls that row. Ids count up from zero, so none is this. */
+private const val THE_ONLY_ROW = -1
 
 /**
  * Reads the parquet a finished run left behind, the canonical account of a run, as the series a chart
@@ -101,34 +101,81 @@ class ParquetSeries(private val store: ObjectStore) {
         }
         val file = StoredObjectFile(store, key)
         val schema = ParquetFileReader.open(file).use { it.fileMetaData.schema }
+        val identity = (table.rows as? RowIdentity.PerEntity)?.takeIf { schema.containsField(it.column) }
+        val capacities = capacities(prefix, identity, metrics)
         // The export spec decides which columns are written; a metric without its columns is left out, not zero.
-        val present = metrics.filter { metric -> metric.columns.all { schema.containsField(it) } }
+        val present = metrics.filter { it.readable(schema, capacities) }
         if (present.isEmpty() || !schema.containsField(TIMESTAMP)) {
             return emptyMap()
         }
 
-        // A file written before the identity column existed is read as a singleton table.
-        val identity = (table.rows as? RowIdentity.PerEntity)?.column?.takeIf { schema.containsField(it) }
         val fold = InstantFold(present)
-        rows(file, projection(schema, present, identity)).use { rows ->
+        rows(file, projection(schema, present, identity?.column)).use { rows ->
             var row = rows.read()
             while (row != null) {
                 val current = row
-                val entity = identity?.let { current.getString(it, 0) } ?: THE_ONLY_ROW
-                fold.row(number(current, TIMESTAMP).toLong(), entity) { metric -> reading(current, metric) }
+                val entity = identity?.let { current.getInteger(it.column, 0) } ?: THE_ONLY_ROW
+                fold.row(number(current, TIMESTAMP).toLong(), entity) { metric -> reading(current, entity, metric, capacities) }
                 row = rows.read()
             }
         }
         return fold.finish()
     }
 
+    /**
+     * The capacities the share-of-capacity [metrics] divide by, per column and entity, read from the
+     * meta file [identity] names. Empty where that file or a column has not landed.
+     */
+    private fun capacities(
+        prefix: String,
+        identity: RowIdentity.PerEntity?,
+        metrics: List<ResultMetric>,
+    ): Map<String, Map<Int, Double>> {
+        val wanted = metrics.mapNotNull { (it.entities as? EntityFold.ShareOfCapacity)?.capacity }.distinct()
+        if (identity == null || wanted.isEmpty() || !store.exists("$prefix/${identity.meta.path}")) {
+            return emptyMap()
+        }
+        val file = StoredObjectFile(store, "$prefix/${identity.meta.path}")
+        val schema = ParquetFileReader.open(file).use { it.fileMetaData.schema }
+        val columns = wanted.filter { schema.containsField(it) }
+        if (columns.isEmpty() || !schema.containsField(identity.column)) {
+            return emptyMap()
+        }
+        val byColumn = columns.associateWith { mutableMapOf<Int, Double>() }
+        val projection = MessageType(schema.name, (listOf(identity.column) + columns).map { schema.getType(it) })
+        rows(file, projection).use { rows ->
+            var row = rows.read()
+            while (row != null) {
+                val entity = row.getInteger(identity.column, 0)
+                for (column in columns) {
+                    byColumn.getValue(column)[entity] = number(row, column)
+                }
+                row = rows.read()
+            }
+        }
+        return byColumn
+    }
+
+    private fun ResultMetric.readable(
+        schema: MessageType,
+        capacities: Map<String, Map<Int, Double>>,
+    ): Boolean =
+        columns.all { schema.containsField(it) } &&
+            when (val fold = entities) {
+                is EntityFold.ShareOfCapacity -> fold.capacity in capacities
+                is EntityFold.Each, is EntityFold.Share -> true
+            }
+
     private fun reading(
         row: Group,
+        entity: Int,
         metric: ResultMetric,
+        capacities: Map<String, Map<Int, Double>>,
     ): Reading =
         when (val fold = metric.entities) {
             is EntityFold.Each -> Reading(number(row, metric.column))
             is EntityFold.Share -> Reading(number(row, fold.part), number(row, fold.whole))
+            is EntityFold.ShareOfCapacity -> Reading(number(row, fold.part), capacities.getValue(fold.capacity).getValue(entity))
         }
 
     private fun projection(
@@ -173,13 +220,13 @@ class ParquetSeries(private val store: ObjectStore) {
  * a later one begins, which bounds memory by the number of hosts.
  */
 private class InstantFold(private val metrics: List<ResultMetric>) {
-    private val reporting = metrics.associateWith { mutableMapOf<String, Reading>() }
+    private val reporting = metrics.associateWith { mutableMapOf<Int, Reading>() }
     private val series = metrics.associateWith { mutableListOf<MetricPoint>() }
     private var instant = NO_INSTANT
 
     fun row(
         timestamp: Long,
-        entity: String,
+        entity: Int,
         reading: (ResultMetric) -> Reading,
     ) {
         if (timestamp != instant) {

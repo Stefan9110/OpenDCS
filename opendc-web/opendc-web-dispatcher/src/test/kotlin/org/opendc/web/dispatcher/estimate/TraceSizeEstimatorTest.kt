@@ -28,8 +28,8 @@ import org.junit.jupiter.api.Test
 import org.opendc.sdk.model.dsl.ghz
 import org.opendc.sdk.model.dsl.gib
 import org.opendc.sdk.model.dsl.minutes
-import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.resource.NamedReference
+import org.opendc.sdk.model.scenario.ScenarioSpec
 import org.opendc.sdk.model.scheduler.PrefabAllocationPolicySpec
 import org.opendc.sdk.model.telemetry.ExportSpec
 import org.opendc.sdk.model.telemetry.OutputFileSpec

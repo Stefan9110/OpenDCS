@@ -180,7 +180,7 @@ class ExperimentArchiveTest {
         for (unit in dispatcher.manifestOf(execution).units) {
             val index = unit.scenario.id
             val outcome = if (index in failing) UnitOutcome.Failed(UnitFailure.SIMULATION_ERROR, "threw") else UnitOutcome.Succeeded(1.0)
-            dispatcher.certify(execution, index, outcome, seed = unit.scenario.initialSeed.toLong())
+            dispatcher.certify(execution, index, outcome, seed = unit.scenario.seed)
         }
         dispatcher.finish(execution, ended(ExitReason.OK, 23))
     }

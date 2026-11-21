@@ -7,6 +7,7 @@ import {
     cpuCount,
     gpuCount,
     hostCount,
+    peakPower,
 } from "@/lib/topology/spec"
 import { type Quantity, parseQuantity } from "@/lib/units"
 
@@ -67,8 +68,8 @@ export function clusterCapacity(cluster: ClusterSpec): Capacity {
 export function hostCapacity(host: HostSpec): Capacity {
     const instances = hostCount(host)
     const gpus = host.gpu ? gpuCount(host.gpu) : 0
-    const cpuPower = watts(host.cpuPowerModel?.maxPower)
-    const gpuPower = host.gpu ? watts(host.gpuPowerModel?.maxPower) : 0
+    const cpuPower = host.cpuPowerModel ? watts(peakPower(host.cpuPowerModel)) : 0
+    const gpuPower = host.gpu && host.gpuPowerModel ? watts(peakPower(host.gpuPowerModel)) : 0
     return {
         dataCenters: 0,
         clusters: 0,
@@ -128,8 +129,8 @@ function addCapacity(left: Capacity, right: Capacity): Capacity {
     }
 }
 
-function watts(value: Quantity | undefined): number {
-    return value === undefined ? 0 : measure("power", value)
+function watts(value: Quantity): number {
+    return measure("power", value)
 }
 
 function measure(kind: "power" | "dataSize", value: Quantity): number {

@@ -138,7 +138,7 @@ private fun runUnit(
 ): UnitReport {
     val scenario = unit.scenario
     ThreadContext.put("scenario", scenario.id.toString())
-    ThreadContext.put("seed", scenario.initialSeed.toString())
+    ThreadContext.put("seed", scenario.seed.toString())
     try {
         val outcome = simulate(unit, workDir, telemetry)
         if (outcome is UnitOutcome.Failed) {
@@ -167,7 +167,7 @@ private fun simulate(
     if (issues.isNotEmpty()) {
         return UnitOutcome.Failed(UnitFailure.INVALID_SPEC, issues.joinToString { "${it.path} ${it.message}" }.take(MESSAGE_CAP))
     }
-    val output = workDir.resolve("output").resolve("${scenario.id}").resolve("${scenario.initialSeed}")
+    val output = workDir.resolve("output").resolve("${scenario.id}").resolve("${scenario.seed}")
     val started = System.nanoTime()
     return try {
         val report =

@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.opendc.sdk.model.resource.UriReference
+import org.opendc.sdk.model.telemetry.MetaFile
 import org.opendc.sdk.model.telemetry.OutputFileSpec
 import org.opendc.sdk.model.workload.TraceWorkloadSpec
 import org.opendc.web.dispatcher.ExitReason
@@ -357,8 +358,21 @@ class ExecutionLoopTest {
         assertTrue(manifest.inputs.all { it.source.startsWith("file:") })
         val unit = manifest.units.single()
         assertEquals(UriReference("inputs/0"), (unit.scenario.workload as TraceWorkloadSpec).source)
-        assertEquals(OutputFileSpec.entries.map { it.fileName }.toSet(), unit.outputs.map { it.file }.toSet())
-        assertEquals(1, unit.scenario.runs)
+        assertEquals(
+            (OutputFileSpec.entries.map { it.fileName } + MetaFile.entries.map { it.path }).toSet(),
+            unit.outputs.map { it.file }.toSet(),
+        )
+    }
+
+    @Test
+    fun `hands each seed of a scenario to a launcher as its own unit`() {
+        val experiment = submitted(runs = 3)
+        loop.drain()
+
+        val units = executionsOf(experiment).flatMap { dispatcher.manifestOf(it.publicId).units }
+
+        assertEquals(listOf(0L, 1L, 2L), units.map { it.scenario.seed }.sorted())
+        assertTrue(units.all { it.scenario.id == 0 })
     }
 
     /** An experiment of [topologies] x [runs] units, submitted and waiting for the platform. */

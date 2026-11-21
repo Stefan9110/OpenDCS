@@ -22,30 +22,42 @@
 
 package org.opendc.sdk.runner.telemetry.sink
 
+import org.opendc.sdk.model.serialization.SdkJson
+import org.opendc.sdk.model.telemetry.MetaFile
 import org.opendc.sdk.model.telemetry.OutputFileSpec
 import org.opendc.sdk.runner.telemetry.MetricExporter
 import org.opendc.sdk.runner.telemetry.parquet.ParquetMetricExporter
+import java.nio.file.Files
 import java.nio.file.Path
 
 /**
  * Writes each run's metrics to Parquet files, reproducing the canonical OpenDC layout
  * `<root>/<experiment>/raw-output/<scenarioId>/seed=<seed>/{host,task,powerSource,battery,service}.parquet`.
+ * The samples identify hosts, clusters, data centers, power sources, batteries and tasks by id; the files in `meta/`
+ * map those ids to names and static attributes, and tell which entity is part of which. [MetaFile.SCENARIO] holds
+ * the spec of the scenario that produced the run.
  *
  * Which tables and columns are written is governed by the scenario's export model.
  *
  * @property root The output root directory.
  * @property bufferSize The writer's buffer size in records.
+ * @property writerThreads The number of threads that write each of the task and host files. More threads shorten a
+ * large simulation when cores are idle, but use more memory and do not help when the cores are busy running
+ * simulations in parallel.
  */
 public class ParquetSink
     @JvmOverloads
     constructor(
         private val root: Path,
         private val bufferSize: Int = 4096,
+        private val writerThreads: Int = 1,
     ) : OutputSink {
         override fun open(context: RunContext): SinkSession {
             val export = context.export
             val base = root.resolve(context.experimentName).resolve("raw-output").resolve(context.scenarioId.toString())
             val partition = "seed=${context.seed}"
+            val meta = Files.createDirectories(base.resolve(partition).resolve(MetaFile.DIRECTORY))
+            Files.writeString(meta.resolve(MetaFile.SCENARIO.fileName), SdkJson.encodeToString(context.scenario))
             val parquetMonitor =
                 ParquetMetricExporter(
                     base.toFile(),
@@ -53,6 +65,7 @@ public class ParquetSink
                     bufferSize,
                     export.filesToExport,
                     export.config,
+                    writerThreads,
                 )
             return object : SinkSession {
                 override val monitor: MetricExporter = parquetMonitor

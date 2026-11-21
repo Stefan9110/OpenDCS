@@ -1,3 +1,4 @@
+import type { Quantity } from "@/lib/units"
 import { z } from "zod"
 
 const quantity = z.union([z.number(), z.string()])
@@ -11,7 +12,7 @@ export const resourceReferenceSchema = z.discriminatedUnion("type", [
 
 export const distributionPolicySchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("maxMinFairness") }).passthrough(),
-    z.object({ type: z.literal("bestEffort"), updateInterval: z.number().optional() }).passthrough(),
+    z.object({ type: z.literal("bestEffort"), updateInterval: quantity.optional() }).passthrough(),
     z.object({ type: z.literal("equalShare") }).passthrough(),
     z.object({ type: z.literal("firstFit") }).passthrough(),
     z.object({ type: z.literal("fixedShare"), shareRatio: z.number().optional() }).passthrough(),
@@ -30,23 +31,32 @@ export const batteryPolicySchema = z.discriminatedUnion("type", [
     z
         .object({ type: z.literal("runningMeanPlus"), startingThreshold: z.number(), windowSize: z.number() })
         .passthrough(),
-    z.object({ type: z.literal("runningMedian"), startingThreshold: z.number(), windowSize: z.number() }).passthrough(),
+])
+
+const maxIdle = { maxPower: quantity, idlePower: quantity }
+
+/** Each type carries only its own fields: the server refuses a key a type does not have. */
+export const powerSpecSchema = z.discriminatedUnion("type", [
+    z.object({ type: z.literal("constant"), power: quantity }).passthrough(),
+    z.object({ type: z.literal("linear"), ...maxIdle }).passthrough(),
+    z.object({ type: z.literal("square"), ...maxIdle }).passthrough(),
+    z.object({ type: z.literal("cubic"), ...maxIdle }).passthrough(),
+    z.object({ type: z.literal("sqrt"), ...maxIdle }).passthrough(),
+    z.object({ type: z.literal("mse"), ...maxIdle, calibrationFactor: z.number() }).passthrough(),
     z
-        .object({ type: z.literal("runningQuartiles"), startingThreshold: z.number(), windowSize: z.number() })
+        .object({ type: z.literal("asymptotic"), ...maxIdle, asymUtil: z.number(), dvfs: z.boolean().optional() })
         .passthrough(),
 ])
 
-export const powerSpecSchema = z
-    .object({
-        type: z.enum(POWER_MODEL_TYPES).optional(),
-        maxPower: quantity,
-        idlePower: quantity,
-        power: quantity.optional(),
-        calibrationFactor: z.number().optional(),
-        asymUtil: z.number().optional(),
-        dvfs: z.boolean().optional(),
-    })
-    .passthrough()
+export const carbonModelSchema = z.discriminatedUnion("type", [
+    z.object({ type: z.literal("trace"), source: resourceReferenceSchema }).passthrough(),
+    z
+        .object({
+            type: z.literal("inline-trace"),
+            intensities: z.array(z.object({ timestamp: quantity, carbonIntensity: z.number() }).passthrough()),
+        })
+        .passthrough(),
+])
 
 export const cpuSpecSchema = z
     .object({
@@ -101,16 +111,16 @@ export const powerSourceSpecSchema = z
     .object({
         name: z.string().optional(),
         maxPower: quantity.optional(),
-        carbon: resourceReferenceSchema.nullish(),
+        carbon: carbonModelSchema.nullish(),
     })
     .passthrough()
 
 export const batterySpecSchema = z
     .object({
         name: z.string().optional(),
-        capacity: z.number(),
-        chargingSpeed: z.number(),
-        initialCharge: z.number().optional(),
+        capacity: quantity,
+        chargingSpeed: quantity,
+        initialCharge: quantity.optional(),
         policy: batteryPolicySchema,
         embodiedCarbon: z.number().optional(),
         expectedLifetime: z.number().optional(),
@@ -146,6 +156,8 @@ export type DistributionPolicy = z.infer<typeof distributionPolicySchema>
 export type VirtualizationOverhead = z.infer<typeof virtualizationOverheadSchema>
 export type BatteryPolicy = z.infer<typeof batteryPolicySchema>
 export type PowerSpec = z.infer<typeof powerSpecSchema>
+export type PowerModelType = PowerSpec["type"]
+export type CarbonModel = z.infer<typeof carbonModelSchema>
 export type CpuSpec = z.infer<typeof cpuSpecSchema>
 export type MemorySpec = z.infer<typeof memorySpecSchema>
 export type GpuSpec = z.infer<typeof gpuSpecSchema>
@@ -196,4 +208,23 @@ export function clusterName(cluster: ClusterSpec): string {
 
 export function hostName(host: HostSpec): string {
     return host.name ?? DEFAULT_HOST_NAME
+}
+
+export function isPowerModelType(type: string): type is PowerModelType {
+    return (POWER_MODEL_TYPES as readonly string[]).includes(type)
+}
+
+/** What a component draws at full load, which a constant model draws at every load. */
+export function peakPower(model: PowerSpec): Quantity {
+    return model.type === "constant" ? model.power : model.maxPower
+}
+
+/** What a component draws doing nothing. */
+export function idlePower(model: PowerSpec): Quantity {
+    return model.type === "constant" ? model.power : model.idlePower
+}
+
+/** The carbon trace a power source names, if it reads one rather than carrying its own. */
+export function carbonTraceName(carbon: CarbonModel | null | undefined): string | null {
+    return carbon?.type === "trace" && carbon.source.type === "named" ? carbon.source.name : null
 }

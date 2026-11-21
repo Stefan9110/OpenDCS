@@ -85,6 +85,15 @@ tasks.test {
         "-XX:+HeapDumpOnOutOfMemoryError",
         "-XX:HeapDumpPath=build/heapdump.hprof",
     )
+
+    // The export benchmark (ExportOverheadMeasurement) measures the simulator as it runs outside the tests: without the
+    // coverage agent, and without assertions, which also enable the debug mode of the coroutines
+    if (providers.environmentVariable("OPENDC_EXPORT_BENCH").isPresent) {
+        enableAssertions = false
+        configure<JacocoTaskExtension> {
+            isEnabled = false
+        }
+    }
 }
 
 dependencies {

@@ -26,9 +26,11 @@ import org.apache.parquet.io.api.Binary
 import org.apache.parquet.schema.LogicalTypeAnnotation
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.BINARY
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.FLOAT
+import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT32
 import org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT64
 import org.apache.parquet.schema.Types
 import org.opendc.sdk.runner.telemetry.table.battery.BatterySample
+import org.opendc.simulator.compute.power.batteries.BatteryState
 import org.opendc.trace.parquet.exporter.ExportColumn
 
 /**
@@ -52,26 +54,10 @@ public object DfltBatteryExportColumns {
             field = Types.required(INT64).named("timestamp"),
         ) { it.timestamp.toEpochMilli() }
 
-    public val TIMESTAMP_ABS: ExportColumn<BatterySample> =
+    public val BATTERY_ID: ExportColumn<BatterySample> =
         ExportColumn(
-            field = Types.required(INT64).named("timestamp_absolute"),
-        ) { it.timestampAbsolute.toEpochMilli() }
-
-    public val BATTERY_NAME: ExportColumn<BatterySample> =
-        ExportColumn(
-            field =
-                Types.required(BINARY)
-                    .`as`(LogicalTypeAnnotation.stringType())
-                    .named("battery_name"),
-        ) { Binary.fromString(it.batteryName) }
-
-    public val CLUSTER_NAME: ExportColumn<BatterySample> =
-        ExportColumn(
-            field =
-                Types.required(BINARY)
-                    .`as`(LogicalTypeAnnotation.stringType())
-                    .named("cluster_name"),
-        ) { Binary.fromString(it.clusterName) }
+            field = Types.required(INT32).named("battery_id"),
+        ) { it.batteryId }
 
     public val POWER_DRAW: ExportColumn<BatterySample> =
         ExportColumn(
@@ -93,27 +79,25 @@ public object DfltBatteryExportColumns {
             field = Types.required(FLOAT).named("charge"),
         ) { it.charge }
 
-    public val CAPACITY: ExportColumn<BatterySample> =
-        ExportColumn(
-            field = Types.required(FLOAT).named("capacity"),
-        ) { it.capacity }
+    /**
+     * The names of the battery states, indexed by ordinal, so that exporting a state does not allocate.
+     */
+    private val BATTERY_STATE_NAMES = BatteryState.entries.map { Binary.fromString(it.name) }
 
     public val BATTERY_STATE: ExportColumn<BatterySample> =
         ExportColumn(
             field =
-                Types.optional(BINARY)
+                Types.required(BINARY)
                     .`as`(LogicalTypeAnnotation.stringType())
                     .named("battery_state"),
-        ) { Binary.fromString(it.batteryState.name) }
+        ) { BATTERY_STATE_NAMES[it.batteryState.ordinal] }
 
     /**
      * The columns that are always included in the output file.
      */
     internal val BASE_EXPORT_COLUMNS =
         setOf(
-            BATTERY_NAME,
-            CLUSTER_NAME,
+            BATTERY_ID,
             TIMESTAMP,
-            TIMESTAMP_ABS,
         )
 }

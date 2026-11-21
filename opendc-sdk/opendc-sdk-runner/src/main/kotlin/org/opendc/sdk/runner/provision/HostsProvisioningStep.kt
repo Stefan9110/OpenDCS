@@ -22,22 +22,28 @@
 
 package org.opendc.sdk.runner.provision
 
-import org.opendc.sdk.model.carbon.loader.CarbonTraceLoader
 import org.opendc.sdk.model.resource.ResourceReference
+import org.opendc.sdk.model.topology.AsymptoticPowerModelSpec
 import org.opendc.sdk.model.topology.BatterySpec
+import org.opendc.sdk.model.topology.ConstantPowerModelSpec
 import org.opendc.sdk.model.topology.ConstantVirtualizationOverheadSpec
+import org.opendc.sdk.model.topology.CubicPowerModelSpec
 import org.opendc.sdk.model.topology.DataCenterSpec
 import org.opendc.sdk.model.topology.GpuSpec
 import org.opendc.sdk.model.topology.HostSpec
+import org.opendc.sdk.model.topology.LinearPowerModelSpec
+import org.opendc.sdk.model.topology.MsePowerModelSpec
 import org.opendc.sdk.model.topology.NoVirtualizationOverheadSpec
 import org.opendc.sdk.model.topology.PowerModelSpec
-import org.opendc.sdk.model.topology.PowerModelType
 import org.opendc.sdk.model.topology.PowerSourceSpec
 import org.opendc.sdk.model.topology.ShareBasedVirtualizationOverheadSpec
+import org.opendc.sdk.model.topology.SqrtPowerModelSpec
+import org.opendc.sdk.model.topology.SquarePowerModelSpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.topology.VirtualizationOverheadSpec
 import org.opendc.sdk.model.topology.createBatteryPolicy
 import org.opendc.sdk.runner.factory.toEngine
+import org.opendc.sdk.runner.factory.toFragments
 import org.opendc.simulator.compute.carbon.CarbonNode
 import org.opendc.simulator.compute.cluster.ClusterDistributor
 import org.opendc.simulator.compute.infrastructure.SimCluster
@@ -48,10 +54,11 @@ import org.opendc.simulator.compute.models.GpuModel
 import org.opendc.simulator.compute.models.HostModel
 import org.opendc.simulator.compute.models.MachineModel
 import org.opendc.simulator.compute.models.MemoryUnit
+import org.opendc.simulator.compute.power.PowerModel
+import org.opendc.simulator.compute.power.PowerModels
 import org.opendc.simulator.compute.power.PowerSourceNode
 import org.opendc.simulator.compute.power.batteries.BatteryAggregator
 import org.opendc.simulator.compute.power.batteries.BatteryNode
-import org.opendc.simulator.compute.power.getPowerModel
 import org.opendc.simulator.compute.service.ComputeService
 import org.opendc.simulator.compute.virtualization.VirtualizationOverheadModelFactory.VirtualizationOverheadModelEnum
 import org.opendc.simulator.core.ResourceType
@@ -111,12 +118,14 @@ public class HostsProvisioningStep(
         service: ComputeService,
         dataCenterSpec: DataCenterSpec,
     ) {
+        val dataCenterId = naming.nextDataCenterId()
+
         val (dcPowerSource, dcPowerDistributor) =
             this.createPowerSource(
                 service,
                 engine,
                 dataCenterSpec.powerSource,
-                dataCenterSpec.name,
+                dataCenterId,
                 dataCenterSpec.clusters.sumOf { it.count },
             )
 
@@ -130,13 +139,13 @@ public class HostsProvisioningStep(
             dataCenterSpec.battery,
             dcPowerSource,
             dcPowerDistributor,
-            dataCenterSpec.name,
+            dataCenterId,
             carbonNode,
         )
 
         val simDataCenter =
             SimDataCenter(
-                naming.nextDataCenterId(),
+                dataCenterId,
                 dataCenterSpec.name,
                 engine.clock,
                 dcPowerSource,
@@ -161,7 +170,7 @@ public class HostsProvisioningStep(
                     SimCluster(
                         naming.nextClusterId(),
                         naming.cluster(clusterName),
-                        dataCenterName = dataCenterSpec.name,
+                        dataCenterId,
                         engine.clock,
                         clusterPowerDistributor,
                     )
@@ -187,15 +196,16 @@ public class HostsProvisioningStep(
         service: ComputeService,
         engine: FlowEngine,
         powerSourceSpec: PowerSourceSpec,
-        clusterName: String,
+        dataCenterId: Int,
         numHosts: Int,
     ): PowerSourceFlows {
         val powerSource =
             PowerSourceNode(
                 engine,
                 powerSourceSpec.maxPower.toWatts(),
+                naming.nextPowerSourceId(),
                 naming.powerSource(powerSourceSpec.name),
-                clusterName,
+                dataCenterId,
             )
         powerSources.add(powerSource)
         service.addPowerSource(powerSource)
@@ -207,7 +217,6 @@ public class HostsProvisioningStep(
                 numHosts,
                 1,
             )
-
         return PowerSourceFlows(powerSource, powerDistributor)
     }
 
@@ -217,7 +226,7 @@ public class HostsProvisioningStep(
         powerSourceSpec: PowerSourceSpec,
         powerSource: PowerSourceNode,
     ): CarbonNode? {
-        val carbonFragments = powerSourceSpec.carbon?.let { CarbonTraceLoader(resolve(it).toFile()).load() }
+        val carbonFragments = powerSourceSpec.carbon?.toFragments(resolve)
         var carbonNode: CarbonNode? = null
         // Create Carbon Node
         if (carbonFragments != null) {
@@ -235,7 +244,7 @@ public class HostsProvisioningStep(
         batterySpec: BatterySpec?,
         powerSource: PowerSourceNode,
         powerDistributor: FlowDistributor,
-        clusterName: String,
+        dataCenterId: Int,
         carbonNode: CarbonNode?,
     ) {
         if (batterySpec == null) {
@@ -257,11 +266,12 @@ public class HostsProvisioningStep(
         val battery =
             BatteryNode(
                 engine,
-                batterySpec.capacity,
-                batterySpec.chargingSpeed,
-                batterySpec.initialCharge,
+                batterySpec.capacity.toKWh(),
+                batterySpec.chargingSpeed.toWatts(),
+                batterySpec.initialCharge.toKWh(),
+                naming.nextBatteryId(),
                 batterySpec.name,
-                clusterName,
+                dataCenterId,
                 batterySpec.embodiedCarbon,
                 batterySpec.expectedLifetime,
             )
@@ -334,7 +344,7 @@ public class HostsProvisioningStep(
                 SimHost(
                     naming.nextHostId(),
                     naming.host(hostSpec.name),
-                    simCluster.getName(),
+                    simCluster.id,
                     ctx.dispatcher.timeSource,
                     engine,
                     machineModel = machineModel,
@@ -362,20 +372,16 @@ public class HostsProvisioningStep(
             vendor, modelName, architecture, virtualizationOverhead.toEngine(),
         )
 
-    private fun PowerModelSpec.toEngine() =
-        getPowerModel(type.modelType, power.toWatts(), maxPower.toWatts(), idlePower.toWatts(), calibrationFactor, asymUtil, dvfs)
-
-    private val PowerModelType.modelType: String
-        get() =
-            when (this) {
-                PowerModelType.CONSTANT -> "constant"
-                PowerModelType.LINEAR -> "linear"
-                PowerModelType.SQUARE -> "square"
-                PowerModelType.CUBIC -> "cubic"
-                PowerModelType.SQRT -> "sqrt"
-                PowerModelType.MSE -> "mse"
-                PowerModelType.ASYMPTOTIC -> "asymptotic"
-            }
+    private fun PowerModelSpec.toEngine(): PowerModel =
+        when (this) {
+            is ConstantPowerModelSpec -> PowerModels.constant(power.toWatts())
+            is LinearPowerModelSpec -> PowerModels.linear(maxPower.toWatts(), idlePower.toWatts())
+            is SquarePowerModelSpec -> PowerModels.square(maxPower.toWatts(), idlePower.toWatts())
+            is CubicPowerModelSpec -> PowerModels.cubic(maxPower.toWatts(), idlePower.toWatts())
+            is SqrtPowerModelSpec -> PowerModels.sqrt(maxPower.toWatts(), idlePower.toWatts())
+            is MsePowerModelSpec -> PowerModels.mse(maxPower.toWatts(), idlePower.toWatts(), calibrationFactor)
+            is AsymptoticPowerModelSpec -> PowerModels.asymptotic(maxPower.toWatts(), idlePower.toWatts(), asymUtil, dvfs)
+        }
 
     private fun VirtualizationOverheadSpec.toEngine(): VirtualizationOverheadModelEnum =
         when (this) {
@@ -387,7 +393,10 @@ public class HostsProvisioningStep(
                 }
         }
 
-    /** Per-conversion registry producing unique names and monotonic data center, cluster, host and device ids. */
+    /**
+     * Per-conversion registry producing unique names and monotonic data center, cluster, host, power source, battery
+     * and device ids.
+     */
     private class TopologyNaming {
         private val clusters = HashMap<String, Int>()
         private val hosts = HashMap<String, Int>()
@@ -396,6 +405,8 @@ public class HostsProvisioningStep(
         private var dataCenterId = 0
         private var clusterId = 0
         private var hostId = 0
+        private var powerSourceId = 0
+        private var batteryId = 0
         private var cpuId = 0
         private var gpuId = 0
 
@@ -412,6 +423,10 @@ public class HostsProvisioningStep(
         fun nextClusterId(): Int = clusterId++
 
         fun nextHostId(): Int = hostId++
+
+        fun nextPowerSourceId(): Int = powerSourceId++
+
+        fun nextBatteryId(): Int = batteryId++
 
         fun nextCpuId(): Int = cpuId++
 

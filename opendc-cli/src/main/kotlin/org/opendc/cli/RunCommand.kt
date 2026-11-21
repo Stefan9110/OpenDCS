@@ -31,6 +31,7 @@ import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.types.int
 import com.github.ajalt.clikt.parameters.types.path
+import com.github.ajalt.clikt.parameters.types.restrictTo
 import org.opendc.cli.config.CliConfig
 import org.opendc.cli.render.renderOutputs
 import org.opendc.cli.render.renderSummary
@@ -68,6 +69,16 @@ internal class RunCommand(config: CliConfig = CliConfig.DEFAULTS) : ExperimentCo
         help = "Number of runs to simulate concurrently.",
     )
         .int()
+        .default(1)
+
+    private val writerThreads by option(
+        "--writer-threads",
+        help =
+            "Number of threads that write each of the task and host Parquet files of a run. More threads speed up a " +
+                "large run on an otherwise idle machine; keep 1 when running many runs in parallel.",
+    )
+        .int()
+        .restrictTo(min = 1)
         .default(1)
 
     private val noProgress by option(
@@ -109,6 +120,7 @@ internal class RunCommand(config: CliConfig = CliConfig.DEFAULTS) : ExperimentCo
                 inputRoot = experimentBaseDirectory,
                 output = output,
                 parallelism = parallelism,
+                writerThreads = writerThreads,
                 wantSummary = !noSummary,
             )
         val backend = apiUrl?.let(::remoteBackend) ?: LocalBackend()

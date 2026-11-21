@@ -55,3 +55,30 @@ public enum class OutputFileSpec(public val fileName: String) {
     @SerialName("task")
     TASK("task.parquet"),
 }
+
+/**
+ * A file every run writes beside its output tables, whatever its export model: the run's start, the
+ * scenario that produced it, and the names and static attributes of the entities its samples
+ * identify by id. Named here for the same reason as [OutputFileSpec.fileName].
+ */
+public enum class MetaFile(public val fileName: String) {
+    SIMULATION("simulation.parquet"),
+    DATA_CENTER("dataCenter.parquet"),
+    CLUSTER("cluster.parquet"),
+    HOST("host.parquet"),
+    POWER_SOURCE("powerSource.parquet"),
+    BATTERY("battery.parquet"),
+
+    /** Written only when the task table is exported. */
+    TASK("task.parquet"),
+    SCENARIO("trackr.json"),
+    ;
+
+    /** Where this file lands, relative to the run's output directory. */
+    public val path: String get() = "$DIRECTORY/$fileName"
+
+    public companion object {
+        /** The directory of a run's output the meta files are written to. */
+        public const val DIRECTORY: String = "meta"
+    }
+}

@@ -23,12 +23,17 @@
 package org.opendc.sdk.runner.base.harness
 
 import org.opendc.sdk.runner.telemetry.MetricExporter
+import org.opendc.sdk.runner.telemetry.table.battery.BatterySample
 import org.opendc.sdk.runner.telemetry.table.cluster.ClusterSample
+import org.opendc.sdk.runner.telemetry.table.datacenter.DataCenterSample
 import org.opendc.sdk.runner.telemetry.table.host.HostSample
 import org.opendc.sdk.runner.telemetry.table.powerSource.PowerSourceSample
 import org.opendc.sdk.runner.telemetry.table.service.ServiceSample
 import org.opendc.sdk.runner.telemetry.table.task.TaskSample
+import org.opendc.sdk.runner.telemetry.table.topology.TopologyMeta
+import org.opendc.simulator.compute.power.batteries.BatteryState
 import org.opendc.simulator.compute.task.SimTask
+import org.opendc.simulator.compute.task.TaskState
 import org.opendc.simulator.compute.telemetry.TaskListener
 
 /**
@@ -39,8 +44,22 @@ import org.opendc.simulator.compute.telemetry.TaskListener
 class TestMetricExporter : MetricExporter, TaskListener {
     var taskCpuDemands = mutableMapOf<Int, ArrayList<Double>>()
     var taskCpuSupplied = mutableMapOf<Int, ArrayList<Double>>()
-    var taskGpuDemands = mutableMapOf<Int, ArrayList<Double?>?>()
-    var taskGpuSupplied = mutableMapOf<Int, ArrayList<Double?>?>()
+    var taskGpuDemands = mutableMapOf<Int, ArrayList<Double>>()
+    var taskGpuSupplied = mutableMapOf<Int, ArrayList<Double>>()
+
+    var taskSchedulingDelay = mutableMapOf<Int, ArrayList<Long>>()
+    var taskFailureDelay = mutableMapOf<Int, ArrayList<Long>>()
+    var taskCheckpointDelay = mutableMapOf<Int, ArrayList<Long>>()
+
+    /**
+     * Record the samples of a task at the changes of its state only when it finishes, so that the values of a task are
+     * recorded once per export interval while it runs, and once at its end.
+     */
+    override fun exportStateChange(reader: TaskSample) {
+        if (reader.taskState == TaskState.COMPLETED || reader.taskState == TaskState.TERMINATED) {
+            export(reader)
+        }
+    }
 
     override fun export(reader: TaskSample) {
         val taskName: Int = reader.taskId
@@ -48,9 +67,16 @@ class TestMetricExporter : MetricExporter, TaskListener {
         if (taskName in taskCpuDemands) {
             taskCpuDemands[taskName]?.add(reader.cpuDemand)
             taskCpuSupplied[taskName]?.add(reader.cpuUsage)
+
+            taskSchedulingDelay[taskName]?.add(reader.schedulingDelay)
+            taskFailureDelay[taskName]?.add(reader.failureDelay)
+            taskCheckpointDelay[taskName]?.add(reader.checkpointDelay)
         } else {
             taskCpuDemands[taskName] = arrayListOf(reader.cpuDemand)
             taskCpuSupplied[taskName] = arrayListOf(reader.cpuUsage)
+            taskSchedulingDelay[taskName] = arrayListOf(reader.schedulingDelay)
+            taskFailureDelay[taskName] = arrayListOf(reader.failureDelay)
+            taskCheckpointDelay[taskName] = arrayListOf(reader.checkpointDelay)
         }
         if (taskName in taskGpuDemands) {
             taskGpuDemands[taskName]?.add(reader.gpuDemand)
@@ -70,7 +96,6 @@ class TestMetricExporter : MetricExporter, TaskListener {
     var tasksCompleted = 0
 
     var timestamps = ArrayList<Long>()
-    var absoluteTimestamps = ArrayList<Long>()
 
     var maxTimestamp = 0L
 
@@ -84,7 +109,6 @@ class TestMetricExporter : MetricExporter, TaskListener {
         tasksCompleted = reader.tasksCompleted
 
         timestamps.add(reader.timestamp.toEpochMilli())
-        absoluteTimestamps.add(reader.timestampAbsolute.toEpochMilli())
         maxTimestamp = reader.timestamp.toEpochMilli()
     }
 
@@ -105,15 +129,21 @@ class TestMetricExporter : MetricExporter, TaskListener {
     var hostPowerDraws = mutableMapOf<String, ArrayList<Double>>()
     var hostEnergyUsages = mutableMapOf<String, ArrayList<Double>>()
 
-    /** The cluster name and data center name of every exported cluster sample. */
+    /** The name of every host, by id, so the host series stay keyed by name. */
+    private val hostNames = mutableMapOf<Int, String>()
+
+    /** The cluster name and data center name of every cluster in the topology. */
     val clusters = mutableSetOf<Pair<String?, String?>>()
 
-    override fun export(reader: ClusterSample) {
-        clusters.add(reader.clusterName to reader.dataCenterName)
+    override fun export(meta: TopologyMeta) {
+        meta.hosts.associateTo(hostNames) { it.hostId to it.hostName }
+
+        val dataCenterNames = meta.dataCenters.associate { it.dataCenterId to it.dataCenterName }
+        meta.clusters.mapTo(clusters) { it.clusterName to dataCenterNames[it.dataCenterId] }
     }
 
     override fun export(reader: HostSample) {
-        val hostName: String = reader.hostName ?: "unknown-host"
+        val hostName: String = hostNames[reader.hostId] ?: "unknown-host"
 
         if (hostName !in hostCpuDemands) {
             hostCpuIdleTimes[hostName] = ArrayList()
@@ -165,6 +195,49 @@ class TestMetricExporter : MetricExporter, TaskListener {
 
         carbonIntensities.add(reader.carbonIntensity)
         carbonEmissions.add(reader.carbonEmission)
+    }
+
+    /**
+     * The carbon series of the clusters and data centers. Like the power source series, these are not split per cluster
+     * or data center, so they assume a topology with a single cluster in a single data center.
+     */
+    var clusterCarbonIntensities = ArrayList<Double>()
+    var clusterCarbonEmissions = ArrayList<Double>()
+    var dataCenterCarbonIntensities = ArrayList<Double>()
+    var dataCenterCarbonEmissions = ArrayList<Double>()
+
+    override fun export(reader: ClusterSample) {
+        clusterCarbonIntensities.add(reader.carbonIntensity)
+        clusterCarbonEmissions.add(reader.carbonEmission)
+    }
+
+    override fun export(reader: DataCenterSample) {
+        dataCenterCarbonIntensities.add(reader.carbonIntensity)
+        dataCenterCarbonEmissions.add(reader.carbonEmission)
+    }
+
+    /**
+     * The series of the batteries. Like the power source series, these are not split per battery, so they assume a
+     * topology with at most one battery.
+     *
+     * - [batteryPowerDraws]: the power in W that the battery supplies to the hosts, which is 0 while it charges.
+     * - [batteryEnergyUsages]: the total energy in J that the battery has supplied to the hosts.
+     * - [batteryEmbodiedCarbonEmissions]: the total embodied carbon in g that the battery has emitted.
+     * - [batteryCharges]: the energy in J stored in the battery.
+     * - [batteryStates]: whether the battery charges, discharges, or does neither.
+     */
+    var batteryPowerDraws = ArrayList<Double>()
+    var batteryEnergyUsages = ArrayList<Double>()
+    var batteryEmbodiedCarbonEmissions = ArrayList<Double>()
+    var batteryCharges = ArrayList<Double>()
+    var batteryStates = ArrayList<BatteryState>()
+
+    override fun export(reader: BatterySample) {
+        batteryPowerDraws.add(reader.powerDraw)
+        batteryEnergyUsages.add(reader.energyUsage)
+        batteryEmbodiedCarbonEmissions.add(reader.embodiedCarbonEmission)
+        batteryCharges.add(reader.charge)
+        batteryStates.add(reader.batteryState)
     }
 
     override fun onTaskSubmission(task: SimTask?) {

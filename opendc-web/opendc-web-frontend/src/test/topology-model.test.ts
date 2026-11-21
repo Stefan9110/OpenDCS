@@ -1,3 +1,4 @@
+import { starterPowerModel } from "@/components/topology/defaults"
 import {
     UNLIMITED_SUPPLY_W,
     clusterShare,
@@ -8,7 +9,7 @@ import {
     supplyOf,
     topologyCapacity,
 } from "@/lib/topology/capacity"
-import type { ClusterSpec, DataCenterSpec, HostSpec, TopologySpec } from "@/lib/topology/spec"
+import type { ClusterSpec, DataCenterSpec, HostSpec, PowerSpec, TopologySpec } from "@/lib/topology/spec"
 import { brokenClusters, brokenDataCenters, issuesUnder, validateTopology } from "@/lib/topology/validation"
 import { describe, expect, it } from "vitest"
 
@@ -16,7 +17,7 @@ function host(overrides: Partial<HostSpec> = {}): HostSpec {
     return {
         cpu: { coreCount: 32, coreSpeed: "3.2 GHz" },
         memory: { size: "128 GiB" },
-        cpuPowerModel: { maxPower: "400 Watts", idlePower: "120 Watts" },
+        cpuPowerModel: { type: "linear", maxPower: "400 Watts", idlePower: "120 Watts" },
         ...overrides,
     }
 }
@@ -70,7 +71,7 @@ describe("validateTopology", () => {
 
     it("rejects a power model whose peak is below its idle draw", () => {
         const spec = topology([
-            cluster({ hosts: [host({ cpuPowerModel: { maxPower: "100 W", idlePower: "200 W" } })] }),
+            cluster({ hosts: [host({ cpuPowerModel: { type: "sqrt", maxPower: "100 W", idlePower: "200 W" } })] }),
         ])
         expect(validateTopology(spec)).toContainEqual({
             path: "datacenters[0].clusters[0].hosts[0].cpuPowerModel.maxPower",
@@ -78,8 +79,17 @@ describe("validateTopology", () => {
         })
     })
 
+    it("checks a constant model's one draw and a fitted model's own parameter", () => {
+        const constant = host({ cpuPowerModel: { type: "constant", power: "a lot" } })
+        const mse = host({ cpuPowerModel: { type: "mse", maxPower: "200 W", idlePower: "50 W", calibrationFactor: 0 } })
+        expect(paths(topology([cluster({ hosts: [constant, mse] })]))).toEqual([
+            "datacenters[0].clusters[0].hosts[0].cpuPowerModel.power",
+            "datacenters[0].clusters[0].hosts[1].cpuPowerModel.calibrationFactor",
+        ])
+    })
+
     it("only validates the gpu power model when the host actually has a gpu", () => {
-        const broken = { maxPower: "10 W", idlePower: "90 W" }
+        const broken = { type: "linear" as const, maxPower: "10 W", idlePower: "90 W" }
         expect(validateTopology(topology([cluster({ hosts: [host({ gpuPowerModel: broken })] })]))).toEqual([])
         const withGpu = topology([
             cluster({ hosts: [host({ gpu: { coreCount: 6912, coreSpeed: "1.4 GHz" }, gpuPowerModel: broken })] }),
@@ -147,10 +157,32 @@ describe("topologyCapacity", () => {
     })
 
     it("excludes the gpu power model from peak draw when the host has no gpu", () => {
-        const gpuPowerModel = { maxPower: "400 W", idlePower: "100 W" }
+        const gpuPowerModel = { type: "linear" as const, maxPower: "400 W", idlePower: "100 W" }
         expect(topologyCapacity(topology([cluster({ hosts: [host({ gpuPowerModel })] })])).peakPowerW).toBe(400)
         const withGpu = topology([cluster({ hosts: [host({ gpu: { coreCount: 1, coreSpeed: 1 }, gpuPowerModel })] })])
         expect(topologyCapacity(withGpu).peakPowerW).toBe(800)
+    })
+
+    it("counts a constant model's draw as its peak", () => {
+        const spec = topology([cluster({ hosts: [host({ cpuPowerModel: { type: "constant", power: "250 W" } })] })])
+        expect(topologyCapacity(spec).peakPowerW).toBe(250)
+    })
+})
+
+describe("starterPowerModel", () => {
+    const linear: PowerSpec = { type: "linear", maxPower: "300 W", idlePower: "90 W" }
+
+    it("keeps the draw across a change of type and carries only the new type's fields", () => {
+        const constant = starterPowerModel("constant", linear)
+        expect(constant).toEqual({ type: "constant", power: "300 W" })
+        expect(starterPowerModel("cubic", constant)).toEqual({ type: "cubic", maxPower: "300 W", idlePower: "300 W" })
+    })
+
+    it("gives a fitted model a parameter the server accepts", () => {
+        expect(starterPowerModel("mse", linear)).toEqual({ ...linear, type: "mse", calibrationFactor: 1 })
+        const asymptotic = starterPowerModel("asymptotic", starterPowerModel("mse", linear))
+        expect(asymptotic).toEqual({ ...linear, type: "asymptotic", asymUtil: 0.3 })
+        expect(validateTopology(topology([cluster({ hosts: [host({ cpuPowerModel: asymptotic })] })]))).toEqual([])
     })
 })
 

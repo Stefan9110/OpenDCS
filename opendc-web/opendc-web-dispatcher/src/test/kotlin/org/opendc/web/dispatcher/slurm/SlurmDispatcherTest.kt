@@ -32,8 +32,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.opendc.sdk.model.dsl.ghz
 import org.opendc.sdk.model.dsl.gib
-import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.resource.UriReference
+import org.opendc.sdk.model.scenario.ScenarioSpec
 import org.opendc.sdk.model.scheduler.PrefabAllocationPolicySpec
 import org.opendc.sdk.model.serialization.SdkJson
 import org.opendc.sdk.model.topology.ClusterSpec

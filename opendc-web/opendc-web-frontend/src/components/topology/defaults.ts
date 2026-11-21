@@ -1,11 +1,21 @@
-import type {
-    BatteryPolicy,
-    BatterySpec,
-    ClusterSpec,
-    DataCenterSpec,
-    HostSpec,
-    TopologySpec,
+import {
+    type BatteryPolicy,
+    type BatterySpec,
+    type ClusterSpec,
+    type DataCenterSpec,
+    type HostSpec,
+    type PowerModelType,
+    type PowerSpec,
+    type TopologySpec,
+    idlePower,
+    peakPower,
 } from "@/lib/topology/spec"
+
+/** What a fitted model is calibrated to before anybody fits it: the plain curve. */
+const STARTER_CALIBRATION_FACTOR = 1
+
+/** Where draw turns close to linear, from the middle of the range the model's authors give. */
+const STARTER_ASYMPTOTIC_UTILIZATION = 0.3
 
 export const STARTER_HOST: HostSpec = {
     name: "Host",
@@ -36,26 +46,41 @@ export function nextName(base: string, taken: string[]): string {
     return `${base} ${index}`
 }
 
+/** [model] as a [type] model, keeping its peak and idle draw; a new type's own fields start at a default. */
+export function starterPowerModel(type: PowerModelType, model: PowerSpec): PowerSpec {
+    const maxPower = peakPower(model)
+    switch (type) {
+        case "constant":
+            return { type, power: maxPower }
+        case "linear":
+        case "square":
+        case "cubic":
+        case "sqrt":
+            return { type, maxPower, idlePower: idlePower(model) }
+        case "mse":
+            return { type, maxPower, idlePower: idlePower(model), calibrationFactor: STARTER_CALIBRATION_FACTOR }
+        case "asymptotic":
+            return { type, maxPower, idlePower: idlePower(model), asymUtil: STARTER_ASYMPTOTIC_UTILIZATION }
+    }
+}
+
 export function starterBattery(): BatterySpec {
     return {
         name: "Battery",
-        capacity: 100,
-        chargingSpeed: 10_000,
-        initialCharge: 0,
+        capacity: "100 kWh",
+        chargingSpeed: "10000 W",
+        initialCharge: "0 kWh",
         policy: starterBatteryPolicy("single"),
     }
 }
 
-// runningMedian and runningQuartiles still load from older documents but are no longer offered.
-export const CREATABLE_BATTERY_POLICIES = ["single", "double", "runningMean", "runningMeanPlus"] as const
+export const BATTERY_POLICY_TYPES = ["single", "double", "runningMean", "runningMeanPlus"] as const
 
-export type CreatableBatteryPolicy = (typeof CREATABLE_BATTERY_POLICIES)[number]
-
-export function isCreatableBatteryPolicy(type: string): type is CreatableBatteryPolicy {
-    return (CREATABLE_BATTERY_POLICIES as readonly string[]).includes(type)
+export function isBatteryPolicyType(type: string): type is BatteryPolicy["type"] {
+    return (BATTERY_POLICY_TYPES as readonly string[]).includes(type)
 }
 
-export function starterBatteryPolicy(type: CreatableBatteryPolicy): BatteryPolicy {
+export function starterBatteryPolicy(type: BatteryPolicy["type"]): BatteryPolicy {
     switch (type) {
         case "single":
             return { type, carbonThreshold: 150 }

@@ -23,11 +23,12 @@
 package org.opendc.web.server.execution
 
 import jakarta.enterprise.context.ApplicationScoped
-import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.experiment.expand
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.resource.ResourceReference
 import org.opendc.sdk.model.resource.UriReference
+import org.opendc.sdk.model.scenario.ScenarioSpec
+import org.opendc.sdk.model.telemetry.MetaFile
 import org.opendc.sdk.model.workload.EfficientTraceWorkloadSpec
 import org.opendc.sdk.model.workload.InlineWorkloadSpec
 import org.opendc.sdk.model.workload.TraceWorkloadSpec
@@ -91,7 +92,7 @@ class ExecutionPlanner(
         slot: ExecutionSlot,
     ): List<Unfit> {
         val model = estimator()
-        return unfit(scenarios.map { planned(model, it, seed = 0) }, slot, config.toPolicy())
+        return unfit(scenarios.map { planned(model, it) }, slot, config.toPolicy())
     }
 
     /**
@@ -157,19 +158,12 @@ class ExecutionPlanner(
         val units =
             ExecutionUnit.findByExecution(execution.id).mapNotNull { row ->
                 val unit = row.unit
-                val scenario = scenarios[unit.scenarioIndex] ?: return@mapNotNull null
+                val scenario = scenarios[unit.scenarioIndex to unit.seed] ?: return@mapNotNull null
+                val run = runKey(experiment, unit.scenarioIndex, unit.seed)
+                val files = scenario.exportModel.filesToExport.distinct().map { it.fileName } + MetaFile.entries.map { it.path }
                 LaunchUnit(
-                    scenario =
-                        scenario
-                            .mapReferences { staging.stage(it.reference) }
-                            .copy(runs = 1, initialSeed = unit.seed.toInt(), id = unit.scenarioIndex),
-                    outputs =
-                        scenario.exportModel.filesToExport.distinct().map { file ->
-                            OutputTarget(
-                                file.fileName,
-                                store.writeUrl("${runKey(experiment, unit.scenarioIndex, unit.seed)}/${file.fileName}", lifetime),
-                            )
-                        },
+                    scenario = scenario.mapReferences { staging.stage(it.reference) },
+                    outputs = files.map { file -> OutputTarget(file, store.writeUrl("$run/$file", lifetime)) },
                     outcome = store.writeUrl(outcomeKey(experiment, execution.publicId, unit.scenarioIndex, unit.seed), lifetime),
                 )
             }
@@ -182,11 +176,11 @@ class ExecutionPlanner(
     }
 
     private fun estimate(
-        scenarios: Map<Int, ScenarioSpec>,
+        scenarios: Map<Pair<Int, Long>, ScenarioSpec>,
         units: List<RunUnit>,
     ): List<PlannedUnit> {
         val model = estimator()
-        return units.mapNotNull { unit -> scenarios[unit.scenarioIndex]?.let { planned(model, it, unit.seed) } }
+        return units.mapNotNull { unit -> scenarios[unit.scenarioIndex to unit.seed]?.let { planned(model, it) } }
     }
 
     /** The dispatch estimate, corrected by this deployment's multipliers. */
@@ -197,14 +191,13 @@ class ExecutionPlanner(
     private fun planned(
         model: ResourceEstimator,
         scenario: ScenarioSpec,
-        seed: Long,
     ): PlannedUnit {
         val estimate = model.estimate(scenario, traceExtentOf(scenario.workload))
-        return PlannedUnit(scenario.id, seed, estimate.cpuSeconds, estimate.peakMemoryMb)
+        return PlannedUnit(scenario.id, scenario.seed, estimate.cpuSeconds, estimate.peakMemoryMb)
     }
 
-    private fun scenariosOf(experiment: Experiment): Map<Int, ScenarioSpec> =
-        codec.decodeExperiment(codec.parseStored(experiment.spec)).expand().associateBy { it.id }
+    private fun scenariosOf(experiment: Experiment): Map<Pair<Int, Long>, ScenarioSpec> =
+        codec.decodeExperiment(codec.parseStored(experiment.spec)).expand().associateBy { it.id to it.seed }
 }
 
 /**

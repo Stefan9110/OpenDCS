@@ -31,7 +31,7 @@ import org.opendc.sdk.model.failure.FailurePrefabSpec
 import org.opendc.sdk.model.scheduler.SchedulerPrefabSpec
 import org.opendc.sdk.model.telemetry.OutputFileSpec
 import org.opendc.sdk.model.topology.BatteryPolicySpec
-import org.opendc.sdk.model.topology.PowerModelType
+import org.opendc.sdk.model.topology.PowerModelSpec
 
 /** One entry of a catalog served by the catalogs endpoint. */
 @Serializable
@@ -48,9 +48,6 @@ private const val POWER_MODELS = "power-models"
 private const val BATTERY_POLICIES = "battery-policies"
 private const val EXPORT_COLUMNS = "export-columns"
 
-/** Battery policies the model can spell but the simulator refuses to build, so no editor offers them. */
-private val UNBUILT_BATTERY_POLICIES = setOf("runningMedian", "runningQuartiles")
-
 /**
  * Reflects the option catalogs the draft and topology editors offer out of the sdk-model types
  * themselves, via their serializer descriptors, so the catalogs cannot drift from what the
@@ -65,11 +62,8 @@ class CatalogReflection {
         when (name) {
             SCHEDULERS -> SchedulerPrefabSpec.entries.map { entry(name, it.name) }
             FAILURE_PREFABS -> FailurePrefabSpec.entries.map { entry(name, it.name) }
-            POWER_MODELS -> PowerModelType.serializer().descriptor.elementNames.map { entry(name, it) }
-            BATTERY_POLICIES ->
-                sealedSubtypeNames(BatteryPolicySpec.serializer().descriptor)
-                    .filterNot { it in UNBUILT_BATTERY_POLICIES }
-                    .map { entry(name, it) }
+            POWER_MODELS -> sealedSubtypeNames(PowerModelSpec.serializer().descriptor).map { entry(name, it) }
+            BATTERY_POLICIES -> sealedSubtypeNames(BatteryPolicySpec.serializer().descriptor).map { entry(name, it) }
             EXPORT_COLUMNS -> OutputFileSpec.serializer().descriptor.elementNames.map { entry(name, it) }
             else -> null
         }

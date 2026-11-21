@@ -22,6 +22,7 @@
 
 package org.opendc.simulator.compute.infrastructure
 
+import org.opendc.common.units.DataSize
 import org.opendc.simulator.compute.machine.SimMachine
 import org.opendc.simulator.compute.models.GpuHostModel
 import org.opendc.simulator.compute.models.HostListener
@@ -53,7 +54,7 @@ import java.time.InstantSource
  *
  * @param id Identifies the host: hosts are equal when their ids are, so ids must be unique within a simulation.
  * @param name The (unique) name of the host.
- * @param clusterName The name of the cluster the host belongs to.
+ * @param clusterId The id of the cluster the host belongs to.
  * @param clock The (virtual) clock used to track time.
  * @param engine The flow engine the machine of this host runs on.
  * @param machineModel The static model of the host.
@@ -66,7 +67,7 @@ import java.time.InstantSource
 public class SimHost(
     public val id: Int,
     public val name: String,
-    public val clusterName: String,
+    public val clusterId: Int,
     private val clock: InstantSource,
     private val engine: FlowEngine,
     private val machineModel: MachineModel,
@@ -129,12 +130,18 @@ public class SimHost(
     private val tasks = LinkedHashSet<SimTask>()
 
     /**
+     * The number of [tasks] in each [TaskState], indexed by ordinal. It is kept up to date as tasks are spawned, deleted
+     * and change state, so that the statistics do not have to visit every task at every sample.
+     */
+    private val taskStateCounts = IntArray(TaskState.entries.size)
+
+    /**
      * Capacity reserved by the tasks spawned on this host, used by the schedulers.
      * Updated in [spawn] and [delete].
      */
     public var instanceCount: Int = 0
         private set
-    public var availableMemory: Long = model.memoryCapacity
+    public var availableMemory: DataSize = DataSize.ofMiB(model.memoryCapacity)
         private set
     public var provisionedCpuCores: Int = 0
         private set
@@ -235,7 +242,7 @@ public class SimHost(
     // ==================================================================================
 
     public fun canFit(task: SimTask): Boolean {
-        val sufficientMemory = (this.availableMemory) >= task.memorySize
+        val sufficientMemory = availableMemory >= task.memorySize
         val enoughCpus = model.coreCount >= task.cpuCoreCount
         val canFit = simMachine.canFit(task.toMachineModel())
 
@@ -248,7 +255,9 @@ public class SimHost(
     public fun spawn(task: SimTask) {
         require(canFit(task)) { "Task does not fit" }
 
-        tasks.add(task)
+        if (tasks.add(task)) {
+            taskStateCounts[task.state.ordinal]++
+        }
 
         // Reserve before starting, so a task that stops immediately is released in [delete]
         reserve(task)
@@ -260,6 +269,7 @@ public class SimHost(
         if (!tasks.remove(task)) {
             return
         }
+        taskStateCounts[task.state.ordinal]--
 
         task.host = null
         // Detach the machine, so a callback from it that arrives later is ignored by the task
@@ -293,6 +303,31 @@ public class SimHost(
     }
 
     /**
+     * Count the change of the state of [task] from [oldState], if it is on this host. Called by [SimTask] at every change
+     * of its state.
+     */
+    internal fun onTaskStateCountChanged(
+        task: SimTask,
+        oldState: TaskState,
+    ) {
+        if (task in tasks) {
+            taskStateCounts[oldState.ordinal]--
+            taskStateCounts[task.state.ordinal]++
+        }
+    }
+
+    /**
+     * Count the [tasks] in each state by visiting them, to check [taskStateCounts].
+     */
+    private fun countTaskStates(): IntArray {
+        val counts = IntArray(TaskState.entries.size)
+        for (task in tasks) {
+            counts[task.state.ordinal]++
+        }
+        return counts
+    }
+
+    /**
      * Notify the listeners that the state of [task], which runs on this host, has changed.
      */
     internal fun onTaskStateChanged(task: SimTask) {
@@ -310,18 +345,15 @@ public class SimHost(
         updateUptime()
         simMachine.psu.updateCounters()
 
-        var running = 0
-        var failed = 0
-        var invalid = 0
-
-        for (task in tasks) {
-            when (task.state) {
-                TaskState.RUNNING -> running++
-                TaskState.FAILED, TaskState.TERMINATED -> failed++
-                TaskState.COMPLETED, TaskState.PAUSED -> {}
-                else -> invalid++
-            }
+        if (CHECK_TASK_STATE_COUNTS) {
+            check(taskStateCounts.contentEquals(countTaskStates())) { "The task state counts of host $name are out of date" }
         }
+
+        val counts = taskStateCounts
+        val running = counts[TaskState.RUNNING.ordinal]
+        val failed = counts[TaskState.FAILED.ordinal] + counts[TaskState.TERMINATED.ordinal]
+        // The tasks in any other state than these are invalid on a host
+        val invalid = tasks.size - running - failed - counts[TaskState.COMPLETED.ordinal] - counts[TaskState.PAUSED.ordinal]
 
         return HostSystemStats(
             Duration.ofMillis(totalUptime),
@@ -340,14 +372,22 @@ public class SimHost(
         )
     }
 
+    /**
+     * Whether [task] is running on this host. This is cheaper than looking it up in [tasks], which the exporters do for
+     * every task at every sample: a task on this host has it as its host and has a virtual machine, and [delete] clears
+     * both.
+     */
+    private fun hasTask(task: SimTask): Boolean = task.host === this && task.virtualMachine != null
+
     public fun getSystemStats(task: SimTask): GuestSystemStats? {
-        if (task !in tasks) {
+        if (!hasTask(task)) {
             return null
         }
 
         // A task runs from the moment it is placed on this host, which is when the ComputeService sets scheduledAt.
         // Tasks that fail or pause are removed from the host right away, so a task on this host has no downtime.
-        return GuestSystemStats(Duration.ofMillis(clock.millis() - task.scheduledAt), Duration.ZERO)
+        val scheduledAt = checkNotNull(task.scheduledAt) { "Task ${task.id} is on host $name without having been scheduled" }
+        return GuestSystemStats(Duration.ofMillis(clock.millis() - scheduledAt.toEpochMs().toLong()), Duration.ZERO)
     }
 
     public fun getCpuStats(): HostCpuStats {
@@ -368,7 +408,7 @@ public class SimHost(
     }
 
     public fun getCpuStats(task: SimTask): GuestCpuStats? {
-        if (task !in tasks) {
+        if (!hasTask(task)) {
             return null
         }
 
@@ -412,13 +452,13 @@ public class SimHost(
     }
 
     public fun getGpuStats(task: SimTask): GuestGpuStats? {
-        if (task !in tasks) {
+        if (!hasTask(task)) {
             return null
         }
 
         val virtualMachine = task.virtualMachine!!
-        virtualMachine.updateCounters(clock.millis())
         val counters = virtualMachine.gpuPerformanceCounters ?: return null
+        virtualMachine.updateCounters(clock.millis())
         val gpuLimit = simMachine.gpus?.firstOrNull()?.gpuModel?.totalCoreCapacity ?: 0.0
 
         return GuestGpuStats(
@@ -475,7 +515,7 @@ public class SimHost(
     private fun SimTask.toMachineModel(): MachineModel {
         return MachineModel(
             simMachine.machineModel.cpuModel,
-            MemoryUnit("Generic", "Generic", 3200.0, this.memorySize.toLong()),
+            MemoryUnit("Generic", "Generic", 3200.0, this.memorySize.toMiB().toLong()),
             simMachine.machineModel.gpuModels,
             simMachine.machineModel.cpuDistributionStrategy,
             simMachine.machineModel.gpuDistributionStrategy,
@@ -498,3 +538,9 @@ public class SimHost(
         }
     }
 }
+
+/**
+ * Whether the task state counts of the hosts are checked against counting the tasks, at every sample. This happens when
+ * assertions are enabled, as in the tests.
+ */
+private val CHECK_TASK_STATE_COUNTS = SimHost::class.java.desiredAssertionStatus()

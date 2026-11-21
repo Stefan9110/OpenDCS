@@ -22,13 +22,22 @@
 
 package org.opendc.sdk.runner.base.harness
 
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.assertAll
 import org.opendc.common.units.DataSize
 import org.opendc.common.units.Frequency
+import org.opendc.common.units.Power
 import org.opendc.common.units.TimeDelta
+import org.opendc.common.units.Timestamp
+import org.opendc.sdk.model.carbon.CarbonIntensitySpec
+import org.opendc.sdk.model.carbon.CarbonModelSpec
+import org.opendc.sdk.model.carbon.InlineTraceBasedCarbonSpec
 import org.opendc.sdk.model.checkpoint.CheckpointModelSpec
-import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.failure.FailureModelSpec
+import org.opendc.sdk.model.failure.FailureSpec
+import org.opendc.sdk.model.failure.InlineTraceBasedFailureSpec
 import org.opendc.sdk.model.failure.NoFailureSpec
+import org.opendc.sdk.model.scenario.ScenarioSpec
 import org.opendc.sdk.model.scheduler.AllocationPolicySpec
 import org.opendc.sdk.model.scheduler.ComputeHostFilterSpec
 import org.opendc.sdk.model.scheduler.CoreRamWeigherSpec
@@ -37,6 +46,14 @@ import org.opendc.sdk.model.scheduler.RamFilterSpec
 import org.opendc.sdk.model.scheduler.VCpuFilterSpec
 import org.opendc.sdk.model.serialization.SdkJson
 import org.opendc.sdk.model.telemetry.ExportSpec
+import org.opendc.sdk.model.topology.BatterySpec
+import org.opendc.sdk.model.topology.ClusterSpec
+import org.opendc.sdk.model.topology.CpuSpec
+import org.opendc.sdk.model.topology.DataCenterSpec
+import org.opendc.sdk.model.topology.HostSpec
+import org.opendc.sdk.model.topology.LinearPowerModelSpec
+import org.opendc.sdk.model.topology.MemorySpec
+import org.opendc.sdk.model.topology.PowerSourceSpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.workload.InlineWorkloadSpec
 import org.opendc.sdk.model.workload.ScalingPolicySpec
@@ -67,12 +84,118 @@ internal fun createTopology(name: String): TopologySpec {
     return SdkJson.json.decodeFromString(text)
 }
 
+/** All times in the tests are in milliseconds. */
+internal const val SECOND = 1_000L
+internal const val MINUTE = 60 * SECOND
+
+/** The name of the hosts in [singleClusterTopology]. */
+internal const val HOST = "H01"
+
+/** The power draw of [HOST] when idle, which includes while it is failed. Its linear power model goes from 100 to 200 W. */
+internal const val IDLE_POWER = 100.0
+
+/** The power draw of [HOST] when running at 1000 MHz, half of its capacity. */
+internal const val HALF_LOAD_POWER = 150.0
+
+/** The power draw of [HOST] when running at 2000 MHz, its full capacity. */
+internal const val FULL_LOAD_POWER = 200.0
+
+/**
+ * A topology with a single datacenter and cluster, with [hostCount] identical hosts ([HOST]). Each host has one 2 GHz
+ * core, and a linear power model from [IDLE_POWER] to [FULL_LOAD_POWER].
+ * The datacenter draws its power from [powerSource], and can store energy in [battery].
+ */
+internal fun singleClusterTopology(
+    hostCount: Int = 1,
+    powerSource: PowerSourceSpec = PowerSourceSpec(),
+    battery: BatterySpec? = null,
+): TopologySpec =
+    TopologySpec(
+        datacenters =
+            listOf(
+                DataCenterSpec(
+                    clusters =
+                        listOf(
+                            ClusterSpec(
+                                name = "C01",
+                                hosts =
+                                    listOf(
+                                        HostSpec(
+                                            name = HOST,
+                                            count = hostCount,
+                                            cpu = CpuSpec(coreCount = 1, coreSpeed = Frequency.ofGHz(2)),
+                                            memory = MemorySpec(size = DataSize.ofGB(128)),
+                                            cpuPowerModel =
+                                                LinearPowerModelSpec(
+                                                    idlePower = Power.ofWatts(IDLE_POWER),
+                                                    maxPower = Power.ofWatts(FULL_LOAD_POWER),
+                                                ),
+                                        ),
+                                    ),
+                            ),
+                        ),
+                    powerSource = powerSource,
+                    battery = battery,
+                ),
+            ),
+    )
+
+/** A [singleClusterTopology] with [hostCount] hosts, whose power source follows [carbon], with an optional [battery]. */
+internal fun carbonTopology(
+    carbon: CarbonModelSpec,
+    battery: BatterySpec? = null,
+    hostCount: Int = 1,
+): TopologySpec = singleClusterTopology(hostCount = hostCount, powerSource = PowerSourceSpec(carbon = carbon), battery = battery)
+
+/**
+ * An inline carbon trace in which the carbon intensity in gCO2/kWh changes at the given times in ms. The tasks of
+ * [createTestTask] are submitted at the Unix epoch by default, so the simulation starts at the Unix epoch, and the times
+ * are both in ms after the start of the simulation and in ms since the epoch.
+ */
+internal fun carbonTrace(vararg intensities: Pair<Long, Double>): InlineTraceBasedCarbonSpec =
+    InlineTraceBasedCarbonSpec(intensities.map { (time, intensity) -> CarbonIntensitySpec(Timestamp.ofEpochMs(time), intensity) })
+
+/** The carbon emission in g of using [energyUsage] J at a carbon intensity of [intensity] gCO2/kWh. */
+internal fun carbonEmission(
+    energyUsage: Double,
+    intensity: Double,
+): Double = energyUsage / 3_600_000 * intensity
+
+/** The host fails after 5 min, for 5 min. */
+internal val singleFailure =
+    InlineTraceBasedFailureSpec(listOf(FailureSpec(TimeDelta.ofMin(5), TimeDelta.ofMin(5), 1.0)), repeat = false)
+
+/** Makes a 1 s snapshot after every minute of work. */
+internal val checkpointEveryMinute = CheckpointModelSpec(interval = TimeDelta.ofMin(1), duration = TimeDelta.ofSec(1))
+
+/** The energy in J used when drawing [power] W for [time] ms. */
+internal fun energy(
+    power: Double,
+    time: Long,
+): Double = power * time / SECOND
+
+/** Asserts the delays in ms that task [taskId] reported in its last sample. */
+internal fun assertDelays(
+    monitor: TestMetricExporter,
+    taskId: Int,
+    scheduling: Long,
+    failure: Long,
+    checkpoint: Long,
+) {
+    assertAll(
+        "Delays of task $taskId",
+        { assertEquals(scheduling, monitor.taskSchedulingDelay.getValue(taskId).last()) { "Scheduling delay incorrect" } },
+        { assertEquals(failure, monitor.taskFailureDelay.getValue(taskId).last()) { "Failure delay incorrect" } },
+        { assertEquals(checkpoint, monitor.taskCheckpointDelay.getValue(taskId).last()) { "Checkpoint delay incorrect" } },
+    )
+}
+
 /** Builds an SDK [TaskFragmentSpec] with durations in milliseconds and usages in MHz. */
 internal fun fragment(
     duration: Long,
     cpuUsage: Double,
     gpuUsage: Double = 0.0,
-): TaskFragmentSpec = TaskFragmentSpec(TimeDelta.ofMillis(duration), Frequency.ofMHz(cpuUsage), Frequency.ofMHz(gpuUsage))
+): TaskFragmentSpec = TaskFragmentSpec(TimeDelta.ofMs(duration), Frequency.ofMHz(cpuUsage), Frequency.ofMHz(gpuUsage))
 
 /**
  * Builds an SDK [TaskSpec] reproducing the legacy `createTestTask`: per-core capacity is the peak
@@ -93,8 +216,8 @@ internal fun createTestTask(
     val submitMs = LocalDateTime.parse(submissionTime).toInstant(ZoneOffset.UTC).toEpochMilli()
     return TaskSpec(
         id = id,
-        submissionTime = TimeDelta.ofMillis(submitMs),
-        duration = TimeDelta.ofMillis(duration),
+        submissionTime = TimeDelta.ofMs(submitMs),
+        duration = TimeDelta.ofMs(duration),
         cpuCoreCount = cpuCoreCount.toShort(),
         cpuCapacity = Frequency.ofMHz(fragments.maxOf { it.cpuUsage.toMHz() }),
         memory = DataSize.ofMiB(memCapacity),
@@ -133,7 +256,7 @@ internal fun runTest(
             failureModel = failureModel,
             checkpointModel = checkpointModel,
         )
-    runScenario(scenario, "", 0, 0L, listOf(MonitorSink(monitor)), provisioner)
-//    runScenario(scenario, "", 0, 0L, listOf(monitorSink), provisioner)
+    runScenario(scenario, "", listOf(MonitorSink(monitor)), provisioner)
+//    runScenario(scenario, "", listOf(monitorSink), provisioner)
     return monitor
 }

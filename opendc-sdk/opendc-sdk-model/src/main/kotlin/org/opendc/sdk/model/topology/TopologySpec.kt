@@ -24,8 +24,8 @@ package org.opendc.sdk.model.topology
 
 import kotlinx.serialization.Serializable
 import mu.KotlinLogging
+import org.opendc.sdk.model.carbon.mapReferences
 import org.opendc.sdk.model.resource.ResourceReference
-import org.opendc.sdk.model.resource.ResourceRole
 import org.opendc.sdk.model.resource.ResourceUse
 import org.opendc.sdk.model.validation.Validatable
 import org.opendc.sdk.model.validation.ValidationIssue
@@ -88,7 +88,7 @@ internal fun TopologySpec.mapReferences(
         datacenters =
             datacenters?.mapIndexed { index, dataCenter ->
                 val carbon = dataCenter.powerSource.carbon ?: return@mapIndexed dataCenter
-                val use = ResourceUse(ResourceRole.CARBON, "$path.datacenters[$index].powerSource.carbon", carbon)
-                dataCenter.copy(powerSource = dataCenter.powerSource.copy(carbon = transform(use)))
+                val mapped = carbon.mapReferences("$path.datacenters[$index].powerSource.carbon", transform)
+                dataCenter.copy(powerSource = dataCenter.powerSource.copy(carbon = mapped))
             },
     )

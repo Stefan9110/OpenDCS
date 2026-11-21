@@ -22,22 +22,17 @@
 
 package org.opendc.sdk.runner.telemetry.table.host
 
+import org.opendc.simulator.compute.models.HostState
 import org.opendc.trace.parquet.exporter.Exportable
 import java.time.Instant
 
 public data class HostSample(
-    public val hostName: String? = null,
-    public val clusterName: String? = null,
-    // TODO: update this metric, unclear what it does
-    public val coreCount: Int = -1,
-    public val memCapacity: Long = -1L,
+    public val hostId: Int = -1,
     public val timestamp: Instant = Instant.MIN,
-    public val timestampAbsolute: Instant = Instant.MIN,
-    public val tasksTerminated: Int = -1,
+    public val hostState: HostState = HostState.DOWN,
     public val tasksActive: Int = -1,
     public val guestsError: Int = -1,
     public val guestsInvalid: Int = -1,
-    public val cpuCapacity: Double = -1.0,
     public val cpuUsage: Double = -1.0,
     public val cpuDemand: Double = -1.0,
     public val cpuUtilization: Double = -1.0,
@@ -45,7 +40,6 @@ public data class HostSample(
     public val cpuIdleTime: Long = -1L,
     public val cpuStealTime: Long = -1L,
     public val cpuLostTime: Long = -1L,
-    public var gpuCapacities: ArrayList<Double> = ArrayList(),
     public var gpuUsages: ArrayList<Double> = ArrayList(),
     public var gpuDemands: ArrayList<Double> = ArrayList(),
     public var gpuUtilizations: ArrayList<Double> = ArrayList(),
@@ -61,5 +55,5 @@ public data class HostSample(
     public val embodiedCarbon: Double = -1.0,
     public val uptime: Long = -1L,
     public val downtime: Long = -1L,
-    public val bootTime: Instant = Instant.MIN,
+    public val bootTime: Instant? = null,
 ) : Exportable

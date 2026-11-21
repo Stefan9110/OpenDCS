@@ -1,4 +1,4 @@
-export type QuantityKind = "frequency" | "dataSize" | "dataRate" | "power" | "time"
+export type QuantityKind = "frequency" | "dataSize" | "dataRate" | "power" | "energy" | "time"
 
 /** A measurement as the model stores it: a number in the base unit, or text naming its own unit. */
 export type Quantity = number | string
@@ -7,6 +7,8 @@ const SECOND_MS = 1e3
 const MINUTE_MS = 60_000
 const HOUR_MS = 3.6e6
 const DAY_MS = 86_400_000
+
+const WATT_HOUR_J = 3600
 
 /**
  * Every unit a quantity may be written in, largest first, with how many base units it is worth. The
@@ -34,6 +36,13 @@ const LADDER = {
         ["kW", 1e3],
         ["W", 1],
     ],
+    energy: [
+        ["MWh", WATT_HOUR_J * 1e6],
+        ["kWh", WATT_HOUR_J * 1e3],
+        ["Wh", WATT_HOUR_J],
+        ["kJ", 1e3],
+        ["J", 1],
+    ],
     time: [
         ["h", HOUR_MS],
         ["min", MINUTE_MS],
@@ -47,8 +56,6 @@ export type Unit<K extends QuantityKind = QuantityKind> = (typeof LADDER)[K][num
 
 /** What a bare-number field is counted in; the unit never travels in the document. */
 export const SCALAR_UNIT = {
-    energy: "kWh",
-    power: "W",
     carbonIntensity: "gCO2/kWh",
 } as const
 
@@ -61,6 +68,7 @@ export const DEFAULT_UNIT: { [K in QuantityKind]: Unit<K> } = {
     dataSize: "GiB",
     dataRate: "Gibps",
     power: "W",
+    energy: "kWh",
     time: "min",
 }
 
@@ -70,6 +78,7 @@ const BASE_UNIT: { [K in QuantityKind]: Unit<K> } = {
     dataSize: "MiB",
     dataRate: "Kibps",
     power: "W",
+    energy: "J",
     time: "ms",
 }
 
@@ -196,6 +205,25 @@ const WATT_PREFIXES: ReadonlyArray<readonly [string, number]> = [
     ["", 1],
 ]
 
+// Case-sensitive, longest first: a lone "m" is milli, which the backend refuses for energy, not mega.
+const ENERGY_PREFIXES: ReadonlyArray<readonly [string, number]> = [
+    ["Giga", 1e9],
+    ["giga", 1e9],
+    ["Mega", 1e6],
+    ["mega", 1e6],
+    ["Kilo", 1e3],
+    ["kilo", 1e3],
+    ["G", 1e9],
+    ["g", 1e9],
+    ["M", 1e6],
+    ["K", 1e3],
+    ["k", 1e3],
+    ["", 1],
+]
+
+const JOULE = /^(?:j|joules?)$/i
+const WATT_HOUR = /^(?:w|watts?)\s*(?:-|p|per|\/)?\s*(?:h|hours?)$/i
+
 /** Base units per one of [suffix], or undefined when the backend would reject it too. */
 function factorOf(kind: QuantityKind, suffix: string): number | undefined {
     switch (kind) {
@@ -203,6 +231,8 @@ function factorOf(kind: QuantityKind, suffix: string): number | undefined {
             return scaledUnit(suffix.toLowerCase(), ["hz", "hertz"], HERTZ_PREFIXES, 1e-6)
         case "power":
             return scaledUnit(suffix.toLowerCase(), ["w", "watts"], WATT_PREFIXES, 1)
+        case "energy":
+            return energyFactor(suffix)
         case "dataSize":
             return dataFactor(suffix, 1 / 1024 ** 2)
         case "dataRate": {
@@ -225,6 +255,16 @@ function scaledUnit(
         const prefix = suffix.slice(0, suffix.length - unit.length)
         const scale = prefixes.find(([name]) => name === prefix)
         if (scale) return scale[1] * unitInBase
+    }
+    return undefined
+}
+
+function energyFactor(suffix: string): number | undefined {
+    for (const [prefix, scale] of ENERGY_PREFIXES) {
+        if (!suffix.startsWith(prefix)) continue
+        const unit = suffix.slice(prefix.length).trim()
+        if (JOULE.test(unit)) return scale
+        if (WATT_HOUR.test(unit)) return scale * WATT_HOUR_J
     }
     return undefined
 }

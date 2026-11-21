@@ -154,6 +154,6 @@ class RemoteBackendTest {
 
     private fun request(): RunRequest {
         val file = File(checkNotNull(javaClass.classLoader.getResource("experiments/tiny-experiment.json")).toURI())
-        return RunRequest(readExperiment(file, file.parentFile), file.parentFile.toPath(), out, 1, wantSummary = false)
+        return RunRequest(readExperiment(file, file.parentFile), file.parentFile.toPath(), out, 1, writerThreads = 1, wantSummary = false)
     }
 }

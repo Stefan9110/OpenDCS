@@ -1,13 +1,12 @@
 "use client"
 
-import { isCreatableBatteryPolicy, starterBattery, starterBatteryPolicy } from "@/components/topology/defaults"
+import { isBatteryPolicyType, starterBattery, starterBatteryPolicy } from "@/components/topology/defaults"
 import { BatteryPolicyFields } from "@/components/topology/inspector/BatteryPolicyFields"
 import { CatalogSelect } from "@/components/topology/inspector/CatalogSelect"
-import { FieldLabel, UnitAdornment } from "@/components/util/FieldLabel"
+import { QuantityInput } from "@/components/topology/inspector/QuantityInput"
 import { useCatalog } from "@/lib/api/catalogs"
 import type { BatterySpec } from "@/lib/topology/spec"
-import { SCALAR_UNIT } from "@/lib/units"
-import { Group, NumberInput, Stack, Switch } from "@mantine/core"
+import { Group, Stack, Switch } from "@mantine/core"
 
 /** A data center's battery, which charges from and discharges into the supply its clusters share. */
 export function BatteryFields({
@@ -30,33 +29,20 @@ export function BatteryFields({
 
             {battery && (
                 <>
-                    <Group grow gap="xs">
-                        <NumberInput
-                            label={<FieldLabel label="Capacity" help="Energy the battery holds when full." />}
-                            size="xs"
-                            min={0}
-                            hideControls
-                            rightSection={<UnitAdornment unit={SCALAR_UNIT.energy} />}
-                            rightSectionWidth={46}
-                            rightSectionPointerEvents="none"
+                    <Group grow gap="xs" align="flex-start">
+                        <QuantityInput
+                            label="Capacity"
+                            kind="energy"
+                            help="Energy the battery holds when full."
                             value={battery.capacity}
-                            onChange={(value) => onChange({ ...battery, capacity: Number(value) || 0 })}
+                            onChange={(capacity) => onChange({ ...battery, capacity })}
                         />
-                        <NumberInput
-                            label={
-                                <FieldLabel
-                                    label="Charge rate"
-                                    help="How fast the battery draws power while charging."
-                                />
-                            }
-                            size="xs"
-                            min={0}
-                            hideControls
-                            rightSection={<UnitAdornment unit={SCALAR_UNIT.power} />}
-                            rightSectionWidth={38}
-                            rightSectionPointerEvents="none"
+                        <QuantityInput
+                            label="Charge rate"
+                            kind="power"
+                            help="How fast the battery draws power while charging."
                             value={battery.chargingSpeed}
-                            onChange={(value) => onChange({ ...battery, chargingSpeed: Number(value) || 0 })}
+                            onChange={(chargingSpeed) => onChange({ ...battery, chargingSpeed })}
                         />
                     </Group>
                     <CatalogSelect
@@ -65,7 +51,7 @@ export function BatteryFields({
                         value={battery.policy.type}
                         onChange={(value) =>
                             value &&
-                            isCreatableBatteryPolicy(value) &&
+                            isBatteryPolicyType(value) &&
                             onChange({ ...battery, policy: starterBatteryPolicy(value) })
                         }
                     />

@@ -32,8 +32,8 @@ import org.opendc.sdk.model.dsl.gib
 import org.opendc.sdk.model.dsl.mhz
 import org.opendc.sdk.model.dsl.mib
 import org.opendc.sdk.model.dsl.ms
-import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.resource.UriReference
+import org.opendc.sdk.model.scenario.ScenarioSpec
 import org.opendc.sdk.model.scheduler.PrefabAllocationPolicySpec
 import org.opendc.sdk.model.serialization.SdkJson
 import org.opendc.sdk.model.telemetry.OutputFileSpec

@@ -24,12 +24,11 @@ package org.opendc.sdk.runner.telemetry.table.task
 
 import org.opendc.simulator.compute.service.ComputeService
 import org.opendc.simulator.compute.task.SimTask
-import java.time.Duration
+import org.opendc.simulator.compute.task.TaskState
 import java.time.Instant
 
 public class TaskSampler(
     private val service: ComputeService,
-    private val startTime: Duration = Duration.ofMillis(0),
 ) {
     public fun sample(
         now: Instant,
@@ -37,40 +36,35 @@ public class TaskSampler(
     ): TaskSample {
         val simHost = task.host
         val cpuStats = simHost?.getCpuStats(task)
-        val sysStats = simHost?.getSystemStats(task)
         val gpuStats = simHost?.getGpuStats(task)
 
-        val hostName = task.hostName
+        val hostId = task.hostId
 
         val timestamp = now
-        val timestampAbsolute = now + startTime
-
-        // TODO: This metric currently doesn't function well. It will round to the sample rate.
-        val uptime = sysStats?.uptime?.toMillis() ?: 0L
-        val downtime = sysStats?.downtime?.toMillis() ?: 0L
 
         val numFailures = task.numFailures
         val numPauses = task.numPauses
-        val submissionTime = task.submittedAt
-        val scheduleTime = task.scheduledAt
-        val finishTime = task.finishedAt
+        val scheduleTime = task.scheduledAt?.toEpochMs()?.toLong()
+        val finishTime = task.finishedAt?.toEpochMs()?.toLong()
 
-        val schedulingDelay = task.schedulingDelay
+        val schedulingDelay = task.schedulingDelay.toMsLong()
         val workload = checkNotNull(task.workload) { "Task ${task.id} has no workload" }
         val failureDelay = workload.failureDelay()
         val checkpointDelay = workload.checkpointDelay()
 
         val taskState = task.state
 
-        val cpuLimit = cpuStats?.capacity ?: 0.0
-        val cpuDemand = cpuStats?.demand ?: 0.0
-        val cpuUsage = cpuStats?.usage ?: 0.0
+        // A task that does not run uses and demands nothing. The machine of a run that just ended still reports its last
+        // usage and demand, so these are only taken from it while the task runs.
+        val isRunning = taskState == TaskState.RUNNING
+
+        val cpuDemand = if (isRunning) cpuStats?.demand ?: 0.0 else 0.0
+        val cpuUsage = if (isRunning) cpuStats?.usage ?: 0.0 else 0.0
         val cpuActiveTime = cpuStats?.activeTime ?: 0L
         val cpuIdleTime = cpuStats?.idleTime ?: 0L
         val cpuStealTime = cpuStats?.stealTime ?: 0L
         val cpuLostTime = cpuStats?.lostTime ?: 0L
 
-        var gpuLimit = 0.0
         var gpuUsage = 0.0
         var gpuDemand = 0.0
         var gpuActiveTime = 0L
@@ -79,9 +73,10 @@ public class TaskSampler(
         var gpuLostTime = 0L
 
         if (gpuStats != null) {
-            gpuLimit = gpuStats.capacity
-            gpuUsage = gpuStats.usage
-            gpuDemand = gpuStats.demand
+            if (isRunning) {
+                gpuUsage = gpuStats.usage
+                gpuDemand = gpuStats.demand
+            }
             gpuActiveTime = gpuStats.activeTime
             gpuIdleTime = gpuStats.idleTime
             gpuStealTime = gpuStats.stealTime
@@ -90,31 +85,22 @@ public class TaskSampler(
 
         return TaskSample(
             taskId = task.id,
-            memCapacity = task.memorySize.toLong(),
-            cpuCount = task.cpuCoreCount,
-            gpuCount = task.gpuCoreCount,
-            hostName = hostName,
+            hostId = hostId,
             timestamp = timestamp,
-            timestampAbsolute = timestampAbsolute,
-            uptime = uptime,
-            downtime = downtime,
             numFailures = numFailures,
             numPauses = numPauses,
-            submissionTime = submissionTime,
             scheduleTime = scheduleTime,
             finishTime = finishTime,
             schedulingDelay = schedulingDelay,
             failureDelay = failureDelay,
             checkpointDelay = checkpointDelay,
             taskState = taskState,
-            cpuLimit = cpuLimit,
             cpuUsage = cpuUsage,
             cpuDemand = cpuDemand,
             cpuActiveTime = cpuActiveTime,
             cpuIdleTime = cpuIdleTime,
             cpuStealTime = cpuStealTime,
             cpuLostTime = cpuLostTime,
-            gpuLimit = gpuLimit,
             gpuUsage = gpuUsage,
             gpuDemand = gpuDemand,
             gpuActiveTime = gpuActiveTime,

@@ -22,8 +22,8 @@
 
 package org.opendc.web.dispatcher.estimate
 
-import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.failure.NoFailureSpec
+import org.opendc.sdk.model.scenario.ScenarioSpec
 import org.opendc.sdk.model.telemetry.OutputFileSpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.workload.EfficientTraceWorkloadSpec

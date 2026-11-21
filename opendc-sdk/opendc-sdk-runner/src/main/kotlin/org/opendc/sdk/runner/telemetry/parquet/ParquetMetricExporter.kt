@@ -22,6 +22,7 @@
 
 package org.opendc.sdk.runner.telemetry.parquet
 
+import org.opendc.sdk.model.telemetry.MetaFile
 import org.opendc.sdk.model.telemetry.OutputFileSpec
 import org.opendc.sdk.runner.telemetry.MetricExporter
 import org.opendc.sdk.runner.telemetry.table.battery.BatterySample
@@ -30,7 +31,10 @@ import org.opendc.sdk.runner.telemetry.table.datacenter.DataCenterSample
 import org.opendc.sdk.runner.telemetry.table.host.HostSample
 import org.opendc.sdk.runner.telemetry.table.powerSource.PowerSourceSample
 import org.opendc.sdk.runner.telemetry.table.service.ServiceSample
+import org.opendc.sdk.runner.telemetry.table.simulation.SimulationMeta
+import org.opendc.sdk.runner.telemetry.table.task.TaskMeta
 import org.opendc.sdk.runner.telemetry.table.task.TaskSample
+import org.opendc.sdk.runner.telemetry.table.topology.TopologyMeta
 import org.opendc.trace.parquet.exporter.ExportColumn
 import org.opendc.trace.parquet.exporter.Exportable
 import org.opendc.trace.parquet.exporter.Exporter
@@ -38,6 +42,9 @@ import java.io.File
 
 /**
  * A [MetricExporter] that logs the events to a Parquet file.
+ *
+ * @param taskMetaExporter The exporter of the static attributes of the tasks, or `null` to not write them.
+ * @param metaDirectory The directory to write the simulation and topology meta files to, or `null` to not write them.
  */
 public class ParquetMetricExporter(
     private val batteryExporter: Exporter<BatterySample>?,
@@ -47,6 +54,8 @@ public class ParquetMetricExporter(
     private val powerSourceExporter: Exporter<PowerSourceSample>?,
     private val serviceExporter: Exporter<ServiceSample>?,
     private val taskExporter: Exporter<TaskSample>?,
+    private val taskMetaExporter: Exporter<TaskMeta>? = null,
+    private val metaDirectory: File? = null,
 ) : MetricExporter, AutoCloseable {
     override fun export(reader: BatterySample) {
         batteryExporter?.write(reader)
@@ -76,14 +85,70 @@ public class ParquetMetricExporter(
         taskExporter?.write(reader)
     }
 
+    override fun export(meta: SimulationMeta) {
+        val directory = metaDirectory ?: return
+        directory.mkdirs()
+
+        writeMeta(File(directory, MetaFile.SIMULATION.fileName), MetaColumns.SIMULATION, listOf(meta))
+    }
+
+    override fun export(meta: TopologyMeta) {
+        val directory = metaDirectory ?: return
+        directory.mkdirs()
+
+        val gpuCount = meta.hosts.maxOfOrNull { it.gpuCapacities.size } ?: 0
+
+        writeMeta(File(directory, MetaFile.DATA_CENTER.fileName), MetaColumns.DATA_CENTER, meta.dataCenters)
+        writeMeta(File(directory, MetaFile.CLUSTER.fileName), MetaColumns.CLUSTER, meta.clusters)
+        writeMeta(File(directory, MetaFile.HOST.fileName), MetaColumns.host(gpuCount), meta.hosts)
+        writeMeta(File(directory, MetaFile.POWER_SOURCE.fileName), MetaColumns.POWER_SOURCE, meta.powerSources)
+        writeMeta(File(directory, MetaFile.BATTERY.fileName), MetaColumns.BATTERY, meta.batteries)
+    }
+
+    override fun export(meta: TaskMeta) {
+        taskMetaExporter?.write(meta)
+    }
+
+    private inline fun <reified T : Exportable> writeMeta(
+        file: File,
+        columns: List<ExportColumn<T>>,
+        rows: List<T>,
+    ) {
+        Exporter(outputFile = file, columns = columns).use { exporter -> rows.forEach(exporter::write) }
+    }
+
+    /**
+     * Close the exporters, and throw the first failure of one of them. Every exporter is closed, also after one fails, so
+     * that no writer threads or part files are left behind.
+     */
     override fun close() {
-        batteryExporter?.close()
-        clusterExporter?.close()
-        dataCenterExporter?.close()
-        hostExporter?.close()
-        powerSourceExporter?.close()
-        serviceExporter?.close()
-        taskExporter?.close()
+        val exporters =
+            listOfNotNull(
+                batteryExporter,
+                clusterExporter,
+                dataCenterExporter,
+                hostExporter,
+                powerSourceExporter,
+                serviceExporter,
+                taskExporter,
+                taskMetaExporter,
+            )
+
+        var failure: Throwable? = null
+        for (exporter in exporters) {
+            try {
+                exporter.close()
+            } catch (cause: Throwable) {
+                val first = failure
+                if (first == null) {
+                    failure = cause
+                } else {
+                    first.addSuppressed(cause)
+                }
+            }
+        }
+
+        failure?.let { throw it }
     }
 
     public companion object {
@@ -93,6 +158,7 @@ public class ParquetMetricExporter(
          * @param[base]         parent pathname for output file.
          * @param[partition]    child pathname for output file.
          * @param[bufferSize]   size of the buffer used by the writer thread.
+         * @param[writerThreads] the number of threads that write each of the task and host files.
          */
         public operator fun invoke(
             base: File,
@@ -100,6 +166,7 @@ public class ParquetMetricExporter(
             bufferSize: Int,
             filesToExport: Map<OutputFileSpec, Boolean>,
             computeExportConfig: ComputeExportConfig,
+            writerThreads: Int = 1,
         ): ParquetMetricExporter =
             invoke(
                 base = base,
@@ -113,6 +180,7 @@ public class ParquetMetricExporter(
                 powerSourceExportColumns = computeExportConfig.powerSourceExportColumns,
                 serviceExportColumns = computeExportConfig.serviceExportColumns,
                 taskExportColumns = computeExportConfig.taskExportColumns,
+                writerThreads = writerThreads,
             )
 
         /**
@@ -123,6 +191,8 @@ public class ParquetMetricExporter(
          * @param[base]         parent pathname for output file.
          * @param[partition]    child pathname for output file.
          * @param[bufferSize]   size of the buffer used by the writer thread.
+         * @param[writerThreads] the number of threads that write each of the task and host files, which grow with the
+         * size of the simulation. The other files are written by a single thread.
          */
         public operator fun invoke(
             base: File,
@@ -136,6 +206,7 @@ public class ParquetMetricExporter(
             powerSourceExportColumns: Collection<ExportColumn<PowerSourceSample>>? = null,
             serviceExportColumns: Collection<ExportColumn<ServiceSample>>? = null,
             taskExportColumns: Collection<ExportColumn<TaskSample>>? = null,
+            writerThreads: Int = 1,
         ): ParquetMetricExporter {
             // Loads the fields in case they need to be retrieved if optional params are omitted.
             ComputeExportConfig.loadDfltColumns()
@@ -179,6 +250,9 @@ public class ParquetMetricExporter(
                         outputFile = File(base, "$partition/${OutputFileSpec.HOST.fileName}").also { it.parentFile.mkdirs() },
                         columns = hostExportColumns ?: Exportable.getAllLoadedColumns(),
                         bufferSize = bufferSize,
+                        writerThreads = writerThreads,
+                        // The samples of a host are written by the same thread, so that they stay in order
+                        shardKey = { it.hostId },
                     )
                 } else {
                     null
@@ -212,6 +286,20 @@ public class ParquetMetricExporter(
                         outputFile = File(base, "$partition/${OutputFileSpec.TASK.fileName}").also { it.parentFile.mkdirs() },
                         columns = taskExportColumns ?: Exportable.getAllLoadedColumns(),
                         bufferSize = bufferSize,
+                        writerThreads = writerThreads,
+                        // The samples of a task are written by the same thread, so that they stay in order
+                        shardKey = { it.taskId },
+                    )
+                } else {
+                    null
+                }
+
+            val taskMetaExporter =
+                if (filesToExport[OutputFileSpec.TASK] == true) {
+                    Exporter(
+                        outputFile = File(base, "$partition/${MetaFile.TASK.path}").also { it.parentFile.mkdirs() },
+                        columns = MetaColumns.TASK,
+                        bufferSize = bufferSize,
                     )
                 } else {
                     null
@@ -225,6 +313,8 @@ public class ParquetMetricExporter(
                 powerSourceExporter = powerSourceExporter,
                 serviceExporter = serviceExporter,
                 taskExporter = taskExporter,
+                taskMetaExporter = taskMetaExporter,
+                metaDirectory = File(base, "$partition/${MetaFile.DIRECTORY}"),
             )
         }
     }

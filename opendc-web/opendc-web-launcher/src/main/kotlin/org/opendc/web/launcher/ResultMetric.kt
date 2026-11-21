@@ -22,6 +22,7 @@
 
 package org.opendc.web.launcher
 
+import org.opendc.sdk.model.telemetry.MetaFile
 import org.opendc.sdk.model.telemetry.OutputFileSpec
 
 /** How several values become one. */
@@ -58,6 +59,12 @@ sealed interface EntityFold {
      * Averaging per-entity shares would weight a small host as heavily as a large one.
      */
     data class Share(val part: String, val whole: String) : EntityFold
+
+    /**
+     * A share of what the entities can do: [part] is added up across them and divided by the sum of
+     * their [capacity], which is not sampled but read from the entity's row of the table's meta file.
+     */
+    data class ShareOfCapacity(val part: String, val capacity: String) : EntityFold
 }
 
 /**
@@ -77,7 +84,7 @@ enum class ResultMetric(
     HOST_CPU_UTILIZATION(
         OutputFileSpec.HOST,
         "cpu_utilization",
-        EntityFold.Share("cpu_usage", "cpu_capacity"),
+        EntityFold.ShareOfCapacity("cpu_usage", "cpu_capacity"),
         Reduction.MEAN,
     ),
     HOST_POWER_DRAW(OutputFileSpec.HOST, "power_draw", EntityFold.Each(Reduction.SUM), Reduction.MEAN),
@@ -107,19 +114,20 @@ enum class ResultMetric(
     BATTERY_CHARGE(OutputFileSpec.BATTERY, "charge", EntityFold.Each(Reduction.SUM), Reduction.MEAN),
     ;
 
-    /** The columns of [table] this metric is read from. */
+    /** The sampled columns of [table] this metric is read from. */
     val columns: List<String>
         get() =
             when (val fold = entities) {
                 is EntityFold.Each -> listOf(column)
                 is EntityFold.Share -> listOf(fold.part, fold.whole)
+                is EntityFold.ShareOfCapacity -> listOf(fold.part)
             }
 
     /** Folds what the entities reporting at one instant contributed into one reading. */
     fun fold(readings: Collection<Reading>): Double =
         when (val it = entities) {
             is EntityFold.Each -> it.reduction.of(readings.map { reading -> reading.part })
-            is EntityFold.Share -> {
+            is EntityFold.Share, is EntityFold.ShareOfCapacity -> {
                 val whole = readings.sumOf { reading -> reading.whole }
                 // Nothing supplied is nothing used, not a share of nothing.
                 if (whole == 0.0) 0.0 else readings.sumOf { reading -> reading.part } / whole
@@ -144,8 +152,8 @@ enum class ResultMetric(
  * itself and finish a run at twice its power.
  */
 sealed interface RowIdentity {
-    /** One row per entity, named by [column]. */
-    data class PerEntity(val column: String) : RowIdentity
+    /** One row per entity, identified by [column], which also keys the entity's row of [meta]. */
+    data class PerEntity(val column: String, val meta: MetaFile) : RowIdentity
 
     /** One row per instant, so there is nothing to tell apart and the last one stands. */
     data object Singleton : RowIdentity
@@ -155,11 +163,11 @@ sealed interface RowIdentity {
 val OutputFileSpec.rows: RowIdentity
     get() =
         when (this) {
-            OutputFileSpec.BATTERY -> RowIdentity.PerEntity("battery_name")
-            OutputFileSpec.CLUSTER -> RowIdentity.PerEntity("cluster_name")
-            OutputFileSpec.DATA_CENTER -> RowIdentity.PerEntity("data_center_name")
-            OutputFileSpec.HOST -> RowIdentity.PerEntity("host_name")
-            OutputFileSpec.POWER_SOURCE -> RowIdentity.PerEntity("source_name")
+            OutputFileSpec.BATTERY -> RowIdentity.PerEntity("battery_id", MetaFile.BATTERY)
+            OutputFileSpec.CLUSTER -> RowIdentity.PerEntity("cluster_id", MetaFile.CLUSTER)
+            OutputFileSpec.DATA_CENTER -> RowIdentity.PerEntity("data_center_id", MetaFile.DATA_CENTER)
+            OutputFileSpec.HOST -> RowIdentity.PerEntity("host_id", MetaFile.HOST)
+            OutputFileSpec.POWER_SOURCE -> RowIdentity.PerEntity("power_source_id", MetaFile.POWER_SOURCE)
             OutputFileSpec.SERVICE -> RowIdentity.Singleton
-            OutputFileSpec.TASK -> RowIdentity.PerEntity("task_id")
+            OutputFileSpec.TASK -> RowIdentity.PerEntity("task_id", MetaFile.TASK)
         }

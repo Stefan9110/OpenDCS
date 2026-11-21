@@ -31,15 +31,18 @@
                         "name": "grid",
                         "maxPower": "50 kWatts",
                         "carbon": {
-                            "type": "named",
-                            "name": "de-carbon-2022"
+                            "type": "trace",
+                            "source": {
+                                "type": "named",
+                                "name": "de-carbon-2022"
+                            }
                         }
                     },
                     "battery": {
                         "name": "cluster-battery",
-                        "capacity": 100.0,
-                        "chargingSpeed": 5000.0,
-                        "initialCharge": 20.0,
+                        "capacity": "100.0 kWh",
+                        "chargingSpeed": "5000.0 W",
+                        "initialCharge": "20.0 kWh",
                         "policy": {
                             "type": "runningMean",
                             "startingThreshold": 150.0,

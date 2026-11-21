@@ -23,14 +23,25 @@
 package org.opendc.sdk.model.serialization
 
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.DynamicTest.dynamicTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestFactory
+import org.opendc.common.units.Power
+import org.opendc.common.units.Timestamp
+import org.opendc.sdk.model.carbon.CarbonIntensitySpec
+import org.opendc.sdk.model.carbon.CarbonModelSpec
+import org.opendc.sdk.model.carbon.InlineTraceBasedCarbonSpec
+import org.opendc.sdk.model.carbon.TraceBasedCarbonSpec
 import org.opendc.sdk.model.checkpoint.CheckpointModelSpec
 import org.opendc.sdk.model.dsl.experiment
 import org.opendc.sdk.model.dsl.filterScheduler
 import org.opendc.sdk.model.dsl.minutes
+import org.opendc.sdk.model.dsl.ms
 import org.opendc.sdk.model.dsl.prefabScheduler
 import org.opendc.sdk.model.dsl.scenario
 import org.opendc.sdk.model.dsl.traceWorkload
@@ -40,7 +51,9 @@ import org.opendc.sdk.model.failure.DistributionSpec
 import org.opendc.sdk.model.failure.ExponentialDistributionSpec
 import org.opendc.sdk.model.failure.FailureModelSpec
 import org.opendc.sdk.model.failure.FailurePrefabSpec
+import org.opendc.sdk.model.failure.FailureSpec
 import org.opendc.sdk.model.failure.GammaDistributionSpec
+import org.opendc.sdk.model.failure.InlineTraceBasedFailureSpec
 import org.opendc.sdk.model.failure.LogNormalDistributionSpec
 import org.opendc.sdk.model.failure.NoFailureSpec
 import org.opendc.sdk.model.failure.NormalDistributionSpec
@@ -79,27 +92,35 @@ import org.opendc.sdk.model.telemetry.ExportColumnsSpec
 import org.opendc.sdk.model.telemetry.ExportSpec
 import org.opendc.sdk.model.telemetry.OnlyColumns
 import org.opendc.sdk.model.telemetry.OutputFileSpec
+import org.opendc.sdk.model.topology.AsymptoticPowerModelSpec
 import org.opendc.sdk.model.topology.BatteryPolicySpec
 import org.opendc.sdk.model.topology.BestEffortPolicySpec
+import org.opendc.sdk.model.topology.ConstantPowerModelSpec
 import org.opendc.sdk.model.topology.ConstantVirtualizationOverheadSpec
+import org.opendc.sdk.model.topology.CubicPowerModelSpec
 import org.opendc.sdk.model.topology.DistributionPolicySpec
 import org.opendc.sdk.model.topology.DoubleBatteryPolicySpec
 import org.opendc.sdk.model.topology.EqualSharePolicySpec
 import org.opendc.sdk.model.topology.FirstFitPolicySpec
 import org.opendc.sdk.model.topology.FixedSharePolicySpec
+import org.opendc.sdk.model.topology.LinearPowerModelSpec
 import org.opendc.sdk.model.topology.MaxMinFairnessPolicySpec
+import org.opendc.sdk.model.topology.MsePowerModelSpec
 import org.opendc.sdk.model.topology.NoVirtualizationOverheadSpec
+import org.opendc.sdk.model.topology.PowerModelSpec
+import org.opendc.sdk.model.topology.PowerSourceSpec
 import org.opendc.sdk.model.topology.RunningMeanPlusPolicySpec
 import org.opendc.sdk.model.topology.RunningMeanPolicySpec
-import org.opendc.sdk.model.topology.RunningMedianPolicySpec
-import org.opendc.sdk.model.topology.RunningQuartilesPolicySpec
 import org.opendc.sdk.model.topology.ShareBasedVirtualizationOverheadSpec
 import org.opendc.sdk.model.topology.SingleBatteryPolicySpec
+import org.opendc.sdk.model.topology.SqrtPowerModelSpec
+import org.opendc.sdk.model.topology.SquarePowerModelSpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.topology.VirtualizationOverheadSpec
 import org.opendc.sdk.model.workload.ScalingPolicySpec
 import org.opendc.sdk.model.workload.TraceWorkloadSpec
 import org.opendc.sdk.model.workload.WorkloadSpec
+import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -156,9 +177,9 @@ class RoundTripTest {
         val builtScenario =
             scenario {
                 id = 7
-                name = "s-7"
+                experimentName = "s-7"
                 runs = 2
-                initialSeed = 9
+                seed = 9
                 maxNumFailures = 3
                 topology(sampleTopology)
                 workload(sampleWorkload)
@@ -255,6 +276,11 @@ class RoundTripTest {
             listOf(
                 NoFailureSpec,
                 TraceBasedFailureSpec(source = NamedReference("availability"), startPoint = 0.25, repeat = false),
+                InlineTraceBasedFailureSpec(
+                    failures = listOf(FailureSpec(5.minutes, 5.minutes, 1.0), FailureSpec(7.minutes, 10.minutes, 0.5)),
+                    startPoint = 0.5,
+                    repeat = false,
+                ),
                 PrefabFailureSpec(FailurePrefabSpec.Lanl05Wbl),
                 CustomFailureSpec(
                     interArrival = ExponentialDistributionSpec(3600.0),
@@ -265,6 +291,61 @@ class RoundTripTest {
         return models.map { model ->
             dynamicTest(model.toString()) { assertEquals(model, roundTrip<FailureModelSpec>(model)) }
         }
+    }
+
+    /** Carbon models are round-tripped as part of a [PowerSourceSpec], which reads them with a serializer of its own. */
+    @TestFactory
+    fun `carbon models round-trip`(): List<DynamicTest> {
+        val models: List<CarbonModelSpec?> =
+            listOf(
+                null,
+                TraceBasedCarbonSpec(source = NamedReference("carbon-trace")),
+                TraceBasedCarbonSpec(source = UriReference("file:///traces/carbon.parquet")),
+                InlineTraceBasedCarbonSpec(
+                    intensities =
+                        listOf(
+                            CarbonIntensitySpec(Timestamp.ofInstant(Instant.parse("2022-01-01T00:00:00Z")), 80.0),
+                            CarbonIntensitySpec(Timestamp.ofInstant(Instant.parse("2022-01-01T01:00:00Z")), 120.5),
+                        ),
+                ),
+            )
+        return models.map { model ->
+            dynamicTest(model.toString()) {
+                val powerSource = PowerSourceSpec(carbon = model)
+                assertEquals(powerSource, roundTrip<PowerSourceSpec>(powerSource))
+            }
+        }
+    }
+
+    @TestFactory
+    fun `a carbon trace in the old format, a bare reference, is read as a trace-based carbon model`(): List<DynamicTest> {
+        val cases =
+            listOf(
+                """{"carbon": {"type": "named", "name": "carbon-trace"}}""" to NamedReference("carbon-trace"),
+                """{"carbon": {"type": "uri", "uri": "file:///carbon.parquet"}}""" to UriReference("file:///carbon.parquet"),
+            )
+        return cases.flatMap { (text, source) ->
+            listOf(SdkJson.json, SdkJson.strictJson).map { json ->
+                dynamicTest("$text (strict: ${json === SdkJson.strictJson})") {
+                    assertEquals(TraceBasedCarbonSpec(source), json.decodeFromString<PowerSourceSpec>(text).carbon)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `a carbon trace in the old format is written in the new format`() {
+        val powerSource = SdkJson.json.decodeFromString<PowerSourceSpec>("""{"carbon": {"type": "named", "name": "carbon-trace"}}""")
+
+        val carbon = SdkJson.json.parseToJsonElement(encode(powerSource)).jsonObject.getValue("carbon").jsonObject
+
+        assertEquals(JsonPrimitive("trace"), carbon["type"])
+        val source =
+            buildJsonObject {
+                put("type", "named")
+                put("name", "carbon-trace")
+            }
+        assertEquals(source, carbon["source"])
     }
 
     @TestFactory
@@ -307,8 +388,6 @@ class RoundTripTest {
                 DoubleBatteryPolicySpec(lowerThreshold = 100.0, upperThreshold = 300.0),
                 RunningMeanPolicySpec(startingThreshold = 200.0, windowSize = 24),
                 RunningMeanPlusPolicySpec(startingThreshold = 200.0, windowSize = 24),
-                RunningMedianPolicySpec(startingThreshold = 200.0, windowSize = 24),
-                RunningQuartilesPolicySpec(startingThreshold = 200.0, windowSize = 24),
             )
         return policies.map { policy ->
             dynamicTest(policy.toString()) { assertEquals(policy, roundTrip<BatteryPolicySpec>(policy)) }
@@ -320,13 +399,30 @@ class RoundTripTest {
         val policies: List<DistributionPolicySpec> =
             listOf(
                 MaxMinFairnessPolicySpec,
-                BestEffortPolicySpec(updateInterval = 2000L),
+                BestEffortPolicySpec(updateInterval = 2000.ms),
                 EqualSharePolicySpec,
                 FirstFitPolicySpec,
                 FixedSharePolicySpec(shareRatio = 0.5),
             )
         return policies.map { policy ->
             dynamicTest(policy.toString()) { assertEquals(policy, roundTrip<DistributionPolicySpec>(policy)) }
+        }
+    }
+
+    @TestFactory
+    fun `power models round-trip`(): List<DynamicTest> {
+        val models: List<PowerModelSpec> =
+            listOf(
+                ConstantPowerModelSpec(power = Power.ofWatts(350)),
+                LinearPowerModelSpec(maxPower = Power.ofWatts(400), idlePower = Power.ofWatts(200)),
+                SquarePowerModelSpec(maxPower = Power.ofWatts(400), idlePower = Power.ofWatts(200)),
+                CubicPowerModelSpec(maxPower = Power.ofWatts(400), idlePower = Power.ofWatts(200)),
+                SqrtPowerModelSpec(maxPower = Power.ofWatts(400), idlePower = Power.ofWatts(200)),
+                MsePowerModelSpec(maxPower = Power.ofWatts(400), idlePower = Power.ofWatts(200), calibrationFactor = 1.5),
+                AsymptoticPowerModelSpec(maxPower = Power.ofWatts(400), idlePower = Power.ofWatts(200), asymUtil = 0.3, dvfs = false),
+            )
+        return models.map { model ->
+            dynamicTest(model.toString()) { assertEquals(model, roundTrip<PowerModelSpec>(model)) }
         }
     }
 
@@ -374,7 +470,10 @@ class RoundTripTest {
         assertTrue(encode<DistributionPolicySpec>(MaxMinFairnessPolicySpec).contains("\"type\": \"maxMinFairness\""))
         assertTrue(encode<BatteryPolicySpec>(SingleBatteryPolicySpec(100.0)).contains("\"type\": \"single\""))
         assertTrue(encode<VirtualizationOverheadSpec>(ShareBasedVirtualizationOverheadSpec).contains("\"type\": \"shareBased\""))
+        assertTrue(encode<PowerModelSpec>(SqrtPowerModelSpec(Power.ofWatts(400), Power.ofWatts(200))).contains("\"type\": \"sqrt\""))
         assertTrue(encode<ColumnSelection>(AllColumns).contains("\"type\": \"all\""))
+        assertTrue(encode<CarbonModelSpec>(TraceBasedCarbonSpec(NamedReference("t"))).contains("\"type\": \"trace\""))
+        assertTrue(encode<CarbonModelSpec>(InlineTraceBasedCarbonSpec(emptyList())).contains("\"type\": \"inline-trace\""))
     }
 
     private val distributionCases: List<Pair<DistributionSpec, List<String>>> =

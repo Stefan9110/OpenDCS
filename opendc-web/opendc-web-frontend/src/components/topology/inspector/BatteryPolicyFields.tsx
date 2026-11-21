@@ -6,7 +6,6 @@ import { SCALAR_UNIT } from "@/lib/units"
 import { Group, NumberInput } from "@mantine/core"
 import type { ReactNode } from "react"
 
-// Covers the two policies no longer offered too, so an older document still shows what it holds.
 export function BatteryPolicyFields({
     policy,
     onChange,
@@ -41,8 +40,6 @@ export function BatteryPolicyFields({
             )
         case "runningMean":
         case "runningMeanPlus":
-        case "runningMedian":
-        case "runningQuartiles":
             return (
                 <Group grow gap="xs">
                     {thresholdInput(

@@ -23,6 +23,7 @@
 package org.opendc.sdk.model.resource
 
 import org.junit.jupiter.api.Test
+import org.opendc.sdk.model.carbon.TraceBasedCarbonSpec
 import org.opendc.sdk.model.experiment.ExperimentSpec
 import org.opendc.sdk.model.experiment.expand
 import org.opendc.sdk.model.failure.NoFailureSpec
@@ -64,7 +65,7 @@ class ResourceReferencesTest {
                 ResourceUse(ResourceRole.WORKLOAD, "workloads[1].source", NamedReference("bitbrains")),
                 ResourceUse(ResourceRole.WORKLOAD, "workloads[2].source", UriReference("file:///traces/marconi")),
                 ResourceUse(ResourceRole.FAILURE, "failureModels[1].source", NamedReference("outages")),
-                ResourceUse(ResourceRole.CARBON, "topologies[1].datacenters[1].powerSource.carbon", NamedReference("grid")),
+                ResourceUse(ResourceRole.CARBON, "topologies[1].datacenters[1].powerSource.carbon.source", NamedReference("grid")),
             ),
             experiment.references(),
         )
@@ -86,16 +87,18 @@ class ResourceReferencesTest {
     fun `finds the traces of one scenario at the paths of a scenario`() {
         val scenario =
             experiment.expand().single {
-                it.workload is TraceWorkloadSpec && it.failureModel is TraceBasedFailureSpec && it.topology.carbon() != null
+                it.workload is TraceWorkloadSpec && it.failureModel is TraceBasedFailureSpec && it.topology.carbon() != null &&
+                    it.seed == experiment.initialSeed
             }
 
         assertEquals(
-            listOf("workload.source", "failureModel.source", "topology.datacenters[1].powerSource.carbon"),
+            listOf("workload.source", "failureModel.source", "topology.datacenters[1].powerSource.carbon.source"),
             scenario.references().map { it.path },
         )
     }
 
-    private fun TopologySpec.carbon(): ResourceReference? = datacenters.orEmpty().firstNotNullOfOrNull { it.powerSource.carbon }
+    private fun TopologySpec.carbon(): ResourceReference? =
+        datacenters.orEmpty().firstNotNullOfOrNull { (it.powerSource.carbon as? TraceBasedCarbonSpec)?.source }
 
     private fun topology(carbon: ResourceReference?): TopologySpec =
         TopologySpec(
@@ -104,7 +107,7 @@ class ResourceReferencesTest {
                 DataCenterSpec(
                     listOf(ClusterSpec(hosts = listOf(validHost))),
                     name = "busy",
-                    powerSource = PowerSourceSpec(carbon = carbon),
+                    powerSource = PowerSourceSpec(carbon = carbon?.let(::TraceBasedCarbonSpec)),
                 ),
             ),
         )

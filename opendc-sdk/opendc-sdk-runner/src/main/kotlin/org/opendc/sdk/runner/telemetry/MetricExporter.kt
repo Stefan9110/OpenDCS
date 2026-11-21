@@ -28,7 +28,10 @@ import org.opendc.sdk.runner.telemetry.table.datacenter.DataCenterSample
 import org.opendc.sdk.runner.telemetry.table.host.HostSample
 import org.opendc.sdk.runner.telemetry.table.powerSource.PowerSourceSample
 import org.opendc.sdk.runner.telemetry.table.service.ServiceSample
+import org.opendc.sdk.runner.telemetry.table.simulation.SimulationMeta
+import org.opendc.sdk.runner.telemetry.table.task.TaskMeta
 import org.opendc.sdk.runner.telemetry.table.task.TaskSample
+import org.opendc.sdk.runner.telemetry.table.topology.TopologyMeta
 
 /**
  * A monitor that exports Samples.
@@ -65,7 +68,33 @@ public interface MetricExporter {
     public fun export(reader: ServiceSample) {}
 
     /**
-     * Record an entry with the specified [reader].
+     * Record an entry with the specified [reader], taken at an export interval while the task runs.
      */
     public fun export(reader: TaskSample) {}
+
+    /**
+     * Record an entry with the specified [reader], taken at a change of the state of the task. By default it is recorded
+     * like the entries taken at an export interval.
+     */
+    public fun exportStateChange(reader: TaskSample) {
+        export(reader)
+    }
+
+    /**
+     * Export the run-level attributes of the simulation, such as the absolute time it starts at. Every exported time is
+     * relative to that start. It is exported once, before any sample.
+     */
+    public fun export(meta: SimulationMeta) {}
+
+    /**
+     * Export the topology of the run, which maps the ids in the samples to names, parents and static attributes. It is
+     * exported once, before any sample.
+     */
+    public fun export(meta: TopologyMeta) {}
+
+    /**
+     * Export the static attributes of a task. They are exported once per task, when the task is deleted or, for tasks
+     * still in the service, when the run ends.
+     */
+    public fun export(meta: TaskMeta) {}
 }

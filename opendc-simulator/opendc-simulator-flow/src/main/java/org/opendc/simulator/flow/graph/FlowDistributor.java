@@ -24,7 +24,6 @@ package org.opendc.simulator.flow.graph;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.opendc.simulator.core.ResourceType;
@@ -79,15 +78,13 @@ public abstract class FlowDistributor extends FlowNode implements FlowSupplier, 
 
     protected double capacity; // What is the max capacity. Can probably be removed
 
-    protected static HashMap<Integer, Integer> updateMap = new HashMap<Integer, Integer>();
-
     protected boolean overloaded = false;
 
     public FlowDistributor(FlowEngine engine, int maxConsumers, int maxSuppliers) {
         super(engine);
 
         this.maxConsumers = maxConsumers;
-        this.maxSuppliers = 4;
+        this.maxSuppliers = maxSuppliers;
 
         this.availableConsumerIndices = new ArrayList<>(this.maxConsumers);
         this.usedConsumerIndices = new ArrayList<>(this.maxConsumers);
@@ -126,7 +123,6 @@ public abstract class FlowDistributor extends FlowNode implements FlowSupplier, 
     }
 
     public long onUpdate(long now) {
-
         // Check if current supply is different from total demand
         if (this.outgoingDemandUpdateNeeded) {
 

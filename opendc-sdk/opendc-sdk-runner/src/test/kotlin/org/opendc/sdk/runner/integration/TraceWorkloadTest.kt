@@ -36,15 +36,18 @@ import org.opendc.sdk.model.dsl.mhz
 import org.opendc.sdk.model.dsl.scenario
 import org.opendc.sdk.model.dsl.topology
 import org.opendc.sdk.model.dsl.watts
-import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.failure.FailureModelSpec
 import org.opendc.sdk.model.failure.FailurePrefabSpec
 import org.opendc.sdk.model.failure.PrefabFailureSpec
 import org.opendc.sdk.model.failure.TraceBasedFailureSpec
 import org.opendc.sdk.model.resource.NamedReference
+import org.opendc.sdk.model.scenario.ScenarioSpec
 import org.opendc.sdk.model.scheduler.TaskStopperSpec
+import org.opendc.sdk.model.serialization.SdkJson
 import org.opendc.sdk.model.telemetry.ExportSpec
-import org.opendc.sdk.model.topology.PowerModelType
+import org.opendc.sdk.model.topology.LinearPowerModelSpec
+import org.opendc.sdk.model.topology.PowerModelSpec
+import org.opendc.sdk.model.topology.SqrtPowerModelSpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.workload.TraceWorkloadSpec
 import org.opendc.sdk.runner.OpenDC
@@ -54,6 +57,7 @@ import org.opendc.sdk.runner.telemetry.sink.InMemorySink
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.exists
+import kotlin.io.path.readText
 
 /**
  * End-to-end integration test of the trace-workload path against self-contained trace fixtures
@@ -67,8 +71,8 @@ class TraceWorkloadTest {
         val design =
             experiment {
                 name = "trace-integration"
-                topology(datacenter(PowerModelType.LINEAR))
-                topology(datacenter(PowerModelType.SQRT))
+                topology(datacenter())
+                topology(datacenter(SqrtPowerModelSpec(maxPower = 200.watts, idlePower = 100.watts)))
                 workload(
                     TraceWorkloadSpec(source = NamedReference("workloadTraces/bitbrains-small"), submissionTime = "2022-02-01T00:00:00"),
                 )
@@ -89,6 +93,9 @@ class TraceWorkloadTest {
             { assert(report.scenarios.size == 2) { "expected 2 scenarios, got ${report.scenarios.size}" } },
             { assert(runs.size == 2) { "expected 2 runs, got ${runs.size}" } },
             *runs.map { run -> { assertRunProducedOutput(run.outputPath, run.metrics) } }.toTypedArray(),
+            *report.scenarios
+                .flatMap { result -> result.runs.map { run -> { assertScenarioExported(run.outputPath, result.scenario) } } }
+                .toTypedArray(),
         )
     }
 
@@ -100,7 +107,7 @@ class TraceWorkloadTest {
         val metrics =
             simulate(
                 scenario {
-                    topology(datacenter(PowerModelType.LINEAR))
+                    topology(datacenter())
                     workload(traceWorkload("bitbrains-small"))
                     exportModel = ExportSpec(exportInterval = 1.hours, printFrequency = null)
                     checkpointModel = CheckpointModelSpec()
@@ -123,7 +130,7 @@ class TraceWorkloadTest {
         val metrics =
             simulate(
                 scenario {
-                    topology(datacenter(PowerModelType.LINEAR, gpu = trace == "small_gpu"))
+                    topology(datacenter(gpu = trace == "small_gpu"))
                     workload(traceWorkload(trace, deferAll = true))
                     allocationPolicy(filterScheduler { timeshift { taskStopper = TaskStopperSpec(forecast = false) } })
                     exportModel = ExportSpec(exportInterval = 1.hours, printFrequency = null)
@@ -165,7 +172,7 @@ class TraceWorkloadTest {
     private fun simulateWithFailures(failureModel: FailureModelSpec): CollectedMetrics =
         simulate(
             scenario {
-                topology(datacenter(PowerModelType.LINEAR, hostCount = 10))
+                topology(datacenter(hostCount = 10))
                 workload(traceWorkload("bitbrains-small"))
                 exportModel = ExportSpec(exportInterval = 1.hours, printFrequency = null)
                 this.failureModel = failureModel
@@ -202,8 +209,17 @@ class TraceWorkloadTest {
         assert(captured.powerSource.sumOf { it.energyUsage } > 0.0) { "expected non-zero energy usage" }
     }
 
+    /** The run's `meta/scenario.json` holds the spec of the [scenario] that produced it. */
+    private fun assertScenarioExported(
+        outputPath: Path?,
+        scenario: ScenarioSpec,
+    ) {
+        val file = requireNotNull(outputPath) { "run produced no parquet output" }.resolve("meta/trackr.json")
+        assertEquals(scenario, SdkJson.decodeScenario(file.readText()))
+    }
+
     private fun datacenter(
-        powerModel: PowerModelType,
+        cpuPowerModel: PowerModelSpec = LinearPowerModelSpec(maxPower = 200.watts, idlePower = 100.watts),
         hostCount: Int = 1,
         gpu: Boolean = false,
     ): TopologySpec =
@@ -214,12 +230,7 @@ class TraceWorkloadTest {
                         cpu(coreCount = 64, coreSpeed = 2000.mhz)
                         memory(size = 1024.gib)
                         if (gpu) gpu(coreCount = 2, coreSpeed = 2000.mhz)
-                        power {
-                            type = powerModel
-                            power = 400.watts
-                            idlePower = 100.watts
-                            maxPower = 200.watts
-                        }
+                        this.cpuPowerModel = cpuPowerModel
                     }
                 }
                 powerSource(carbon = NamedReference("carbonTraces/2022-01-01_2022-12-31_NL.parquet"))

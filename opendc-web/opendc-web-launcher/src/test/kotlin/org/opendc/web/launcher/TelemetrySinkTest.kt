@@ -37,7 +37,7 @@ import org.opendc.sdk.model.dsl.topology
 import org.opendc.sdk.model.dsl.watts
 import org.opendc.sdk.model.experiment.ExperimentSpec
 import org.opendc.sdk.model.telemetry.ExportSpec
-import org.opendc.sdk.model.topology.PowerModelType
+import org.opendc.sdk.model.topology.LinearPowerModelSpec
 import org.opendc.sdk.model.topology.TopologySpec
 import org.opendc.sdk.model.workload.InlineWorkloadSpec
 import org.opendc.sdk.model.workload.TaskFragmentSpec
@@ -60,7 +60,7 @@ class TelemetrySinkTest {
     @Test
     fun `folds the hosts reporting at one instant into a single reading`() {
         val telemetry = TelemetrySink()
-        val perHost = mutableMapOf<Long, MutableMap<String, Double>>()
+        val perHost = mutableMapOf<Long, MutableMap<Int, Double>>()
 
         simulate(hosts = 3, exportInterval = 1.minutes, sinks = listOf(telemetry, powerPerHost(perHost)))
 
@@ -78,7 +78,7 @@ class TelemetrySinkTest {
     @Test
     fun `counts a host reported twice at one instant once`() {
         val telemetry = TelemetrySink()
-        val perHost = mutableMapOf<Long, MutableMap<String, Double>>()
+        val perHost = mutableMapOf<Long, MutableMap<Int, Double>>()
         val rows = mutableMapOf<Long, Int>()
 
         simulate(hosts = 2, exportInterval = 1.minutes, sinks = listOf(telemetry, powerPerHost(perHost), countingRows(rows)))
@@ -145,11 +145,9 @@ class TelemetrySinkTest {
     ): List<MetricPoint> = sink.report().runs.single().series.single { it.metric == metric.id }.points
 
     /** A sink that keeps each host's last power draw per instant, which is what the fold reads. */
-    private fun powerPerHost(into: MutableMap<Long, MutableMap<String, Double>>) =
+    private fun powerPerHost(into: MutableMap<Long, MutableMap<Int, Double>>) =
         CallbackSink(
-            onHost = { reader ->
-                into.getOrPut(reader.timestamp.toEpochMilli()) { mutableMapOf() }[reader.hostName.orEmpty()] = reader.powerDraw
-            },
+            onHost = { reader -> into.getOrPut(reader.timestamp.toEpochMilli()) { mutableMapOf() }[reader.hostId] = reader.powerDraw },
         )
 
     /** A sink that counts host rows per instant, so a test can tell which instants were reported twice. */
@@ -185,11 +183,7 @@ class TelemetrySinkTest {
                         host(name = "H0$index") {
                             cpu(coreCount = 2, coreSpeed = 2000.mhz)
                             memory(size = 1.gib)
-                            power {
-                                type = PowerModelType.LINEAR
-                                maxPower = 200.watts
-                                idlePower = 100.watts
-                            }
+                            cpuPowerModel = LinearPowerModelSpec(maxPower = 200.watts, idlePower = 100.watts)
                         }
                     }
                 }

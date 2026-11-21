@@ -29,10 +29,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonElement
 import org.opendc.sdk.model.experiment.ExperimentSpec
-import org.opendc.sdk.model.experiment.ScenarioSpec
 import org.opendc.sdk.model.experiment.expand
 import org.opendc.sdk.model.resource.NamedReference
 import org.opendc.sdk.model.resource.ResourceReference
+import org.opendc.sdk.model.scenario.ScenarioSpec
 import org.opendc.web.dispatcher.Dispatcher
 import org.opendc.web.dispatcher.Unfit
 import org.opendc.web.dispatcher.estimate.TraceSizeEstimator
@@ -138,7 +138,7 @@ class SubmissionPipeline(
         val traces = resolveTraces(spec, caller)
         val scenarios = spec.expand()
         return SubmissionPreview(
-            scenarioCount = scenarios.size,
+            scenarioCount = scenarios.distinctBy { it.id }.size,
             estimate = estimate(scenarios, traces),
             issues = spec.validate().toWire() + traces.issues + unfitIssues(scenarios),
         )
@@ -146,10 +146,10 @@ class SubmissionPipeline(
 
     /**
      * One issue per scenario no execution on this deployment can hold, by time or memory, since it
-     * would only fail at its limit on every attempt.
+     * would only fail at its limit on every attempt. Its seeds cost the same, so one stands for all.
      */
     private fun unfitIssues(scenarios: List<ScenarioSpec>): List<DocumentIssue> =
-        planner.unfit(scenarios, dispatcher.slot()).map { unfit ->
+        planner.unfit(scenarios.distinctBy { it.id }, dispatcher.slot()).map { unfit ->
             val scenario = "Scenario ${unfit.unit.scenarioIndex}"
             when (unfit) {
                 is Unfit.TooLong ->
@@ -191,23 +191,23 @@ class SubmissionPipeline(
         }
 
         val now = Instant.now()
-        val quotes = scenarios.associate { it.id to quoteOf(it) }
-        admit(submitter, scenarios.sumOf { it.runs * quotes.getValue(it.id) }, now)
+        // Every seed of a scenario costs the same and runs the same tasks, so each is worked out once.
+        val distinct = scenarios.distinctBy { it.id }
+        val quotes = distinct.associate { it.id to quoteOf(it) }
+        val tasks = distinct.associate { it.id to plannedTaskCount(it) }
+        admit(submitter, scenarios.sumOf { quotes.getValue(it.id) }, now)
 
         extractResources(experiment, spec)
         // Only units are written; shaping them into executions waits for a dispatcher's slot.
         for (scenario in scenarios) {
-            val tasks = plannedTaskCount(scenario)
-            for (run in 0 until scenario.runs) {
-                val unit = RunUnit()
-                unit.experiment = experiment
-                unit.scenarioIndex = scenario.id
-                unit.seed = (scenario.initialSeed + run).toLong()
-                unit.state = UnitState.QUEUED
-                unit.totalTasks = tasks
-                unit.quotedSeconds = quotes.getValue(scenario.id)
-                unit.persist()
-            }
+            val unit = RunUnit()
+            unit.experiment = experiment
+            unit.scenarioIndex = scenario.id
+            unit.seed = scenario.seed
+            unit.state = UnitState.QUEUED
+            unit.totalTasks = tasks.getValue(scenario.id)
+            unit.quotedSeconds = quotes.getValue(scenario.id)
+            unit.persist()
         }
         experiment.markSubmitted(submitter, now)
         experiment.updatedAt = now
@@ -340,11 +340,9 @@ class SubmissionPipeline(
     ): CostEstimate {
         val model = TraceSizeEstimator(config.estimator().toCoefficients())
         val seconds =
-            scenarios.sumOf { scenario ->
-                scenario.runs * model.estimate(scenario, traceExtentOf(scenario.workload, traces.usable::get)).cpuSeconds
-            }
+            scenarios.sumOf { scenario -> model.estimate(scenario, traceExtentOf(scenario.workload, traces.usable::get)).cpuSeconds }
         return CostEstimate(
-            scenarioCount = scenarios.size,
+            scenarioCount = scenarios.distinctBy { it.id }.size,
             estimatedSimulationSeconds = seconds,
             estimatedBudgetSeconds = seconds,
         )
