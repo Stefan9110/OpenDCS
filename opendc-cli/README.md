@@ -8,13 +8,12 @@ executable that runs, validates and inspects experiment files.
 Build a runnable distribution and put it on your `PATH`:
 
 ```bash
-./gradlew :opendc-cli:distTar
-tar -xf opendc-cli/build/distributions/OpenDCExperimentRunner.tar -C opendc-cli/build/distributions
-export PATH=$PATH:$(realpath opendc-cli/build/distributions/OpenDCExperimentRunner/bin)
+./gradlew :opendc-cli:installDist
+export PATH=$PATH:$(realpath opendc-cli/build/install/OpenDCExperimentRunner/bin)
 ```
 
-You can now call `opendc` from anywhere. Re-run the two commands above after code changes to refresh
-the binary.
+You can now call `opendc` from anywhere. Re-run `installDist` after code changes to refresh the
+binary.
 
 ## Experiment file
 
